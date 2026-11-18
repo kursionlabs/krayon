@@ -1,0 +1,395 @@
+use std::alloc::arena::Domain!;
+use std::bytes::buffer::Buffer!;
+use std::collections::arena_map::ArenaMap;
+use std::fs::{FileKind, metadata, path_exists, read_dir, read_to_arena, mkdir, write};
+use std::option::{Option, Result};
+use std::raw::Span;
+use std::slice::Slice;
+use toml::parse;
+use toml::value::TomlValue;
+use html::{Page, parse_page, template};
+use markdown::markdown;
+
+forall 'k.
+struct Config {
+    input: Span['k],
+    output: Span['k],
+    layouts: Span['k],
+    data: Span['k],
+    assets: Span['k],
+}
+
+forall 'k.
+struct Build {
+    source: Span['k],
+    output: Span['k],
+    layouts: Span['k],
+    layouts_rel: Span['k],
+    assets: Span['k],
+    data_dir: Span['k],
+    site_data: ArenaMap[Span['k], TomlValue['k], 'k],
+    written: ArenaMap[Span['k], Span['k], 'k],
+}
+
+forall 'k.
+fn lit(&cx: Domain!['k], s: Slice[u8, 'static]) -> Span['k] { Span::from_static(&cx, s) }
+
+forall 'k.
+fn byte(&cx: Domain!['k], s: Span['k], i: usize) -> u8 { s.byte_or_zero(&cx, i) }
+
+forall 'k.
+fn join(&cx: Domain!['k], a: Span['k], b: Span['k]) -> Span['k] {
+    if b.is_empty() { return a; }
+    if a.is_empty() { return b; }
+    Buffer!::new().push_bytes(&cx, a).push_static("/").push_bytes(&cx, b).save(&cx)
+}
+
+forall 'k.
+fn report(&cx: Domain!['k], action: Slice[u8, 'static], file: Span['k]) -> Buffer! {
+    Buffer!::new().push_static("krayon: ").push_static(action).push_static(": ").push_bytes(&cx, file).push_byte(b'\n')
+}
+
+forall 'k.
+fn report_detail(&cx: Domain!['k], file: Span['k], detail: Span['k]) -> Buffer! {
+    Buffer!::new().push_static("krayon: ").push_bytes(&cx, file).push_static(": ").push_bytes(&cx, detail).push_byte(b'\n')
+}
+
+forall 'k.
+fn exists_path(&cx: Domain!['k], file: Span['k]) -> Result[bool, Buffer!] {
+    match path_exists(&cx, file) {
+        Result::Ok(found) => Result::Ok.(found),
+        Result::Err(e) => Result::Err.(report(&cx, "cannot stat", file)),
+    }
+}
+
+forall 'k.
+fn load(&cx: Domain!['k], file: Span['k]) -> Result[Span['k], Buffer!] {
+    match read_to_arena(&cx, file) {
+        Result::Ok(text) => Result::Ok.(text),
+        Result::Err(e) => Result::Err.(report(&cx, "cannot read", file)),
+    }
+}
+
+forall 'k.
+fn ensure_one(&cx: Domain!['k], directory: Span['k]) -> Result[(), Buffer!] {
+    if directory.is_empty() { return Result::Ok.(()); }
+    match metadata(&cx, directory) {
+        Result::Ok(m) => match m.kind {
+            FileKind::Directory => Result::Ok.(()),
+            _ => Result::Err.(report(&cx, "expected directory", directory)),
+        },
+        Result::Err(e) => {
+            if e.errno != 2i32 { return Result::Err.(report(&cx, "cannot stat", directory)); }
+            match mkdir(&cx, directory) {
+                Result::Ok(nothing) => Result::Ok.(()),
+                Result::Err(e) => Result::Err.(report(&cx, "cannot create directory", directory)),
+            }
+        },
+    }
+}
+
+forall 'k.
+fn ensure_dir(&cx: Domain!['k], directory: Span['k]) -> Result[(), Buffer!] {
+    var i = 1usize;
+    while i < directory.len() {
+        if byte(&cx, directory, i) == b'/' { ensure_one(&cx, directory.slice(0usize, i))?; }
+        i = i + 1usize;
+    }
+    ensure_one(&cx, directory)
+}
+
+forall 'k.
+fn parent(&cx: Domain!['k], file: Span['k]) -> Span['k] {
+    var i = file.len();
+    while i > 0usize {
+        i = i - 1usize;
+        if byte(&cx, file, i) == b'/' { return file.slice(0usize, i); }
+    }
+    lit(&cx, "")
+}
+
+forall 'k.
+fn save(&cx: Domain!['k], file: Span['k], contents: Buffer!) -> Result[(), Buffer!] {
+    match ensure_dir(&cx, parent(&cx, file)) {
+        Result::Ok(nothing) => (),
+        Result::Err(message) => { contents.destroy(); return Result::Err.(message); },
+    }
+    match write(&cx, file, contents) {
+        Result::Ok(nothing) => Result::Ok.(()),
+        Result::Err(e) => Result::Err.(report(&cx, "cannot write", file)),
+    }
+}
+
+// Relative config paths and URL path components cannot escape their root.
+forall 'k.
+fn safe_path(&cx: Domain!['k], path: Span['k], absolute: bool) -> bool {
+    if path.is_empty() { return false; }
+    if absolute != (byte(&cx, path, 0usize) == b'/') { return false; }
+    var start = if absolute { 1usize } else { 0usize };
+    var i = start;
+    while i <= path.len() {
+        if i == path.len() || byte(&cx, path, i) == b'/' {
+            let part = path.slice(start, i);
+            if part.is(&cx, ".") || part.is(&cx, "..") { return false; }
+            if part.is_empty() && i < path.len() { return false; }
+            start = i + 1usize;
+        } else if byte(&cx, path, i) == b'\\' || byte(&cx, path, i) == 0u8 { return false; }
+        i = i + 1usize;
+    }
+    true
+}
+
+forall 'k.
+fn config_string(&cx: Domain!['k], values: ArenaMap[Span['k], TomlValue['k], 'k], name: Slice[u8, 'static], fallback: Slice[u8, 'static]) -> Result[Span['k], Buffer!] {
+    match values.get(&cx, lit(&cx, name)) {
+        Option::None => Result::Ok.(lit(&cx, fallback)),
+        Option::Some(value) => match value.as_string() {
+            Option::None => Result::Err.(Buffer!::new().push_static("krayon: config value must be a string: ").push_static(name).push_byte(b'\n')),
+            Option::Some(text) => if safe_path(&cx, text, false) { Result::Ok.(text) }
+                else { Result::Err.(Buffer!::new().push_static("krayon: unsafe config path: ").push_static(name).push_byte(b'\n')) },
+        },
+    }
+}
+
+forall 'k.
+fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] {
+    let file = join(&cx, root, lit(&cx, "krayon.toml"));
+    let defaults = Config.{ input: lit(&cx, "src"), output: lit(&cx, "dist"), layouts: lit(&cx, "_includes"),
+        data: lit(&cx, "_data/site.toml"), assets: lit(&cx, "assets") };
+    if !exists_path(&cx, file)? { return Result::Ok.(defaults); }
+    let text = load(&cx, file)?;
+    match parse(&cx, text) {
+        Result::Err(e) => Result::Err.(report_detail(&cx, file, lit(&cx, e.message))),
+        Result::Ok(values) => {
+            var i = 0usize;
+            while i < values.positions(&cx) {
+                match values.key_at(&cx, i) {
+                    Option::None => (),
+                    Option::Some(key) => {
+                        if !key.is(&cx, "input") && !key.is(&cx, "output") && !key.is(&cx, "layouts")
+                            && !key.is(&cx, "data") && !key.is(&cx, "assets") {
+                            return Result::Err.(report(&cx, "unknown config key", key));
+                        }
+                    },
+                }
+                i = i + 1usize;
+            }
+            Result::Ok.(Config.{
+                input: config_string(&cx, values, "input", "src")?,
+                output: config_string(&cx, values, "output", "dist")?,
+                layouts: config_string(&cx, values, "layouts", "_includes")?,
+                data: config_string(&cx, values, "data", "_data/site.toml")?,
+                assets: config_string(&cx, values, "assets", "assets")?,
+            })
+        },
+    }
+}
+
+forall 'k.
+fn claim(&cx: Domain!['k], build: Build['k], output: Span['k], source: Span['k]) -> Result[(), Buffer!] {
+    match build.written.insert(&cx, output, source) {
+        Option::None => Result::Ok.(()),
+        Option::Some(previous) => Result::Err.(Buffer!::new().push_static("krayon: output collision: ")
+            .push_bytes(&cx, previous).push_static(" and ").push_bytes(&cx, source).push_static(" -> ").push_bytes(&cx, output).push_byte(b'\n')),
+    }
+}
+
+forall 'k.
+fn source_url(&cx: Domain!['k], relative: Span['k], ext_len: usize) -> Span['k] {
+    let stem = relative.slice(0usize, relative.len() - ext_len);
+    if stem.is(&cx, "index") { return lit(&cx, "/"); }
+    let index = lit(&cx, "/index");
+    if stem.ends_with(&cx, index) {
+        return Buffer!::new().push_static("/").push_bytes(&cx, stem.slice(0usize, stem.len() - 5usize)).save(&cx);
+    }
+    Buffer!::new().push_static("/").push_bytes(&cx, stem).push_static("/").save(&cx)
+}
+
+forall 'k.
+fn output_for_url(&cx: Domain!['k], output: Span['k], url: Span['k]) -> Result[Span['k], Buffer!] {
+    if !safe_path(&cx, url, true) { return Result::Err.(report(&cx, "unsafe URL", url)); }
+    let relative = url.slice(1usize, url.len());
+    if url.ends_with(&cx, lit(&cx, "/")) {
+        return Result::Ok.(join(&cx, output, join(&cx, relative, lit(&cx, "index.html"))));
+    }
+    if url.ends_with(&cx, lit(&cx, ".html")) {
+        return Result::Ok.(join(&cx, output, relative));
+    }
+    Result::Err.(report(&cx, "URL must end in / or .html", url))
+}
+
+forall 'k.
+fn layout_name(&cx: Domain!['k], data: ArenaMap[Span['k], TomlValue['k], 'k]) -> Result[Option[Span['k]], Buffer!] {
+    match data.get(&cx, lit(&cx, "layout")) {
+        Option::None => Result::Ok.(Option::None),
+        Option::Some(value) => match value.as_string() {
+            Option::None => Result::Err.(Buffer!::new().push_static("krayon: layout must be a string\n")),
+            Option::Some(name) => if safe_path(&cx, name, false) { Result::Ok.(Option::Some.(name)) }
+                else { Result::Err.(report(&cx, "unsafe layout name", name)) },
+        },
+    }
+}
+
+forall 'k.
+fn render_layout(&cx: Domain!['k], build: Build['k], page: Page['k], content: Span['k], name: Span['k], depth: usize) -> Result[Span['k], Buffer!] {
+    if depth >= 32usize { return Result::Err.(report(&cx, "layout chain too deep or cyclic", name)); }
+    let file = join(&cx, build.layouts, name);
+    let source = load(&cx, file)?;
+    let layout = match parse_page(&cx, source, page.url) {
+        Result::Ok(layout) => layout,
+        Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
+    };
+    let rendered = match template(&cx, build.site_data, page, layout.body, content) {
+        Result::Ok(html) => html.save(&cx),
+        Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
+    };
+    match layout_name(&cx, layout.data)? {
+        Option::None => Result::Ok.(rendered),
+        Option::Some(outer) => render_layout(&cx, build, page, rendered, outer, depth + 1usize),
+    }
+}
+
+forall 'k.
+fn render_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Result[(), Buffer!] {
+    let file = join(&cx, build.source, relative);
+    let source = load(&cx, file)?;
+    let is_markdown = relative.ends_with(&cx, lit(&cx, ".md"));
+    let url = source_url(&cx, relative, if is_markdown { 3usize } else { 5usize });
+    let parsed = match parse_page(&cx, source, url) {
+        Result::Ok(page) => page,
+        Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
+    };
+    let url = match parsed.data.get(&cx, lit(&cx, "permalink")) {
+        Option::None => url,
+        Option::Some(value) => match value.as_string() {
+            Option::Some(link) => link,
+            Option::None => return Result::Err.(report(&cx, "permalink must be a string", file)),
+        },
+    };
+    let page = Page.{ data: parsed.data, url, body: parsed.body };
+    let destination = output_for_url(&cx, build.output, url)?;
+    claim(&cx, build, destination, file)?;
+    let body = if is_markdown { markdown(&cx, page.body).save(&cx) }
+        else { match template(&cx, build.site_data, page, page.body, lit(&cx, "")) {
+            Result::Ok(html) => html.save(&cx),
+            Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
+        } };
+    let rendered = match layout_name(&cx, page.data)? {
+        Option::None => body,
+        Option::Some(name) => render_layout(&cx, build, page, body, name, 0usize)?,
+    };
+    save(&cx, destination, Buffer!::new().push_bytes(&cx, rendered))
+}
+
+forall 'k.
+fn scan_pages(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usize) -> Result[(), Buffer!] {
+    if depth >= 64usize { return Result::Err.(report(&cx, "source tree too deep", relative)); }
+    let directory = join(&cx, build.source, relative);
+    let directory = match read_dir(&cx, directory) {
+        Result::Ok(directory) => directory,
+        Result::Err(e) => return Result::Err.(report(&cx, "cannot list", directory)),
+    };
+    var directory = directory;
+    var going = true;
+    while going {
+        match &directory.next() {
+            Result::Err(e) => { directory.close(); return Result::Err.(report(&cx, "cannot list", relative)); },
+            Result::Ok(next) => match next {
+                Option::None => { going = false; },
+                Option::Some(entry) => {
+                    let { name, is_directory } = entry;
+                    let child = join(&cx, relative, name.save(&cx));
+                    if child.eq(&cx, build.assets) || child.eq(&cx, build.layouts_rel) || (!build.data_dir.is_empty() && child.eq(&cx, build.data_dir)) {
+                        // reserved source directories
+                    } else if is_directory {
+                        match scan_pages(&cx, build, child, depth + 1usize) {
+                            Result::Ok(nothing) => (),
+                            Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                        }
+                    } else if child.ends_with(&cx, lit(&cx, ".md")) || child.ends_with(&cx, lit(&cx, ".html")) {
+                        match render_page(&cx, build, child) {
+                            Result::Ok(nothing) => (),
+                            Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                        }
+                    }
+                },
+            },
+        }
+    }
+    if !directory.close().is_ok() { return Result::Err.(report(&cx, "cannot close directory", relative)); }
+    Result::Ok.(())
+}
+
+forall 'k.
+fn copy_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usize) -> Result[(), Buffer!] {
+    if depth >= 64usize { return Result::Err.(report(&cx, "asset tree too deep", relative)); }
+    let directory = join(&cx, join(&cx, build.source, build.assets), relative);
+    let directory = match read_dir(&cx, directory) {
+        Result::Ok(directory) => directory,
+        Result::Err(e) => return Result::Err.(report(&cx, "cannot list", directory)),
+    };
+    var directory = directory;
+    var going = true;
+    while going {
+        match &directory.next() {
+            Result::Err(e) => { directory.close(); return Result::Err.(report(&cx, "cannot list", relative)); },
+            Result::Ok(next) => match next {
+                Option::None => { going = false; },
+                Option::Some(entry) => {
+                    let { name, is_directory } = entry;
+                    let child = join(&cx, relative, name.save(&cx));
+                    if is_directory {
+                        match copy_assets(&cx, build, child, depth + 1usize) {
+                            Result::Ok(nothing) => (),
+                            Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                        }
+                    } else {
+                        let source = join(&cx, join(&cx, build.source, build.assets), child);
+                        let destination = join(&cx, join(&cx, build.output, build.assets), child);
+                        match claim(&cx, build, destination, source) {
+                            Result::Ok(nothing) => (),
+                            Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                        }
+                        let contents = match load(&cx, source) {
+                            Result::Ok(contents) => contents,
+                            Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                        };
+                        match save(&cx, destination, Buffer!::new().push_bytes(&cx, contents)) {
+                            Result::Ok(nothing) => (),
+                            Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                        }
+                    }
+                },
+            },
+        }
+    }
+    if !directory.close().is_ok() { return Result::Err.(report(&cx, "cannot close directory", relative)); }
+    Result::Ok.(())
+}
+
+forall 'k.
+fn build(&cx: Domain!['k], root: Span['k]) -> Result[(), Buffer!] {
+    let config = read_config(&cx, root)?;
+    if config.output.eq(&cx, config.input) || config.output.starts_with(&cx,
+        Buffer!::new().push_bytes(&cx, config.input).push_static("/").save(&cx)) {
+        return Result::Err.(report(&cx, "output must be outside input", config.output));
+    }
+    let source = join(&cx, root, config.input);
+    let output = join(&cx, root, config.output);
+    let site_file = join(&cx, source, config.data);
+    let site_data = if exists_path(&cx, site_file)? {
+        let text = load(&cx, site_file)?;
+        match parse(&cx, text) {
+            Result::Ok(data) => data,
+            Result::Err(e) => return Result::Err.(report_detail(&cx, site_file, lit(&cx, e.message))),
+        }
+    } else { ArenaMap::new(&cx) };
+    let build = Build.{ source, output, layouts: join(&cx, source, config.layouts), layouts_rel: config.layouts,
+        assets: config.assets, data_dir: parent(&cx, config.data),
+        site_data, written: ArenaMap::new(&cx) };
+    ensure_dir(&cx, output)?;
+    scan_pages(&cx, build, lit(&cx, ""), 0usize)?;
+    let assets = join(&cx, source, config.assets);
+    if exists_path(&cx, assets)? { copy_assets(&cx, build, lit(&cx, ""), 0usize)?; }
+    Result::Ok.(())
+}

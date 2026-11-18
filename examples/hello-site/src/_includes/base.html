@@ -1,0 +1,5 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{% if page.title %}{{ page.title }} · {% endif %}{{ site.title }}</title><link rel="stylesheet" href="/assets/css/site.css"></head>
+<body><header><a href="/">{{ site.title }}</a></header><main>{{ content | safe }}</main><footer>{% if site.subtitle %}{{ site.subtitle }}{% else %}A site{% endif %} · <a href="{{ site.links.repository }}">Source</a></footer></body>
+</html>

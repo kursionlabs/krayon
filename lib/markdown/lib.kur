@@ -80,6 +80,14 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k]) -> Buffer! {
                 },
                 Option::None => { out = out.push_byte(c); i = i + 1usize; },
             }
+        } else if c == b'*' {
+            match s.find_byte(&cx, b'*', i + 1usize) {
+                Option::Some(end) => {
+                    out = inline(&cx, out.push_static("<em>"), s.slice(i + 1usize, end)).push_static("</em>");
+                    i = end + 1usize;
+                },
+                Option::None => { out = out.push_byte(c); i = i + 1usize; },
+            }
         } else if c == b'&' || c == b'<' || c == b'>' {
             out = html_escape(&cx, out, s.slice(i, i + 1usize));
             i = i + 1usize;
@@ -106,20 +114,45 @@ fn table_row(&cx: Domain!['k], out: Buffer!, line: Span['k], header: bool) -> Bu
 }
 
 forall 'k.
+fn heading_level(&cx: Domain!['k], line: Span['k]) -> usize {
+    var level = 0usize;
+    while level < 6usize && at(&cx, line, level) == b'#' { level = level + 1usize; }
+    if level > 0usize && at(&cx, line, level) == b' ' { level } else { 0usize }
+}
+
+forall 'k.
+fn ordered_marker(&cx: Domain!['k], line: Span['k]) -> usize {
+    var i = 0usize;
+    while at(&cx, line, i) >= b'0' && at(&cx, line, i) <= b'9' { i = i + 1usize; }
+    if i > 0usize && at(&cx, line, i) == b'.' && at(&cx, line, i + 1usize) == b' ' { i + 2usize }
+    else { 0usize }
+}
+
+forall 'k.
 fn markdown(&cx: Domain!['k], source: Span['k]) -> Buffer! {
     var out = Buffer!::new();
     var pos = 0usize;
     var paragraph = false;
     var list = false;
+    var ordered = false;
     var code = false;
     var table = false;
     var table_body = false;
     while pos < source.len() {
         let (line, next) = next_line(&cx, source, pos);
         pos = next;
+        if table && !starts(&cx, line, "| ") {
+            out = out.push_static("</tbody>\n</table>\n");
+            table = false;
+            table_body = false;
+        }
+        let table_start = if starts(&cx, line, "| ") && !table && pos < source.len() {
+            let (following, after) = next_line(&cx, source, pos);
+            starts(&cx, following, "| ---")
+        } else { false };
         if starts(&cx, line, "```") {
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
-            if list { out = out.push_static("</ul>\n"); list = false; }
+            if list { out = out.push_static(if ordered { "</ol>\n" } else { "</ul>\n" }); list = false; }
             if code { out = out.push_static("</code></pre>\n"); code = false; }
             else {
                 let lang = line.slice(3usize, line.len());
@@ -130,30 +163,43 @@ fn markdown(&cx: Domain!['k], source: Span['k]) -> Buffer! {
         } else if code { out = html_escape(&cx, out, line).push_byte(b'\n'); }
         else if line.is_empty() {
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
-            if list { out = out.push_static("</ul>\n"); list = false; }
+            if list { out = out.push_static(if ordered { "</ol>\n" } else { "</ul>\n" }); list = false; }
             if table { out = out.push_static("</tbody>\n</table>\n"); table = false; table_body = false; }
         } else if starts(&cx, line, "<") {
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
+            if list { out = out.push_static(if ordered { "</ol>\n" } else { "</ul>\n" }); list = false; }
             out = out.push_bytes(&cx, line).push_byte(b'\n');
-        } else if starts(&cx, line, "## ") {
+        } else if heading_level(&cx, line) > 0usize {
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
-            out = inline(&cx, out.push_static("<h2>"), line.slice(3usize, line.len())).push_static("</h2>\n");
-        } else if starts(&cx, line, "- ") {
+            if list { out = out.push_static(if ordered { "</ol>\n" } else { "</ul>\n" }); list = false; }
+            let level = heading_level(&cx, line);
+            out = inline(&cx, out.push_static("<h").push_usize(level).push_static(">"), line.slice(level + 1usize, line.len()))
+                .push_static("</h").push_usize(level).push_static(">\n");
+        } else if starts(&cx, line, "- ") || starts(&cx, line, "* ") || starts(&cx, line, "+ ") {
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
-            if !list { out = out.push_static("<ul>\n"); list = true; }
+            if list && ordered { out = out.push_static("</ol>\n"); list = false; }
+            if !list { out = out.push_static("<ul>\n"); list = true; ordered = false; }
             out = inline(&cx, out.push_static("<li>"), line.slice(2usize, line.len())).push_static("</li>\n");
-        } else if starts(&cx, line, "| ") {
+        } else if ordered_marker(&cx, line) > 0usize {
+            if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
+            if list && !ordered { out = out.push_static("</ul>\n"); list = false; }
+            if !list { out = out.push_static("<ol>\n"); list = true; ordered = true; }
+            out = inline(&cx, out.push_static("<li>"), line.slice(ordered_marker(&cx, line), line.len())).push_static("</li>\n");
+        } else if table || table_start {
+            if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
+            if list { out = out.push_static(if ordered { "</ol>\n" } else { "</ul>\n" }); list = false; }
             if !table { out = out.push_static("<table>\n<thead>\n"); table = true; }
             if starts(&cx, line, "| ---") { out = out.push_static("</thead>\n<tbody>\n"); table_body = true; }
             else { out = table_row(&cx, out, line, !table_body); }
         } else {
+            if list { out = out.push_static(if ordered { "</ol>\n" } else { "</ul>\n" }); list = false; }
             if !paragraph { out = out.push_static("<p>"); paragraph = true; }
             else { out = out.push_byte(b' '); }
             out = inline(&cx, out, line);
         }
     }
     if paragraph { out = out.push_static("</p>\n"); }
-    if list { out = out.push_static("</ul>\n"); }
+    if list { out = out.push_static(if ordered { "</ol>\n" } else { "</ul>\n" }); }
     if code { out = out.push_static("</code></pre>\n"); }
     if table { out = out.push_static("</tbody>\n</table>\n"); }
     out

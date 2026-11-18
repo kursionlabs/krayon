@@ -1,0 +1,15 @@
+[package]
+name="site"
+source_root="."
+
+[dependencies.std]
+path="../../../kursal/lib/std"
+
+[dependencies.toml]
+path="../../../kursal/lib/toml"
+
+[dependencies.markdown]
+path="../markdown"
+
+[dependencies.html]
+path="../html"

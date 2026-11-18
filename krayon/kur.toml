@@ -7,8 +7,5 @@ entry="main"
 [dependencies.std]
 path="../../kursal/lib/std"
 
-[dependencies.markdown]
-path="../lib/markdown"
-
-[dependencies.html]
-path="../lib/html"
+[dependencies.site]
+path="../lib/site"

@@ -1,0 +1,5 @@
+title = "Hello & welcome"
+subtitle = "A small Krayon site"
+
+[links]
+repository = "https://example.org/source?a=1&b=2"

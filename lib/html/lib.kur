@@ -1,157 +1,243 @@
 use std::alloc::arena::Domain!;
 use std::bytes::buffer::Buffer!;
-use std::option::Option;
+use std::collections::arena_map::ArenaMap;
+use std::collections::arena_vec::ArenaVec;
+use std::option::{Option, Result};
 use std::raw::Span;
 use std::slice::Slice;
+use toml::parse;
+use toml::value::TomlValue;
 
 forall 'k.
 exposed struct Page {
-    title: Span['k],
-    eyebrow: Span['k],
-    intro: Span['k],
-    description: Span['k],
-    layout: Span['k],
+    data: ArenaMap[Span['k], TomlValue['k], 'k],
     url: Span['k],
     body: Span['k],
 }
 
-forall 'k.
-exposed struct Site {
-    title: Span['k],
-    description: Span['k],
-    source_url: Span['k],
+struct Frame {
+    parent: bool,
+    matched: bool,
+    else_seen: bool,
 }
 
 forall 'k.
-fn empty(&cx: Domain!['k]) -> Span['k] { Span::from_static(&cx, "") }
+fn lit(&cx: Domain!['k], text: Slice[u8, 'static]) -> Span['k] { Span::from_static(&cx, text) }
 
 forall 'k.
-fn lit(&cx: Domain!['k], s: Slice[u8, 'static]) -> Span['k] { Span::from_static(&cx, s) }
+fn byte(&cx: Domain!['k], text: Span['k], i: usize) -> u8 { text.byte_or_zero(&cx, i) }
 
 forall 'k.
-fn starts(&cx: Domain!['k], s: Span['k], prefix: Slice[u8, 'static]) -> bool {
-    s.starts_with(&cx, lit(&cx, prefix))
+fn starts(&cx: Domain!['k], text: Span['k], prefix: Slice[u8, 'static]) -> bool {
+    text.starts_with(&cx, lit(&cx, prefix))
 }
 
+// Pages and layouts use TOML front matter between +++ lines. A file without
+// front matter has an empty data table.
 forall 'k.
-fn at(&cx: Domain!['k], s: Span['k], i: usize) -> u8 { s.byte_or_zero(&cx, i) }
-
-forall 'k.
-fn next_line(&cx: Domain!['k], source: Span['k], start: usize) -> (Span['k], usize) {
-    var i = start;
-    while i < source.len() && at(&cx, source, i) != b'\n' { i = i + 1usize; }
-    let line = source.slice(start, i).trim_end(&cx);
-    (line, if i < source.len() { i + 1usize } else { i })
-}
-
-forall 'k.
-fn parse_page(&cx: Domain!['k], source: Span['k], url: Span['k]) -> Page['k] {
-    var title = empty(&cx);
-    var eyebrow = empty(&cx);
-    var intro = empty(&cx);
-    var description = empty(&cx);
-    var layout = empty(&cx);
-    var start = 0usize;
-    if starts(&cx, source, "---\n") {
-        start = 4usize;
-        var done = false;
-        while start < source.len() && !done {
-            let (line, after) = next_line(&cx, source, start);
-            start = after;
-            if line.is(&cx, "---") { done = true; }
-            else {
-                let colon = line.find_byte(&cx, b':', 0usize);
-                match colon {
-                    Option::Some(i) => {
-                        let key = line.slice(0usize, i);
-                        var value = line.slice(i + 1usize, line.len()).trim(&cx);
-                        if at(&cx, value, 0usize) == b'"' && value.len() >= 2usize {
-                            value = value.slice(1usize, value.len() - 1usize);
-                        }
-                        if key.is(&cx, "title") { title = value; }
-                        else if key.is(&cx, "eyebrow") { eyebrow = value; }
-                        else if key.is(&cx, "intro") { intro = value; }
-                        else if key.is(&cx, "description") { description = value; }
-                        else if key.is(&cx, "layout") { layout = value; }
-                    },
-                    Option::None => (),
-                }
-            }
-        }
+fn parse_page(&cx: Domain!['k], source: Span['k], url: Span['k]) -> Result[Page['k], Span['k]] {
+    if !starts(&cx, source, "+++\n") {
+        return Result::Ok.(Page.{ data: ArenaMap::new(&cx), url, body: source });
     }
-    Page.{ title, eyebrow, intro, description, layout, url, body: source.slice(start, source.len()) }
-}
-
-// The site data used by the current templates is a flat JSON object of
-// strings. These fields currently contain no JSON escapes.
-forall 'k.
-fn json_string(&cx: Domain!['k], source: Span['k], key: Slice[u8, 'static]) -> Span['k] {
-    let needle = Buffer!::new().push_static("\"").push_static(key).push_static("\"").save(&cx);
-    match source.find(&cx, needle, 0usize) {
-        Option::None => empty(&cx),
-        Option::Some(start) => {
-            var i = start + needle.len();
-            while i < source.len() && at(&cx, source, i) != b':' { i = i + 1usize; }
-            i = i + 1usize;
-            while i < source.len() && at(&cx, source, i) != b'"' { i = i + 1usize; }
-            i = i + 1usize;
-            let first = i;
-            while i < source.len() && at(&cx, source, i) != b'"' { i = i + 1usize; }
-            source.slice(first, i)
+    match source.find(&cx, lit(&cx, "\n+++"), 4usize) {
+        Option::None => Result::Err.(lit(&cx, "unclosed TOML front matter")),
+        Option::Some(end) => {
+            let after = end + 4usize;
+            if after < source.len() && byte(&cx, source, after) != b'\n' {
+                return Result::Err.(lit(&cx, "front matter delimiter must end its line"));
+            }
+            match parse(&cx, source.slice(4usize, end)) {
+                Result::Err(e) => Result::Err.(Span::from_static(&cx, e.message)),
+                Result::Ok(data) => Result::Ok.(Page.{ data, url, body: source.slice(if after < source.len() { after + 1usize } else { after }, source.len()) }),
+            }
         },
     }
 }
 
 forall 'k.
-fn value(&cx: Domain!['k], site: Site['k], p: Page['k], content: Span['k], expr: Span['k]) -> Span['k] {
-    if expr.is(&cx, "content | safe") { content }
-    else if expr.is(&cx, "title") { p.title }
-    else if expr.is(&cx, "title or site.title") { if p.title.is_empty() { site.title } else { p.title } }
-    else if expr.is(&cx, "description or site.description") { if p.description.is_empty() { site.description } else { p.description } }
-    else if expr.is(&cx, "intro") { p.intro }
-    else if expr.is(&cx, "eyebrow or 'Explore Kursal'") { if p.eyebrow.is_empty() { lit(&cx, "Explore Kursal") } else { p.eyebrow } }
-    else if expr.is(&cx, "site.sourceUrl") { site.source_url }
-    else { empty(&cx) }
+fn field(&cx: Domain!['k], table: ArenaMap[Span['k], TomlValue['k], 'k], name: Slice[u8, 'static]) -> Option[TomlValue['k]] {
+    table.get(&cx, lit(&cx, name))
 }
 
 forall 'k.
-fn condition(&cx: Domain!['k], p: Page['k], expr: Span['k]) -> bool {
-    if expr.is(&cx, "title") { !p.title.is_empty() }
-    else if expr.is(&cx, "intro") { !p.intro.is_empty() }
-    else if expr.is(&cx, "page.url == '/start/'") { p.url.is(&cx, "/start/") }
-    else if expr.is(&cx, "page.url == '/language/'") { p.url.is(&cx, "/language/") }
-    else if expr.is(&cx, "page.url == '/resources/'") { p.url.is(&cx, "/resources/") }
-    else { false }
+fn string_field(&cx: Domain!['k], table: ArenaMap[Span['k], TomlValue['k], 'k], name: Slice[u8, 'static]) -> Option[Span['k]] {
+    match field(&cx, table, name) {
+        Option::None => Option::None,
+        Option::Some(value) => value.as_string(),
+    }
 }
 
 forall 'k.
-fn template(&cx: Domain!['k], site: Site['k], source: Span['k], p: Page['k], content: Span['k]) -> Buffer! {
+fn scalar(&cx: Domain!['k], value: TomlValue['k]) -> Option[Span['k]] {
+    match value {
+        TomlValue::String(s) => Option::Some.(s),
+        TomlValue::Integer(n) => Option::Some.(Buffer!::new().push_i64(n).save(&cx)),
+        TomlValue::Boolean(b) => Option::Some.(lit(&cx, if b { "true" } else { "false" })),
+        TomlValue::Datetime(d) => Option::Some.(d.text),
+        _ => Option::None,
+    }
+}
+
+forall 'k.
+fn lookup(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k], expression: Span['k]) -> Option[TomlValue['k]] {
+    var path = expression;
+    var table = site;
+    if starts(&cx, path, "site.") { path = path.slice(5usize, path.len()); }
+    else if starts(&cx, path, "page.") {
+        path = path.slice(5usize, path.len());
+        if path.is(&cx, "url") { return Option::Some.(TomlValue::String.(page.url)); }
+        table = page.data;
+    } else { return Option::None; }
+    while true {
+        match path.find_byte(&cx, b'.', 0usize) {
+            Option::Some(dot) => {
+                let key = path.slice(0usize, dot);
+                match table.get(&cx, key) {
+                    Option::None => return Option::None,
+                    Option::Some(value) => match value.as_table() {
+                        Option::None => return Option::None,
+                        Option::Some(next) => { table = next; },
+                    },
+                }
+                path = path.slice(dot + 1usize, path.len());
+            },
+            Option::None => return table.get(&cx, path),
+        }
+    }
+    Option::None
+}
+
+forall 'k.
+fn literal(&cx: Domain!['k], text: Span['k]) -> Option[Span['k]] {
+    let text = text.trim(&cx);
+    if text.len() < 2usize { return Option::None; }
+    let q = byte(&cx, text, 0usize);
+    if (q == b'\'' || q == b'"') && byte(&cx, text, text.len() - 1usize) == q {
+        Option::Some.(text.slice(1usize, text.len() - 1usize))
+    } else { Option::None }
+}
+
+forall 'k.
+fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k], expr: Span['k], content: Span['k]) -> Option[Span['k]] {
+    let expr = expr.trim(&cx);
+    if expr.is(&cx, "content") || expr.is(&cx, "content | safe") { return Option::Some.(content); }
+    match expr.find(&cx, lit(&cx, " or "), 0usize) {
+        Option::Some(at) => {
+            let left = expr.slice(0usize, at).trim(&cx);
+            match lookup(&cx, site, page, left) {
+                Option::Some(v) => match scalar(&cx, v) {
+                    Option::Some(s) => if !s.is_empty() { return Option::Some.(s); },
+                    Option::None => (),
+                },
+                Option::None => (),
+            }
+            literal(&cx, expr.slice(at + 4usize, expr.len()))
+        },
+        Option::None => match lookup(&cx, site, page, expr) {
+            Option::None => Option::None,
+            Option::Some(v) => scalar(&cx, v),
+        },
+    }
+}
+
+forall 'k.
+fn truth(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k], expr: Span['k], content: Span['k]) -> bool {
+    let expr = expr.trim(&cx);
+    match expr.find(&cx, lit(&cx, " == "), 0usize) {
+        Option::Some(at) => {
+            let left = resolve(&cx, site, page, expr.slice(0usize, at), content);
+            let right = literal(&cx, expr.slice(at + 4usize, expr.len()));
+            match left {
+                Option::None => false,
+                Option::Some(a) => match right {
+                    Option::None => false,
+                    Option::Some(b) => a.eq(&cx, b),
+                },
+            }
+        },
+        Option::None => match resolve(&cx, site, page, expr, content) {
+            Option::None => false,
+            Option::Some(s) => !s.is_empty() && !s.is(&cx, "false") && !s.is(&cx, "0"),
+        },
+    }
+}
+
+forall 'k.
+fn escape(&cx: Domain!['k], out: Buffer!, text: Span['k]) -> Buffer! {
+    var out = out;
+    var i = 0usize;
+    while i < text.len() {
+        let c = byte(&cx, text, i);
+        out = if c == b'&' { out.push_static("&amp;") }
+            else if c == b'<' { out.push_static("&lt;") }
+            else if c == b'>' { out.push_static("&gt;") }
+            else if c == b'"' { out.push_static("&quot;") }
+            else if c == b'\'' { out.push_static("&#39;") }
+            else { out.push_byte(c) };
+        i = i + 1usize;
+    }
+    out
+}
+
+// The template language has escaped variables, an explicit safe filter for
+// rendered content, and nested if/else/endif blocks. Unknown substitutions
+// and malformed directives fail the build.
+forall 'k.
+fn template(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k], source: Span['k], content: Span['k]) -> Result[Buffer!, Span['k]] {
     var out = Buffer!::new();
+    let stack = ArenaVec::new(&cx);
+    var active = true;
     var pos = 0usize;
-    var enabled = true;
     while pos < source.len() {
-        if at(&cx, source, pos) == b'{' && at(&cx, source, pos + 1usize) == b'{' {
+        if byte(&cx, source, pos) == b'{' && byte(&cx, source, pos + 1usize) == b'{' {
             match source.find(&cx, lit(&cx, "}}"), pos + 2usize) {
+                Option::None => { out.destroy(); return Result::Err.(lit(&cx, "unclosed variable")); },
                 Option::Some(end) => {
-                    if enabled { out = out.push_bytes(&cx, value(&cx, site, p, content, source.slice(pos + 2usize, end).trim(&cx))); }
+                    if active {
+                        let expr = source.slice(pos + 2usize, end).trim(&cx);
+                        match resolve(&cx, site, page, expr, content) {
+                            Option::None => { out.destroy(); return Result::Err.(expr); },
+                            Option::Some(value) => {
+                                if expr.is(&cx, "content | safe") { out = out.push_bytes(&cx, value); }
+                                else { out = escape(&cx, out, value); }
+                            },
+                        }
+                    }
                     pos = end + 2usize;
                 },
-                Option::None => { pos = source.len(); },
             }
-        } else if at(&cx, source, pos) == b'{' && at(&cx, source, pos + 1usize) == b'%' {
+        } else if byte(&cx, source, pos) == b'{' && byte(&cx, source, pos + 1usize) == b'%' {
             match source.find(&cx, lit(&cx, "%}"), pos + 2usize) {
+                Option::None => { out.destroy(); return Result::Err.(lit(&cx, "unclosed directive")); },
                 Option::Some(end) => {
                     let directive = source.slice(pos + 2usize, end).trim(&cx);
-                    if starts(&cx, directive, "if ") { enabled = condition(&cx, p, directive.slice(3usize, directive.len())); }
-                    else if directive.is(&cx, "endif") { enabled = true; }
+                    if starts(&cx, directive, "if ") {
+                        let matched = active && truth(&cx, site, page, directive.slice(3usize, directive.len()), content);
+                        stack.push(&cx, Frame.{ parent: active, matched, else_seen: false });
+                        active = matched;
+                    } else if directive.is(&cx, "else") {
+                        match stack.pop(&cx) {
+                            Option::None => { out.destroy(); return Result::Err.(lit(&cx, "else without if")); },
+                            Option::Some(frame) => {
+                                if frame.else_seen { out.destroy(); return Result::Err.(lit(&cx, "duplicate else")); }
+                                active = frame.parent && !frame.matched;
+                                stack.push(&cx, Frame.{ parent: frame.parent, matched: frame.matched, else_seen: true });
+                            },
+                        }
+                    } else if directive.is(&cx, "endif") {
+                        match stack.pop(&cx) {
+                            Option::None => { out.destroy(); return Result::Err.(lit(&cx, "endif without if")); },
+                            Option::Some(frame) => { active = frame.parent; },
+                        }
+                    } else { out.destroy(); return Result::Err.(directive); }
                     pos = end + 2usize;
                 },
-                Option::None => { pos = source.len(); },
             }
         } else {
-            if enabled { out = out.push_byte(at(&cx, source, pos)); }
+            if active { out = out.push_byte(byte(&cx, source, pos)); }
             pos = pos + 1usize;
         }
     }
-    out
+    if stack.len(&cx) != 0usize { out.destroy(); Result::Err.(lit(&cx, "unclosed if")) }
+    else { Result::Ok.(out) }
 }
