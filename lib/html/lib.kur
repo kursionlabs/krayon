@@ -7,6 +7,7 @@ use std::raw::Span;
 use std::slice::Slice;
 use toml::parse;
 use toml::value::TomlValue;
+use url::prefix;
 
 forall 'k.
 exposed struct Page {
@@ -165,6 +166,24 @@ fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
     expr: Span['k], content: Span['k]) -> Option[Span['k]] {
     let expr = expr.trim(&cx);
     if expr.is(&cx, "content") || expr.is(&cx, "content | safe") { return Option::Some.(content); }
+    if expr.ends_with(&cx, lit(&cx, " | url")) {
+        let source = expr.slice(0usize, expr.len() - 6usize).trim(&cx);
+        let target = match literal(&cx, source) {
+            Option::Some(value) => value,
+            Option::None => match lookup(&cx, site, collections, page, bindings, source) {
+                Option::Some(value) => match scalar(&cx, value) {
+                    Option::Some(text) => text,
+                    Option::None => return Option::None,
+                },
+                Option::None => return Option::None,
+            },
+        };
+        let base = match string_field(&cx, site, "base_path") {
+            Option::Some(path) => path,
+            Option::None => lit(&cx, ""),
+        };
+        return Option::Some.(prefix(&cx, base, target));
+    }
     match expr.find(&cx, lit(&cx, " or "), 0usize) {
         Option::Some(at) => {
             let left = expr.slice(0usize, at).trim(&cx);

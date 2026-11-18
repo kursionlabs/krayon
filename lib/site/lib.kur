@@ -20,6 +20,7 @@ struct Config {
     layouts: Span['k],
     data: Span['k],
     assets: Span['k],
+    base_path: Span['k],
 }
 
 forall 'k.
@@ -30,6 +31,7 @@ struct Build {
     layouts_rel: Span['k],
     assets: Span['k],
     data_dir: Span['k],
+    base_path: Span['k],
     site_data: ArenaMap[Span['k], TomlValue['k], 'k],
     collections: ArenaMap[Span['k], TomlValue['k], 'k],
     pages: ArenaVec[SourcePage['k], 'k],
@@ -169,7 +171,7 @@ forall 'k.
 fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] {
     let file = join(&cx, root, lit(&cx, "krayon.toml"));
     let defaults = Config.{ input: lit(&cx, "src"), output: lit(&cx, "dist"), layouts: lit(&cx, "_includes"),
-        data: lit(&cx, "_data/site.toml"), assets: lit(&cx, "assets") };
+        data: lit(&cx, "_data/site.toml"), assets: lit(&cx, "assets"), base_path: lit(&cx, "") };
     if !exists_path(&cx, file)? { return Result::Ok.(defaults); }
     let text = load(&cx, file)?;
     match parse(&cx, text) {
@@ -181,19 +183,44 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                     Option::None => (),
                     Option::Some(key) => {
                         if !key.is(&cx, "input") && !key.is(&cx, "output") && !key.is(&cx, "layouts")
-                            && !key.is(&cx, "data") && !key.is(&cx, "assets") {
+                            && !key.is(&cx, "data") && !key.is(&cx, "assets") && !key.is(&cx, "base_path") {
                             return Result::Err.(report(&cx, "unknown config key", key));
                         }
                     },
                 }
                 i = i + 1usize;
             }
+            let base_path = match values.get(&cx, lit(&cx, "base_path")) {
+                Option::None => lit(&cx, ""),
+                Option::Some(value) => match value.as_string() {
+                    Option::None => return Result::Err.(report(&cx, "base_path must be a string", file)),
+                    Option::Some(path) => {
+                        if path.is_empty() { path }
+                        else if path.is(&cx, "/") { lit(&cx, "") }
+                        else if !safe_path(&cx, path, true) || byte(&cx, path, path.len() - 1usize) == b'/' {
+                            return Result::Err.(report(&cx, "unsafe base_path", path));
+                        } else {
+                            var j = 0usize;
+                            while j < path.len() {
+                                let c = byte(&cx, path, j);
+                                let allowed = (c >= b'a' && c <= b'z') || (c >= b'A' && c <= b'Z')
+                                    || (c >= b'0' && c <= b'9') || c == b'/' || c == b'-'
+                                    || c == b'_' || c == b'.' || c == b'~';
+                                if !allowed { return Result::Err.(report(&cx, "unsafe base_path", path)); }
+                                j = j + 1usize;
+                            }
+                            path
+                        }
+                    },
+                },
+            };
             Result::Ok.(Config.{
                 input: config_string(&cx, values, "input", "src")?,
                 output: config_string(&cx, values, "output", "dist")?,
                 layouts: config_string(&cx, values, "layouts", "_includes")?,
                 data: config_string(&cx, values, "data", "_data/site.toml")?,
                 assets: config_string(&cx, values, "assets", "assets")?,
+                base_path,
             })
         },
     }
@@ -290,7 +317,7 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Resul
 forall 'k.
 fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Result[(), Buffer!] {
     let page = source.page;
-    let body = if source.is_markdown { match markdown(&cx, page.body) {
+    let body = if source.is_markdown { match markdown(&cx, page.body, build.base_path) {
             Result::Ok(html) => html.save(&cx),
             Result::Err(message) => return Result::Err.(report_detail(&cx, source.file, message)),
         } }
@@ -569,11 +596,15 @@ fn build(&cx: Domain!['k], root: Span['k]) -> Result[(), Buffer!] {
             Result::Err(e) => return Result::Err.(report_detail(&cx, site_file, lit(&cx, e.message))),
         }
     } else { ArenaMap::new(&cx) };
+    if site_data.contains(&cx, lit(&cx, "base_path")) {
+        return Result::Err.(report(&cx, "site data key is reserved", lit(&cx, "base_path")));
+    }
+    let replaced = site_data.insert(&cx, lit(&cx, "base_path"), TomlValue::String.(config.base_path));
     ensure_dir(&cx, parent(&cx, output))?;
     let previous = check_output(&cx, source, output)?;
     let (stage, backup) = stage_paths(&cx, output)?;
     let build = Build.{ source, output: stage, layouts: join(&cx, source, config.layouts), layouts_rel: config.layouts,
-        assets: config.assets, data_dir: parent(&cx, config.data),
+        assets: config.assets, data_dir: parent(&cx, config.data), base_path: config.base_path,
         site_data, collections: ArenaMap::new(&cx), pages: ArenaVec::new(&cx), written: ArenaMap::new(&cx) };
     match render_site(&cx, build) {
         Result::Ok(nothing) => (),

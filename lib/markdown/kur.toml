@@ -4,3 +4,9 @@ source_root="."
 
 [dependencies.std]
 path="../../../kursal/lib/std"
+
+[dependencies.url]
+path="../url"
+
+[dependencies.highlight]
+path="../highlight"

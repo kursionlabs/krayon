@@ -1,0 +1,12 @@
+use std::alloc::arena::Domain!;
+use std::bytes::buffer::Buffer!;
+use std::raw::Span;
+
+// Site URLs are stored without the deployment prefix. Keep fragment,
+// relative, protocol-relative, and external links as written.
+forall 'k.
+fn prefix(&cx: Domain!['k], base: Span['k], target: Span['k]) -> Span['k] {
+    if base.is_empty() || target.is_empty() || target.byte_or_zero(&cx, 0usize) != b'/'
+        || target.byte_or_zero(&cx, 1usize) == b'/' { return target; }
+    Buffer!::new().push_bytes(&cx, base).push_bytes(&cx, target).save(&cx)
+}

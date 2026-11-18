@@ -1,0 +1,97 @@
+use std::alloc::arena::Domain!;
+use std::bytes::buffer::Buffer!;
+use std::raw::Span;
+use std::slice::Slice;
+
+forall 'k.
+fn at(&cx: Domain!['k], text: Span['k], i: usize) -> u8 { text.byte_or_zero(&cx, i) }
+
+forall 'k.
+fn escaped(&cx: Domain!['k], out: Buffer!, text: Span['k]) -> Buffer! {
+    var out = out;
+    var i = 0usize;
+    while i < text.len() {
+        let c = at(&cx, text, i);
+        out = if c == b'&' { out.push_static("&amp;") }
+            else if c == b'<' { out.push_static("&lt;") }
+            else if c == b'>' { out.push_static("&gt;") }
+            else if c == b'"' { out.push_static("&quot;") }
+            else { out.push_byte(c) };
+        i = i + 1usize;
+    }
+    out
+}
+
+forall 'k.
+fn marked(&cx: Domain!['k], out: Buffer!, class: Slice[u8, 'static], text: Span['k]) -> Buffer! {
+    escaped(&cx, out.push_static("<span class=\"tok-").push_static(class).push_static("\">"), text).push_static("</span>")
+}
+
+fn letter(c: u8) -> bool { (c >= b'a' && c <= b'z') || (c >= b'A' && c <= b'Z') || c == b'_' }
+fn digit(c: u8) -> bool { c >= b'0' && c <= b'9' }
+
+forall 'k.
+fn keyword(&cx: Domain!['k], word: Span['k]) -> bool {
+    word.is(&cx, "fn") || word.is(&cx, "struct") || word.is(&cx, "enum")
+        || word.is(&cx, "trait") || word.is(&cx, "impl") || word.is(&cx, "const")
+        || word.is(&cx, "extern") || word.is(&cx, "use") || word.is(&cx, "exposed")
+        || word.is(&cx, "forall") || word.is(&cx, "where") || word.is(&cx, "unsafe")
+        || word.is(&cx, "return") || word.is(&cx, "if") || word.is(&cx, "else")
+        || word.is(&cx, "match") || word.is(&cx, "while") || word.is(&cx, "let")
+        || word.is(&cx, "var") || word.is(&cx, "true") || word.is(&cx, "false")
+        || word.is(&cx, "mut") || word.is(&cx, "as") || word.is(&cx, "in")
+}
+
+forall 'k.
+fn type_word(&cx: Domain!['k], word: Span['k]) -> bool {
+    word.is(&cx, "bool") || word.is(&cx, "usize") || word.is(&cx, "isize")
+        || word.is(&cx, "u8") || word.is(&cx, "u16") || word.is(&cx, "u32")
+        || word.is(&cx, "u64") || word.is(&cx, "i8") || word.is(&cx, "i16")
+        || word.is(&cx, "i32") || word.is(&cx, "i64") || word.is(&cx, "f32")
+        || word.is(&cx, "f64") || word.is(&cx, "char") || word.is(&cx, "str")
+}
+
+forall 'k.
+fn kursal_line(&cx: Domain!['k], line: Span['k]) -> Buffer! {
+    var out = Buffer!::new();
+    var i = 0usize;
+    while i < line.len() {
+        let c = at(&cx, line, i);
+        if c == b'/' && at(&cx, line, i + 1usize) == b'/' {
+            return marked(&cx, out, "comment", line.slice(i, line.len()));
+        } else if c == b'"' {
+            var end = i + 1usize;
+            var closed = false;
+            while end < line.len() && !closed {
+                if at(&cx, line, end) == b'\\' && end + 1usize < line.len() { end = end + 2usize; }
+                else if at(&cx, line, end) == b'"' { end = end + 1usize; closed = true; }
+                else { end = end + 1usize; }
+            }
+            out = marked(&cx, out, "string", line.slice(i, end));
+            i = end;
+        } else if letter(c) {
+            var end = i + 1usize;
+            while letter(at(&cx, line, end)) || digit(at(&cx, line, end)) { end = end + 1usize; }
+            let word = line.slice(i, end);
+            out = if keyword(&cx, word) { marked(&cx, out, "keyword", word) }
+                else if type_word(&cx, word) { marked(&cx, out, "type", word) }
+                else { escaped(&cx, out, word) };
+            i = end;
+        } else if digit(c) {
+            var end = i + 1usize;
+            while digit(at(&cx, line, end)) || at(&cx, line, end) == b'_' { end = end + 1usize; }
+            out = marked(&cx, out, "number", line.slice(i, end));
+            i = end;
+        } else {
+            out = escaped(&cx, out, line.slice(i, i + 1usize));
+            i = i + 1usize;
+        }
+    }
+    out
+}
+
+forall 'k.
+fn render_line(&cx: Domain!['k], language: Span['k], line: Span['k]) -> Buffer! {
+    if language.is(&cx, "kursal") { kursal_line(&cx, line) }
+    else { escaped(&cx, Buffer!::new(), line) }
+}

@@ -27,12 +27,17 @@ output = "dist"
 layouts = "_includes"
 data = "_data/site.toml"
 assets = "assets"
+base_path = ""
 ```
 
 All paths are relative. `input` and `output` are relative to the site root;
 the other paths are relative to `input`. The values above are the defaults.
 The site data file and assets directory are optional. The output directory
 must be outside the input directory.
+Set `base_path` to a path such as `"/docs"` when mounting the
+generated output there. The default empty string serves the site at `/`.
+Krayon keeps page URLs and output paths unprefixed, and exposes the setting as
+`site.base_path`.
 
 A site can contain Markdown (`.md`) and HTML (`.html`) pages anywhere under
 `input`. Krayon copies `assets` recursively and omits layouts and data from
@@ -74,6 +79,12 @@ substitutions fail the build. Markdown page bodies are rendered as Markdown;
 template expressions are evaluated in HTML pages and layouts. Raw HTML in
 Markdown is passed through deliberately.
 
+Use `{{ page.url | url }}` or `{{ "/assets/site.css" | url }}`
+in templates to prefix a root relative local URL. The filter leaves external,
+protocol relative, relative, and fragment URLs alone. Markdown links with root
+relative targets are prefixed automatically; raw HTML in Markdown is passed
+through as written.
+
 Loop sources can be filtered with `children_of`, `where`, and `group_by`:
 
 ```html
@@ -94,6 +105,9 @@ The current Markdown renderer supports ATX headings, paragraphs, links, inline
 code, emphasis, strong text, fenced code blocks, flat ordered and unordered
 lists, and pipe tables. It is a documented subset, not a complete CommonMark
 implementation.
+Fenced `kursal` code receives token classes for keywords, types,
+strings, numbers, and comments. Other fence languages remain escaped plain
+text.
 ATX headings may end with explicit attributes, such as
 `### Function {#api-function .item-heading .kind-fn}`. IDs must be unique
 within a Markdown page. Attribute names may contain ASCII letters, digits,

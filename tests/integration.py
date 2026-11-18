@@ -102,6 +102,53 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("duplicate heading ID", result.stderr)
 
+    def test_base_path_applies_to_template_and_markdown_links(self):
+        config = self.site / "krayon.toml"
+        config.write_text(config.read_text() + 'base_path = "/docs/v1"\n')
+        archive = self.site / "src/archive.html"
+        archive.write_text(archive.read_text().replace("{{ entry.url }}", "{{ entry.url | url }}"))
+        layout = self.site / "src/_includes/base.html"
+        layout.write_text(layout.read_text().replace('href="/"', 'href="{{ "/" | url }}"')
+                          .replace('href="/assets/css/site.css"',
+                                   'href="{{ "/assets/css/site.css" | url }}"'))
+        (self.site / "src/links.md").write_text(
+            "[Home](/) [Note](/guide/intro/?q=1&x=2) "
+            "[Local](next/) [Section](#part) [External](https://example.org/)\n")
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/links/index.html").read_text()
+        self.assertIn('href="/docs/v1/"', html)
+        self.assertIn('href="/docs/v1/guide/intro/?q=1&amp;x=2"', html)
+        self.assertIn('href="next/"', html)
+        self.assertIn('href="#part"', html)
+        self.assertIn('href="https://example.org/"', html)
+        archive_html = (self.site / "dist/archive/index.html").read_text()
+        self.assertIn('href="/docs/v1/guide/intro/"', archive_html)
+        self.assertIn('href="/docs/v1/assets/css/site.css"', archive_html)
+        self.assertIn('href="https://example.org/source', archive_html)
+
+    def test_invalid_base_path_is_an_error(self):
+        config = self.site / "krayon.toml"
+        config.write_text(config.read_text() + 'base_path = "/docs/../private"\n')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsafe base_path", result.stderr)
+
+    def test_kursal_fence_highlights_and_unknown_language_stays_plain(self):
+        fence = chr(96) * 3
+        (self.site / "src/code.md").write_text(
+            f'{fence}kursal\nfn answer() -> usize {{ 42 }} // <note>\n'
+            f'let text = "a&b"\n{fence}\n\n{fence}other\nfn <x>\n{fence}\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/code/index.html").read_text()
+        self.assertIn('<span class="tok-keyword">fn</span> answer()', html)
+        self.assertIn('<span class="tok-type">usize</span>', html)
+        self.assertIn('<span class="tok-number">42</span>', html)
+        self.assertIn('<span class="tok-comment">// &lt;note&gt;</span>', html)
+        self.assertIn('<span class="tok-string">&quot;a&amp;b&quot;</span>', html)
+        self.assertIn('<code class="language-other">fn &lt;x&gt;', html)
+
     def test_missing_loop_source_is_an_error(self):
         archive = self.site / "src/archive.html"
         archive.write_text(archive.read_text().replace("collections.pages", "collections.missing"))

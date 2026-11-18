@@ -7,3 +7,6 @@ path="../../../kursal/lib/std"
 
 [dependencies.toml]
 path="../../../kursal/lib/toml"
+
+[dependencies.url]
+path="../url"

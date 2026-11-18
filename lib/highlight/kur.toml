@@ -1,0 +1,6 @@
+[package]
+name="highlight"
+source_root="."
+
+[dependencies.std]
+path="../../../kursal/lib/std"

@@ -13,3 +13,6 @@ path="../markdown"
 
 [dependencies.html]
 path="../html"
+
+[dependencies.url]
+path="../url"
