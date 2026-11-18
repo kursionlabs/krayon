@@ -40,8 +40,10 @@ page discovery. `index.md` becomes `/index.html`, `guide/setup.md` becomes
 `/guide/setup/index.html`, and `guide/index.md` becomes
 `/guide/index.html`. A page can set a `permalink` ending in `/` or `.html`.
 Krayon fails on output collisions, unsafe paths, missing layouts, and template
-errors. It writes into the output directory without clearing older files;
-use a fresh output directory for deployment builds.
+errors. It renders into a staging directory and replaces the configured output
+only after a successful build. A failed render leaves the previous output
+intact. Krayon owns the output directory and removes its previous contents on
+a successful rebuild, including files placed there by hand.
 
 Pages and layouts may start with TOML front matter between `+++` lines:
 

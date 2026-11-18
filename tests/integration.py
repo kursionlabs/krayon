@@ -68,6 +68,7 @@ class BuildTests(unittest.TestCase):
         result = self.build()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("site.missing", result.stderr)
+        self.assertFalse((self.site / "dist").exists())
 
     def test_unsafe_permalink_is_an_error(self):
         note = self.site / "src/notes/first.md"
@@ -120,6 +121,57 @@ class BuildTests(unittest.TestCase):
         result = self.build()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("A site", (self.site / "dist/index.html").read_text())
+
+    def test_rebuild_replaces_output_and_removes_stale_pages(self):
+        self.assertEqual(self.build().returncode, 0)
+        (self.site / "dist/stale.txt").write_text("old output")
+        (self.site / "src/notes/first.md").unlink()
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.site / "dist/guide").exists())
+        self.assertFalse((self.site / "dist/stale.txt").exists())
+        self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
+
+    def test_failed_rebuild_preserves_previous_output(self):
+        self.assertEqual(self.build().returncode, 0)
+        original = (self.site / "dist/index.html").read_bytes()
+        layout = self.site / "src/_includes/base.html"
+        layout.write_text(layout.read_text() + "{{ site.unknown }}\n")
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.site / "dist/index.html").read_bytes(), original)
+        self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
+
+    def test_cleanup_does_not_follow_output_symlinks(self):
+        self.assertEqual(self.build().returncode, 0)
+        outside = Path(self.temp.name) / "outside"
+        outside.mkdir()
+        sentinel = outside / "keep.txt"
+        sentinel.write_text("untouched")
+        (self.site / "dist/external").symlink_to(outside, target_is_directory=True)
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sentinel.read_text(), "untouched")
+        self.assertFalse((self.site / "dist/external").exists())
+
+    def test_output_symlink_is_refused(self):
+        outside = Path(self.temp.name) / "outside"
+        outside.mkdir()
+        (outside / "keep.txt").write_text("untouched")
+        (self.site / "dist").symlink_to(outside, target_is_directory=True)
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("output may not be a symlink", result.stderr)
+        self.assertEqual((outside / "keep.txt").read_text(), "untouched")
+
+    def test_output_parent_symlink_into_input_is_refused(self):
+        (self.site / "linked").symlink_to(self.site / "src", target_is_directory=True)
+        config = self.site / "krayon.toml"
+        config.write_text(config.read_text().replace('output = "dist"',
+                                                    'output = "linked/dist"'))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("output must be outside input", result.stderr)
 
 
 if __name__ == "__main__":

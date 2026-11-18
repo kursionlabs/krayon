@@ -1,7 +1,7 @@
 use std::alloc::arena::Domain!;
 use std::bytes::buffer::Buffer!;
 use std::collections::arena_map::ArenaMap;
-use std::fs::{FileKind, metadata, path_exists, read_dir, read_to_arena, mkdir, write};
+use std::fs::{FileKind, canonicalize, metadata, path_exists, read_dir, read_to_arena, mkdir, remove, rename, write};
 use std::option::{Option, Result};
 use std::raw::Span;
 use std::slice::Slice;
@@ -9,6 +9,8 @@ use toml::parse;
 use toml::value::TomlValue;
 use html::{Page, parse_page, template};
 use markdown::markdown;
+
+extern "C" fn getpid() -> i32;
 
 forall 'k.
 struct Config {
@@ -41,7 +43,8 @@ forall 'k.
 fn join(&cx: Domain!['k], a: Span['k], b: Span['k]) -> Span['k] {
     if b.is_empty() { return a; }
     if a.is_empty() { return b; }
-    Buffer!::new().push_bytes(&cx, a).push_static("/").push_bytes(&cx, b).save(&cx)
+    let separator = if a.ends_with(&cx, lit(&cx, "/")) { "" } else { "/" };
+    Buffer!::new().push_bytes(&cx, a).push_static(separator).push_bytes(&cx, b).save(&cx)
 }
 
 forall 'k.
@@ -131,7 +134,7 @@ fn safe_path(&cx: Domain!['k], path: Span['k], absolute: bool) -> bool {
         if i == path.len() || byte(&cx, path, i) == b'/' {
             let part = path.slice(start, i);
             if part.is(&cx, ".") || part.is(&cx, "..") { return false; }
-            if part.is_empty() && i < path.len() { return false; }
+            if part.is_empty() && (i < path.len() || !absolute) { return false; }
             start = i + 1usize;
         } else if byte(&cx, path, i) == b'\\' || byte(&cx, path, i) == 0u8 { return false; }
         i = i + 1usize;
@@ -368,6 +371,136 @@ fn copy_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: us
 }
 
 forall 'k.
+fn real_path(&cx: Domain!['k], path: Span['k]) -> Result[Span['k], Buffer!] {
+    match canonicalize(&cx, path) {
+        Result::Ok(found) => Result::Ok.(found.save(&cx)),
+        Result::Err(e) => Result::Err.(report(&cx, "cannot resolve", path)),
+    }
+}
+
+forall 'k.
+fn basename(&cx: Domain!['k], path: Span['k]) -> Span['k] {
+    let directory = parent(&cx, path);
+    path.slice(if directory.is_empty() { 0usize } else { directory.len() + 1usize }, path.len())
+}
+
+// Walk only real directories under `root`. A directory symlink resolves to a
+// different path, so it is unlinked without following its target. A stale
+// dangling symlink is also removed as a file.
+forall 'k.
+fn remove_tree_at(&cx: Domain!['k], root: Span['k], path: Span['k], relative: Span['k], depth: usize) -> Result[(), Buffer!] {
+    if depth >= 64usize { return Result::Err.(report(&cx, "output tree too deep", path)); }
+    let opened = match read_dir(&cx, path) {
+        Result::Ok(directory) => directory,
+        Result::Err(e) => return Result::Err.(report(&cx, "cannot list output", path)),
+    };
+    var opened = opened;
+    var going = true;
+    while going {
+        match &opened.next() {
+            Result::Err(e) => { opened.close(); return Result::Err.(report(&cx, "cannot list output", path)); },
+            Result::Ok(next) => match next {
+                Option::None => { going = false; },
+                Option::Some(entry) => {
+                    let { name, is_directory } = entry;
+                    let name = name.save(&cx);
+                    let child = join(&cx, path, name);
+                    let child_rel = join(&cx, relative, name);
+                    let is_real_directory = match metadata(&cx, child) {
+                        Result::Ok(m) => match m.kind {
+                            FileKind::Directory => match real_path(&cx, child) {
+                                Result::Ok(actual) => actual.eq(&cx, join(&cx, root, child_rel)),
+                                Result::Err(message) => { message.destroy(); false },
+                            },
+                            _ => false,
+                        },
+                        Result::Err(e) => false,
+                    };
+                    let removed = if is_real_directory { remove_tree_at(&cx, root, child, child_rel, depth + 1usize) }
+                        else { match remove(&cx, child) {
+                            Result::Ok(nothing) => Result::Ok.(()),
+                            Result::Err(e) => Result::Err.(report(&cx, "cannot remove", child)),
+                        } };
+                    match removed {
+                        Result::Ok(nothing) => (),
+                        Result::Err(message) => { opened.close(); return Result::Err.(message); },
+                    }
+                },
+            },
+        }
+    }
+    if !opened.close().is_ok() { return Result::Err.(report(&cx, "cannot close output", path)); }
+    match remove(&cx, path) {
+        Result::Ok(nothing) => Result::Ok.(()),
+        Result::Err(e) => Result::Err.(report(&cx, "cannot remove", path)),
+    }
+}
+
+forall 'k.
+fn remove_tree(&cx: Domain!['k], path: Span['k]) -> Result[(), Buffer!] {
+    let root = real_path(&cx, path)?;
+    remove_tree_at(&cx, root, path, lit(&cx, ""), 0usize)
+}
+
+forall 'k.
+fn stage_paths(&cx: Domain!['k], output: Span['k]) -> Result[(Span['k], Span['k]), Buffer!] {
+    ensure_dir(&cx, parent(&cx, output))?;
+    var attempt = 0usize;
+    while attempt < 1000usize {
+        let base = Buffer!::new().push_bytes(&cx, output).push_static(".krayon-")
+            .push_i64(unsafe getpid() as i64).push_byte(b'-').push_usize(attempt).save(&cx);
+        let stage = Buffer!::new().push_bytes(&cx, base).push_static("-stage").save(&cx);
+        let backup = Buffer!::new().push_bytes(&cx, base).push_static("-previous").save(&cx);
+        if !exists_path(&cx, backup)? {
+            match mkdir(&cx, stage) {
+                Result::Ok(nothing) => return Result::Ok.((stage, backup)),
+                Result::Err(e) => if e.errno != 17i32 { return Result::Err.(report(&cx, "cannot create staging directory", stage)); },
+            }
+        }
+        attempt = attempt + 1usize;
+    }
+    Result::Err.(report(&cx, "cannot reserve staging directory", output))
+}
+
+forall 'k.
+fn check_output(&cx: Domain!['k], source: Span['k], output: Span['k]) -> Result[bool, Buffer!] {
+    let source_real = real_path(&cx, source)?;
+    let parent_real = real_path(&cx, parent(&cx, output))?;
+    let prefix = Buffer!::new().push_bytes(&cx, source_real).push_static("/").save(&cx);
+    if parent_real.eq(&cx, source_real) || parent_real.starts_with(&cx, prefix) {
+        return Result::Err.(report(&cx, "output must be outside input", output));
+    }
+    if !exists_path(&cx, output)? { return Result::Ok.(false); }
+    match metadata(&cx, output) {
+        Result::Ok(m) => match m.kind {
+            FileKind::Directory => (),
+            _ => return Result::Err.(report(&cx, "output is not a directory", output)),
+        },
+        Result::Err(e) => return Result::Err.(report(&cx, "cannot stat output", output)),
+    }
+    let actual = real_path(&cx, output)?;
+    let expected = join(&cx, parent_real, basename(&cx, output));
+    if !actual.eq(&cx, expected) { return Result::Err.(report(&cx, "output may not be a symlink", output)); }
+    Result::Ok.(true)
+}
+
+forall 'k.
+fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
+    scan_pages(&cx, build, lit(&cx, ""), 0usize)?;
+    let assets = join(&cx, build.source, build.assets);
+    if exists_path(&cx, assets)? { copy_assets(&cx, build, lit(&cx, ""), 0usize)?; }
+    Result::Ok.(())
+}
+
+forall 'k.
+fn clean_after_error(&cx: Domain!['k], stage: Span['k], message: Buffer!) -> Buffer! {
+    match remove_tree(&cx, stage) {
+        Result::Ok(nothing) => message,
+        Result::Err(cleanup) => message.push_buffer(cleanup),
+    }
+}
+
+forall 'k.
 fn build(&cx: Domain!['k], root: Span['k]) -> Result[(), Buffer!] {
     let config = read_config(&cx, root)?;
     if config.output.eq(&cx, config.input) || config.output.starts_with(&cx,
@@ -384,12 +517,35 @@ fn build(&cx: Domain!['k], root: Span['k]) -> Result[(), Buffer!] {
             Result::Err(e) => return Result::Err.(report_detail(&cx, site_file, lit(&cx, e.message))),
         }
     } else { ArenaMap::new(&cx) };
-    let build = Build.{ source, output, layouts: join(&cx, source, config.layouts), layouts_rel: config.layouts,
+    ensure_dir(&cx, parent(&cx, output))?;
+    let previous = check_output(&cx, source, output)?;
+    let (stage, backup) = stage_paths(&cx, output)?;
+    let build = Build.{ source, output: stage, layouts: join(&cx, source, config.layouts), layouts_rel: config.layouts,
         assets: config.assets, data_dir: parent(&cx, config.data),
         site_data, written: ArenaMap::new(&cx) };
-    ensure_dir(&cx, output)?;
-    scan_pages(&cx, build, lit(&cx, ""), 0usize)?;
-    let assets = join(&cx, source, config.assets);
-    if exists_path(&cx, assets)? { copy_assets(&cx, build, lit(&cx, ""), 0usize)?; }
+    match render_site(&cx, build) {
+        Result::Ok(nothing) => (),
+        Result::Err(message) => return Result::Err.(clean_after_error(&cx, stage, message)),
+    }
+    if previous {
+        match rename(&cx, output, backup) {
+            Result::Ok(nothing) => (),
+            Result::Err(e) => return Result::Err.(clean_after_error(&cx, stage, report(&cx, "cannot move previous output", output))),
+        }
+    }
+    match rename(&cx, stage, output) {
+        Result::Ok(nothing) => (),
+        Result::Err(e) => {
+            var message = report(&cx, "cannot install generated output", output);
+            if previous {
+                match rename(&cx, backup, output) {
+                    Result::Ok(nothing) => (),
+                    Result::Err(e) => { message = message.push_buffer(report(&cx, "cannot restore previous output", backup)); },
+                }
+            }
+            return Result::Err.(clean_after_error(&cx, stage, message));
+        },
+    }
+    if previous { remove_tree(&cx, backup)?; }
     Result::Ok.(())
 }
