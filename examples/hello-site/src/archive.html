@@ -1,0 +1,9 @@
++++
+title = "Archive"
+layout = "base.html"
++++
+<h1>{{ page.title }}</h1>
+<ul>
+{% for entry in collections.pages %}{% if entry.title %}<li><a href="{{ entry.url }}">{{ entry.title }}</a></li>{% endif %}{% endfor %}
+</ul>
+{% for group in site.topics %}{% for topic in group %}<span>{{ topic }}</span>{% endfor %}{% endfor %}

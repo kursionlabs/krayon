@@ -22,6 +22,12 @@ struct Frame {
 }
 
 forall 'k.
+struct Binding {
+    name: Span['k],
+    value: TomlValue['k],
+}
+
+forall 'k.
 fn lit(&cx: Domain!['k], text: Slice[u8, 'static]) -> Span['k] { Span::from_static(&cx, text) }
 
 forall 'k.
@@ -79,7 +85,9 @@ fn scalar(&cx: Domain!['k], value: TomlValue['k]) -> Option[Span['k]] {
 }
 
 forall 'k.
-fn lookup(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k], expression: Span['k]) -> Option[TomlValue['k]] {
+fn lookup(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
+    collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k],
+    bindings: ArenaVec[Binding['k], 'k], expression: Span['k]) -> Option[TomlValue['k]] {
     var path = expression;
     var table = site;
     if starts(&cx, path, "site.") { path = path.slice(5usize, path.len()); }
@@ -87,7 +95,35 @@ fn lookup(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k], page: P
         path = path.slice(5usize, path.len());
         if path.is(&cx, "url") { return Option::Some.(TomlValue::String.(page.url)); }
         table = page.data;
-    } else { return Option::None; }
+    } else if starts(&cx, path, "collections.") {
+        path = path.slice(12usize, path.len());
+        table = collections;
+    } else {
+        let dot = path.find_byte(&cx, b'.', 0usize);
+        let root = match dot { Option::Some(i) => path.slice(0usize, i), Option::None => path };
+        var i = bindings.len(&cx);
+        while i > 0usize {
+            i = i - 1usize;
+            let binding = bindings.at(&cx, i);
+            if binding.name.eq(&cx, root) {
+                return match dot {
+                    Option::None => Option::Some.(binding.value),
+                    Option::Some(at) => match binding.value.as_table() {
+                        Option::None => Option::None,
+                        Option::Some(found) => lookup_table(&cx, found, path.slice(at + 1usize, path.len())),
+                    },
+                };
+            }
+        }
+        return Option::None;
+    }
+    lookup_table(&cx, table, path)
+}
+
+forall 'k.
+fn lookup_table(&cx: Domain!['k], start: ArenaMap[Span['k], TomlValue['k], 'k], path: Span['k]) -> Option[TomlValue['k]] {
+    var table = start;
+    var path = path;
     while true {
         match path.find_byte(&cx, b'.', 0usize) {
             Option::Some(dot) => {
@@ -118,13 +154,15 @@ fn literal(&cx: Domain!['k], text: Span['k]) -> Option[Span['k]] {
 }
 
 forall 'k.
-fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k], expr: Span['k], content: Span['k]) -> Option[Span['k]] {
+fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
+    collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k], bindings: ArenaVec[Binding['k], 'k],
+    expr: Span['k], content: Span['k]) -> Option[Span['k]] {
     let expr = expr.trim(&cx);
     if expr.is(&cx, "content") || expr.is(&cx, "content | safe") { return Option::Some.(content); }
     match expr.find(&cx, lit(&cx, " or "), 0usize) {
         Option::Some(at) => {
             let left = expr.slice(0usize, at).trim(&cx);
-            match lookup(&cx, site, page, left) {
+            match lookup(&cx, site, collections, page, bindings, left) {
                 Option::Some(v) => match scalar(&cx, v) {
                     Option::Some(s) => if !s.is_empty() { return Option::Some.(s); },
                     Option::None => (),
@@ -133,7 +171,7 @@ fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k], page: 
             }
             literal(&cx, expr.slice(at + 4usize, expr.len()))
         },
-        Option::None => match lookup(&cx, site, page, expr) {
+        Option::None => match lookup(&cx, site, collections, page, bindings, expr) {
             Option::None => Option::None,
             Option::Some(v) => scalar(&cx, v),
         },
@@ -141,11 +179,13 @@ fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k], page: 
 }
 
 forall 'k.
-fn truth(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k], expr: Span['k], content: Span['k]) -> bool {
+fn truth(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
+    collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k], bindings: ArenaVec[Binding['k], 'k],
+    expr: Span['k], content: Span['k]) -> bool {
     let expr = expr.trim(&cx);
     match expr.find(&cx, lit(&cx, " == "), 0usize) {
         Option::Some(at) => {
-            let left = resolve(&cx, site, page, expr.slice(0usize, at), content);
+            let left = resolve(&cx, site, collections, page, bindings, expr.slice(0usize, at), content);
             let right = literal(&cx, expr.slice(at + 4usize, expr.len()));
             match left {
                 Option::None => false,
@@ -155,7 +195,7 @@ fn truth(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k], page: Pa
                 },
             }
         },
-        Option::None => match resolve(&cx, site, page, expr, content) {
+        Option::None => match resolve(&cx, site, collections, page, bindings, expr, content) {
             Option::None => false,
             Option::Some(s) => !s.is_empty() && !s.is(&cx, "false") && !s.is(&cx, "0"),
         },
@@ -179,11 +219,56 @@ fn escape(&cx: Domain!['k], out: Buffer!, text: Span['k]) -> Buffer! {
     out
 }
 
+forall 'k.
+fn valid_name(&cx: Domain!['k], name: Span['k]) -> bool {
+    if name.is_empty() || name.is(&cx, "site") || name.is(&cx, "page") || name.is(&cx, "collections") || name.is(&cx, "content") {
+        return false;
+    }
+    var i = 0usize;
+    while i < name.len() {
+        let c = byte(&cx, name, i);
+        let letter = (c >= b'a' && c <= b'z') || (c >= b'A' && c <= b'Z') || c == b'_';
+        let digit = c >= b'0' && c <= b'9';
+        if !letter && (i == 0usize || !digit) { return false; }
+        i = i + 1usize;
+    }
+    true
+}
+
+// The start and end of the endfor tag matching a for whose body starts at
+// `start`. Nested for blocks increase the depth; if blocks do not affect it.
+forall 'k.
+fn find_endfor(&cx: Domain!['k], source: Span['k], start: usize) -> Option[(usize, usize)] {
+    var depth = 1usize;
+    var pos = start;
+    while pos < source.len() {
+        let opening = match source.find(&cx, lit(&cx, "{%"), pos) {
+            Option::Some(at) => at,
+            Option::None => return Option::None,
+        };
+        let close = match source.find(&cx, lit(&cx, "%}"), opening + 2usize) {
+            Option::Some(at) => at,
+            Option::None => return Option::None,
+        };
+        let directive = source.slice(opening + 2usize, close).trim(&cx);
+        if starts(&cx, directive, "for ") { depth = depth + 1usize; }
+        else if directive.is(&cx, "endfor") {
+            depth = depth - 1usize;
+            if depth == 0usize { return Option::Some.((opening, close + 2usize)); }
+        }
+        pos = close + 2usize;
+    }
+    Option::None
+}
+
 // The template language has escaped variables, an explicit safe filter for
-// rendered content, and nested if/else/endif blocks. Unknown substitutions
+// rendered content, nested if/else/endif and for/endfor blocks. Unknown substitutions
 // and malformed directives fail the build.
 forall 'k.
-fn template(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k], source: Span['k], content: Span['k]) -> Result[Buffer!, Span['k]] {
+fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
+    collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k], bindings: ArenaVec[Binding['k], 'k],
+    source: Span['k], content: Span['k], depth: usize) -> Result[Buffer!, Span['k]] {
+    if depth >= 64usize { return Result::Err.(lit(&cx, "template loops nested too deeply")); }
     var out = Buffer!::new();
     let stack = ArenaVec::new(&cx);
     var active = true;
@@ -195,7 +280,7 @@ fn template(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k], page:
                 Option::Some(end) => {
                     if active {
                         let expr = source.slice(pos + 2usize, end).trim(&cx);
-                        match resolve(&cx, site, page, expr, content) {
+                        match resolve(&cx, site, collections, page, bindings, expr, content) {
                             Option::None => { out.destroy(); return Result::Err.(expr); },
                             Option::Some(value) => {
                                 if expr.is(&cx, "content | safe") { out = out.push_bytes(&cx, value); }
@@ -211,8 +296,9 @@ fn template(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k], page:
                 Option::None => { out.destroy(); return Result::Err.(lit(&cx, "unclosed directive")); },
                 Option::Some(end) => {
                     let directive = source.slice(pos + 2usize, end).trim(&cx);
+                    var after = end + 2usize;
                     if starts(&cx, directive, "if ") {
-                        let matched = active && truth(&cx, site, page, directive.slice(3usize, directive.len()), content);
+                        let matched = active && truth(&cx, site, collections, page, bindings, directive.slice(3usize, directive.len()), content);
                         stack.push(&cx, Frame.{ parent: active, matched, else_seen: false });
                         active = matched;
                     } else if directive.is(&cx, "else") {
@@ -229,8 +315,44 @@ fn template(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k], page:
                             Option::None => { out.destroy(); return Result::Err.(lit(&cx, "endif without if")); },
                             Option::Some(frame) => { active = frame.parent; },
                         }
+                    } else if starts(&cx, directive, "for ") {
+                        let clause = directive.slice(4usize, directive.len());
+                        let separator = match clause.find(&cx, lit(&cx, " in "), 0usize) {
+                            Option::Some(at) => at,
+                            Option::None => { out.destroy(); return Result::Err.(directive); },
+                        };
+                        let name = clause.slice(0usize, separator).trim(&cx);
+                        let items = clause.slice(separator + 4usize, clause.len()).trim(&cx);
+                        if !valid_name(&cx, name) { out.destroy(); return Result::Err.(directive); }
+                        let (body_end, tag_end) = match find_endfor(&cx, source, after) {
+                            Option::Some(positions) => positions,
+                            Option::None => { out.destroy(); return Result::Err.(lit(&cx, "unclosed for")); },
+                        };
+                        if active {
+                            let values = match lookup(&cx, site, collections, page, bindings, items) {
+                                Option::Some(value) => match value.as_array() {
+                                    Option::Some(array) => array,
+                                    Option::None => { out.destroy(); return Result::Err.(items); },
+                                },
+                                Option::None => { out.destroy(); return Result::Err.(items); },
+                            };
+                            var i = 0usize;
+                            while i < values.len(&cx) {
+                                bindings.push(&cx, Binding.{ name, value: values.at(&cx, i) });
+                                let part = render_scope(&cx, site, collections, page, bindings, source.slice(after, body_end), content, depth + 1usize);
+                                let popped = bindings.pop(&cx);
+                                match part {
+                                    Result::Ok(html) => { out = out.push_buffer(html); },
+                                    Result::Err(message) => { out.destroy(); return Result::Err.(message); },
+                                }
+                                i = i + 1usize;
+                            }
+                        }
+                        after = tag_end;
+                    } else if directive.is(&cx, "endfor") {
+                        out.destroy(); return Result::Err.(lit(&cx, "endfor without for"));
                     } else { out.destroy(); return Result::Err.(directive); }
-                    pos = end + 2usize;
+                    pos = after;
                 },
             }
         } else {
@@ -240,4 +362,11 @@ fn template(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k], page:
     }
     if stack.len(&cx) != 0usize { out.destroy(); Result::Err.(lit(&cx, "unclosed if")) }
     else { Result::Ok.(out) }
+}
+
+forall 'k.
+fn template(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
+    collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k],
+    source: Span['k], content: Span['k]) -> Result[Buffer!, Span['k]] {
+    render_scope(&cx, site, collections, page, ArenaVec::new(&cx), source, content, 0usize)
 }

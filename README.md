@@ -66,8 +66,13 @@ are available as `site.title`, `site.links.repository`, and other dotted keys.
 Templates use `{{ page.title }}` for escaped output and `{{ content | safe }}`
 for rendered page or layout HTML. They support `or` with a quoted fallback,
 `{% if ... %}`, `{% else %}`, and `{% endif %}`. Conditions can test a value
-or compare it to a quoted string with `==`. Unknown substitutions fail the
-build. Raw HTML in Markdown is passed through deliberately.
+or compare it to a quoted string with `==`. An HTML page can list all pages,
+ordered by URL, with `{% for entry in collections.pages %}` and
+`{% endfor %}`. Each entry has its front matter fields and a resolved `url`.
+Loops also work over arrays in site data and can be nested. Unknown
+substitutions fail the build. Markdown page bodies are rendered as Markdown;
+template expressions are evaluated in HTML pages and layouts. Raw HTML in
+Markdown is passed through deliberately.
 
 The current Markdown renderer supports ATX headings, paragraphs, links, inline
 code, emphasis, strong text, fenced code blocks, flat ordered and unordered

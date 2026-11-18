@@ -1,6 +1,7 @@
 use std::alloc::arena::Domain!;
 use std::bytes::buffer::Buffer!;
 use std::collections::arena_map::ArenaMap;
+use std::collections::arena_vec::ArenaVec;
 use std::fs::{FileKind, canonicalize, metadata, path_exists, read_dir, read_to_arena, mkdir, remove, rename, write};
 use std::option::{Option, Result};
 use std::raw::Span;
@@ -30,7 +31,17 @@ struct Build {
     assets: Span['k],
     data_dir: Span['k],
     site_data: ArenaMap[Span['k], TomlValue['k], 'k],
+    collections: ArenaMap[Span['k], TomlValue['k], 'k],
+    pages: ArenaVec[SourcePage['k], 'k],
     written: ArenaMap[Span['k], Span['k], 'k],
+}
+
+forall 'k.
+struct SourcePage {
+    file: Span['k],
+    page: Page['k],
+    is_markdown: bool,
+    destination: Span['k],
 }
 
 forall 'k.
@@ -242,7 +253,7 @@ fn render_layout(&cx: Domain!['k], build: Build['k], page: Page['k], content: Sp
         Result::Ok(layout) => layout,
         Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
     };
-    let rendered = match template(&cx, build.site_data, page, layout.body, content) {
+    let rendered = match template(&cx, build.site_data, build.collections, page, layout.body, content) {
         Result::Ok(html) => html.save(&cx),
         Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
     };
@@ -253,7 +264,7 @@ fn render_layout(&cx: Domain!['k], build: Build['k], page: Page['k], content: Sp
 }
 
 forall 'k.
-fn render_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Result[(), Buffer!] {
+fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Result[(), Buffer!] {
     let file = join(&cx, build.source, relative);
     let source = load(&cx, file)?;
     let is_markdown = relative.ends_with(&cx, lit(&cx, ".md"));
@@ -272,16 +283,23 @@ fn render_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Result
     let page = Page.{ data: parsed.data, url, body: parsed.body };
     let destination = output_for_url(&cx, build.output, url)?;
     claim(&cx, build, destination, file)?;
-    let body = if is_markdown { markdown(&cx, page.body).save(&cx) }
-        else { match template(&cx, build.site_data, page, page.body, lit(&cx, "")) {
+    build.pages.push(&cx, SourcePage.{ file, page, is_markdown, destination });
+    Result::Ok.(())
+}
+
+forall 'k.
+fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Result[(), Buffer!] {
+    let page = source.page;
+    let body = if source.is_markdown { markdown(&cx, page.body).save(&cx) }
+        else { match template(&cx, build.site_data, build.collections, page, page.body, lit(&cx, "")) {
             Result::Ok(html) => html.save(&cx),
-            Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
+            Result::Err(message) => return Result::Err.(report_detail(&cx, source.file, message)),
         } };
     let rendered = match layout_name(&cx, page.data)? {
         Option::None => body,
         Option::Some(name) => render_layout(&cx, build, page, body, name, 0usize)?,
     };
-    save(&cx, destination, Buffer!::new().push_bytes(&cx, rendered))
+    save(&cx, source.destination, Buffer!::new().push_bytes(&cx, rendered))
 }
 
 forall 'k.
@@ -310,7 +328,7 @@ fn scan_pages(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usi
                             Result::Err(message) => { directory.close(); return Result::Err.(message); },
                         }
                     } else if child.ends_with(&cx, lit(&cx, ".md")) || child.ends_with(&cx, lit(&cx, ".html")) {
-                        match render_page(&cx, build, child) {
+                        match collect_page(&cx, build, child) {
                             Result::Ok(nothing) => (),
                             Result::Err(message) => { directory.close(); return Result::Err.(message); },
                         }
@@ -485,8 +503,39 @@ fn check_output(&cx: Domain!['k], source: Span['k], output: Span['k]) -> Result[
 }
 
 forall 'k.
+fn collection_item(&cx: Domain!['k], page: Page['k]) -> TomlValue['k] {
+    let fields = ArenaMap::new(&cx);
+    var i = 0usize;
+    while i < page.data.positions(&cx) {
+        match page.data.key_at(&cx, i) {
+            Option::None => (),
+            Option::Some(key) => match page.data.get(&cx, key) {
+                Option::None => (),
+                Option::Some(value) => { let replaced = fields.insert(&cx, key, value); },
+            },
+        }
+        i = i + 1usize;
+    }
+    let replaced = fields.insert(&cx, lit(&cx, "url"), TomlValue::String.(page.url));
+    TomlValue::Table.(fields)
+}
+
+forall 'k.
 fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
     scan_pages(&cx, build, lit(&cx, ""), 0usize)?;
+    build.pages.sort_by(&cx, |&cx, a, b| a.page.url.cmp(&cx, b.page.url));
+    let all = ArenaVec::new(&cx);
+    var i = 0usize;
+    while i < build.pages.len(&cx) {
+        all.push(&cx, collection_item(&cx, build.pages.at(&cx, i).page));
+        i = i + 1usize;
+    }
+    let replaced = build.collections.insert(&cx, lit(&cx, "pages"), TomlValue::Array.(all));
+    i = 0usize;
+    while i < build.pages.len(&cx) {
+        render_page(&cx, build, build.pages.at(&cx, i))?;
+        i = i + 1usize;
+    }
     let assets = join(&cx, build.source, build.assets);
     if exists_path(&cx, assets)? { copy_assets(&cx, build, lit(&cx, ""), 0usize)?; }
     Result::Ok.(())
@@ -522,7 +571,7 @@ fn build(&cx: Domain!['k], root: Span['k]) -> Result[(), Buffer!] {
     let (stage, backup) = stage_paths(&cx, output)?;
     let build = Build.{ source, output: stage, layouts: join(&cx, source, config.layouts), layouts_rel: config.layouts,
         assets: config.assets, data_dir: parent(&cx, config.data),
-        site_data, written: ArenaMap::new(&cx) };
+        site_data, collections: ArenaMap::new(&cx), pages: ArenaVec::new(&cx), written: ArenaMap::new(&cx) };
     match render_site(&cx, build) {
         Result::Ok(nothing) => (),
         Result::Err(message) => return Result::Err.(clean_after_error(&cx, stage, message)),

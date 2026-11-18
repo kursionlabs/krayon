@@ -41,7 +41,7 @@ class BuildTests(unittest.TestCase):
         files = {p.relative_to(self.site / "dist").as_posix()
                  for p in (self.site / "dist").rglob("*") if p.is_file()}
         self.assertEqual(files, {
-            "index.html", "guide/intro/index.html", "assets/css/site.css"
+            "index.html", "archive/index.html", "guide/intro/index.html", "assets/css/site.css"
         })
         home = (self.site / "dist/index.html").read_text()
         note = (self.site / "dist/guide/intro/index.html").read_text()
@@ -53,6 +53,29 @@ class BuildTests(unittest.TestCase):
         self.assertIn("https://example.org/source?a=1&amp;b=2", note)
         self.assertEqual((self.site / "dist/assets/css/site.css").read_text(),
                          "body { font-family: sans-serif; }\n")
+
+    def test_collections_and_nested_loops(self):
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        archive = (self.site / "dist/archive/index.html").read_text()
+        self.assertLess(archive.index('href="/">Home'), archive.index('href="/archive/">Archive'))
+        self.assertLess(archive.index('href="/archive/">Archive'),
+                        archive.index('href="/guide/intro/">First note'))
+        self.assertIn("<span>Kursal</span><span>Krayon</span><span>Static</span>", archive)
+
+    def test_missing_loop_source_is_an_error(self):
+        archive = self.site / "src/archive.html"
+        archive.write_text(archive.read_text().replace("collections.pages", "collections.missing"))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("collections.missing", result.stderr)
+
+    def test_unclosed_loop_is_an_error(self):
+        archive = self.site / "src/archive.html"
+        archive.write_text(archive.read_text().replace("{% endfor %}", "", 1))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unclosed for", result.stderr)
 
     def test_output_collision_is_an_error(self):
         (self.site / "src/duplicate.md").write_text(
