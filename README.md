@@ -74,10 +74,30 @@ substitutions fail the build. Markdown page bodies are rendered as Markdown;
 template expressions are evaluated in HTML pages and layouts. Raw HTML in
 Markdown is passed through deliberately.
 
+Loop sources can be filtered with `children_of`, `where`, and `group_by`:
+
+```html
+{% for child in collections.pages | children_of: page.url %}{{ child.title }}{% endfor %}
+{% for item in page.nav_items | where: "kind", "function" %}{{ item.name }}{% endfor %}
+{% for group in page.nav_items | group_by: "kind" %}
+  {{ group.key }}{% for item in group.items %}{{ item.name }}{% endfor %}
+{% endfor %}
+```
+
+`children_of` matches a record's `parent` URL or any URL in its `parents`
+array. These relationships are explicit front matter; URL nesting has no
+effect. `where` compares a scalar field to a quoted value or template field.
+`group_by` preserves first-seen group order and produces records with `key`
+and `items`. All three work on arrays of records, including `collections.pages`.
+
 The current Markdown renderer supports ATX headings, paragraphs, links, inline
 code, emphasis, strong text, fenced code blocks, flat ordered and unordered
 lists, and pipe tables. It is a documented subset, not a complete CommonMark
 implementation.
+ATX headings may end with explicit attributes, such as
+`### Function {#api-function .item-heading .kind-fn}`. IDs must be unique
+within a Markdown page. Attribute names may contain ASCII letters, digits,
+hyphens, underscores, and colons.
 
 ## Code and checks
 

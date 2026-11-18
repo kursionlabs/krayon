@@ -290,7 +290,10 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Resul
 forall 'k.
 fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Result[(), Buffer!] {
     let page = source.page;
-    let body = if source.is_markdown { markdown(&cx, page.body).save(&cx) }
+    let body = if source.is_markdown { match markdown(&cx, page.body) {
+            Result::Ok(html) => html.save(&cx),
+            Result::Err(message) => return Result::Err.(report_detail(&cx, source.file, message)),
+        } }
         else { match template(&cx, build.site_data, build.collections, page, page.body, lit(&cx, "")) {
             Result::Ok(html) => html.save(&cx),
             Result::Err(message) => return Result::Err.(report_detail(&cx, source.file, message)),

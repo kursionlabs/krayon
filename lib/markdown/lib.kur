@@ -1,6 +1,7 @@
 use std::alloc::arena::Domain!;
 use std::bytes::buffer::Buffer!;
-use std::option::Option;
+use std::collections::arena_map::ArenaMap;
+use std::option::{Option, Result};
 use std::raw::Span;
 use std::slice::Slice;
 
@@ -121,6 +122,70 @@ fn heading_level(&cx: Domain!['k], line: Span['k]) -> usize {
 }
 
 forall 'k.
+fn attr_name(&cx: Domain!['k], name: Span['k]) -> bool {
+    if name.is_empty() { return false; }
+    var i = 0usize;
+    while i < name.len() {
+        let c = at(&cx, name, i);
+        if !((c >= b'a' && c <= b'z') || (c >= b'A' && c <= b'Z') ||
+            (c >= b'0' && c <= b'9') || c == b'-' || c == b'_' || c == b':') { return false; }
+        i = i + 1usize;
+    }
+    true
+}
+
+forall 'k.
+fn heading(&cx: Domain!['k], out: Buffer!, line: Span['k], level: usize,
+    ids: ArenaMap[Span['k], bool, 'k]) -> Result[Buffer!, Span['k]] {
+    var out = out;
+    var text = line.slice(level + 1usize, line.len());
+    var id = empty(&cx);
+    var classes = Buffer!::new();
+    var has_class = false;
+    if text.ends_with(&cx, lit(&cx, "}")) {
+        match text.find(&cx, lit(&cx, " {"), 0usize) {
+            Option::Some(marker) => {
+                let attrs = text.slice(marker + 2usize, text.len() - 1usize);
+                if attrs.is_empty() { classes.destroy(); out.destroy(); return Result::Err.(lit(&cx, "empty heading attributes")); }
+                text = text.slice(0usize, marker);
+                var pos = 0usize;
+                while pos < attrs.len() {
+                    while pos < attrs.len() && at(&cx, attrs, pos) == b' ' { pos = pos + 1usize; }
+                    if pos < attrs.len() {
+                        var end = pos;
+                        while end < attrs.len() && at(&cx, attrs, end) != b' ' { end = end + 1usize; }
+                        let token = attrs.slice(pos, end);
+                        let value = token.slice(1usize, token.len());
+                        if (at(&cx, token, 0usize) != b'#' && at(&cx, token, 0usize) != b'.') || !attr_name(&cx, value) {
+                            classes.destroy(); out.destroy(); return Result::Err.(lit(&cx, "invalid heading attribute"));
+                        }
+                        if at(&cx, token, 0usize) == b'#' {
+                            if !id.is_empty() { classes.destroy(); out.destroy(); return Result::Err.(lit(&cx, "duplicate heading ID attribute")); }
+                            id = value;
+                        } else {
+                            if has_class { classes = classes.push_byte(b' '); }
+                            classes = classes.push_bytes(&cx, value);
+                            has_class = true;
+                        }
+                        pos = end;
+                    }
+                }
+            },
+            Option::None => (),
+        }
+    }
+    if !id.is_empty() {
+        if ids.contains(&cx, id) { classes.destroy(); out.destroy(); return Result::Err.(lit(&cx, "duplicate heading ID")); }
+        ids.insert(&cx, id, true);
+    }
+    out = out.push_static("<h").push_usize(level);
+    if !id.is_empty() { out = out.push_static(" id=\"").push_bytes(&cx, id).push_static("\""); }
+    let class_text = classes.save(&cx);
+    if !class_text.is_empty() { out = out.push_static(" class=\"").push_bytes(&cx, class_text).push_static("\""); }
+    Result::Ok.(inline(&cx, out.push_static(">"), text).push_static("</h").push_usize(level).push_static(">\n"))
+}
+
+forall 'k.
 fn ordered_marker(&cx: Domain!['k], line: Span['k]) -> usize {
     var i = 0usize;
     while at(&cx, line, i) >= b'0' && at(&cx, line, i) <= b'9' { i = i + 1usize; }
@@ -129,8 +194,9 @@ fn ordered_marker(&cx: Domain!['k], line: Span['k]) -> usize {
 }
 
 forall 'k.
-fn markdown(&cx: Domain!['k], source: Span['k]) -> Buffer! {
+fn markdown(&cx: Domain!['k], source: Span['k]) -> Result[Buffer!, Span['k]] {
     var out = Buffer!::new();
+    let ids = ArenaMap::new(&cx);
     var pos = 0usize;
     var paragraph = false;
     var list = false;
@@ -173,8 +239,10 @@ fn markdown(&cx: Domain!['k], source: Span['k]) -> Buffer! {
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
             if list { out = out.push_static(if ordered { "</ol>\n" } else { "</ul>\n" }); list = false; }
             let level = heading_level(&cx, line);
-            out = inline(&cx, out.push_static("<h").push_usize(level).push_static(">"), line.slice(level + 1usize, line.len()))
-                .push_static("</h").push_usize(level).push_static(">\n");
+            out = match heading(&cx, out, line, level, ids) {
+                Result::Ok(html) => html,
+                Result::Err(message) => return Result::Err.(message),
+            };
         } else if starts(&cx, line, "- ") || starts(&cx, line, "* ") || starts(&cx, line, "+ ") {
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
             if list && ordered { out = out.push_static("</ol>\n"); list = false; }
@@ -202,5 +270,5 @@ fn markdown(&cx: Domain!['k], source: Span['k]) -> Buffer! {
     if list { out = out.push_static(if ordered { "</ol>\n" } else { "</ul>\n" }); }
     if code { out = out.push_static("</code></pre>\n"); }
     if table { out = out.push_static("</tbody>\n</table>\n"); }
-    out
+    Result::Ok.(out)
 }

@@ -28,6 +28,12 @@ struct Binding {
 }
 
 forall 'k.
+struct Group {
+    key: Span['k],
+    items: ArenaVec[TomlValue['k], 'k],
+}
+
+forall 'k.
 fn lit(&cx: Domain!['k], text: Slice[u8, 'static]) -> Span['k] { Span::from_static(&cx, text) }
 
 forall 'k.
@@ -235,6 +241,179 @@ fn valid_name(&cx: Domain!['k], name: Span['k]) -> bool {
     true
 }
 
+forall 'k.
+fn query_value(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
+    collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k],
+    bindings: ArenaVec[Binding['k], 'k], text: Span['k]) -> Option[Span['k]] {
+    match literal(&cx, text) {
+        Option::Some(value) => Option::Some.(value),
+        Option::None => match lookup(&cx, site, collections, page, bindings, text.trim(&cx)) {
+            Option::Some(value) => scalar(&cx, value),
+            Option::None => Option::None,
+        },
+    }
+}
+
+forall 'k.
+fn query_array(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
+    collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k],
+    bindings: ArenaVec[Binding['k], 'k], expression: Span['k]) -> Result[ArenaVec[TomlValue['k], 'k], Span['k]] {
+    let first_pipe = match expression.find_byte(&cx, b'|', 0usize) {
+        Option::Some(at) => at,
+        Option::None => expression.len(),
+    };
+    let source = expression.slice(0usize, first_pipe).trim(&cx);
+    var values = match lookup(&cx, site, collections, page, bindings, source) {
+        Option::Some(value) => match value.as_array() {
+            Option::Some(array) => array,
+            Option::None => return Result::Err.(source),
+        },
+        Option::None => return Result::Err.(source),
+    };
+    var pos = first_pipe;
+    while pos < expression.len() {
+        let start = pos + 1usize;
+        let end = match expression.find_byte(&cx, b'|', start) {
+            Option::Some(at) => at,
+            Option::None => expression.len(),
+        };
+        let filter = expression.slice(start, end).trim(&cx);
+        let colon = match filter.find_byte(&cx, b':', 0usize) {
+            Option::Some(at) => at,
+            Option::None => return Result::Err.(filter),
+        };
+        let operation = filter.slice(0usize, colon).trim(&cx);
+        let arguments = filter.slice(colon + 1usize, filter.len()).trim(&cx);
+        if operation.is(&cx, "children_of") {
+            let parent = match query_value(&cx, site, collections, page, bindings, arguments) {
+                Option::Some(value) => value,
+                Option::None => return Result::Err.(filter),
+            };
+            let result = ArenaVec::new(&cx);
+            var i = 0usize;
+            while i < values.len(&cx) {
+                let value = values.at(&cx, i);
+                let table = match value.as_table() {
+                    Option::Some(table) => table,
+                    Option::None => return Result::Err.(filter),
+                };
+                var matches = false;
+                match table.get(&cx, lit(&cx, "parent")) {
+                    Option::Some(field) => match field.as_string() {
+                        Option::Some(url) => { matches = url.eq(&cx, parent); },
+                        Option::None => return Result::Err.(filter),
+                    },
+                    Option::None => (),
+                }
+                match table.get(&cx, lit(&cx, "parents")) {
+                    Option::Some(field) => match field.as_array() {
+                        Option::Some(parents) => {
+                            var j = 0usize;
+                            while j < parents.len(&cx) {
+                                match parents.at(&cx, j).as_string() {
+                                    Option::Some(url) => if url.eq(&cx, parent) { matches = true; },
+                                    Option::None => return Result::Err.(filter),
+                                }
+                                j = j + 1usize;
+                            }
+                        },
+                        Option::None => return Result::Err.(filter),
+                    },
+                    Option::None => (),
+                }
+                if matches { result.push(&cx, value); }
+                i = i + 1usize;
+            }
+            values = result;
+        } else if operation.is(&cx, "where") || operation.is(&cx, "group_by") {
+            let comma = arguments.find_byte(&cx, b',', 0usize);
+            if operation.is(&cx, "group_by") {
+                match comma { Option::Some(_) => return Result::Err.(filter), Option::None => (), }
+            }
+            let field_text = match comma {
+                Option::Some(at) => arguments.slice(0usize, at).trim(&cx),
+                Option::None => arguments,
+            };
+            let field_name = match literal(&cx, field_text) {
+                Option::Some(name) => name,
+                Option::None => return Result::Err.(filter),
+            };
+            if field_name.is_empty() { return Result::Err.(filter); }
+            if operation.is(&cx, "where") {
+                let comma_at = match comma {
+                    Option::Some(at) => at,
+                    Option::None => return Result::Err.(filter),
+                };
+                let target = match query_value(&cx, site, collections, page, bindings, arguments.slice(comma_at + 1usize, arguments.len())) {
+                    Option::Some(value) => value,
+                    Option::None => return Result::Err.(filter),
+                };
+                let result = ArenaVec::new(&cx);
+                var i = 0usize;
+                while i < values.len(&cx) {
+                    let value = values.at(&cx, i);
+                    let table = match value.as_table() {
+                        Option::Some(table) => table,
+                        Option::None => return Result::Err.(filter),
+                    };
+                    match table.get(&cx, field_name) {
+                        Option::Some(field) => match scalar(&cx, field) {
+                            Option::Some(text) => if text.eq(&cx, target) { result.push(&cx, value); },
+                            Option::None => (),
+                        },
+                        Option::None => (),
+                    }
+                    i = i + 1usize;
+                }
+                values = result;
+            } else {
+                let groups: ArenaVec[Group['k], 'k] = ArenaVec::new(&cx);
+                var i = 0usize;
+                while i < values.len(&cx) {
+                    let value = values.at(&cx, i);
+                    let table = match value.as_table() {
+                        Option::Some(table) => table,
+                        Option::None => return Result::Err.(filter),
+                    };
+                    let key = match table.get(&cx, field_name) {
+                        Option::Some(field) => match scalar(&cx, field) {
+                            Option::Some(text) => text,
+                            Option::None => return Result::Err.(filter),
+                        },
+                        Option::None => return Result::Err.(filter),
+                    };
+                    var found = false;
+                    var j = 0usize;
+                    while j < groups.len(&cx) && !found {
+                        let group = groups.at(&cx, j);
+                        if group.key.eq(&cx, key) { group.items.push(&cx, value); found = true; }
+                        j = j + 1usize;
+                    }
+                    if !found {
+                        let items = ArenaVec::new(&cx);
+                        items.push(&cx, value);
+                        groups.push(&cx, Group.{ key, items });
+                    }
+                    i = i + 1usize;
+                }
+                let result = ArenaVec::new(&cx);
+                var j = 0usize;
+                while j < groups.len(&cx) {
+                    let group = groups.at(&cx, j);
+                    let record = ArenaMap::new(&cx);
+                    record.insert(&cx, lit(&cx, "key"), TomlValue::String.(group.key));
+                    record.insert(&cx, lit(&cx, "items"), TomlValue::Array.(group.items));
+                    result.push(&cx, TomlValue::Table.(record));
+                    j = j + 1usize;
+                }
+                values = result;
+            }
+        } else { return Result::Err.(filter); }
+        pos = end;
+    }
+    Result::Ok.(values)
+}
+
 // The start and end of the endfor tag matching a for whose body starts at
 // `start`. Nested for blocks increase the depth; if blocks do not affect it.
 forall 'k.
@@ -329,12 +508,9 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                             Option::None => { out.destroy(); return Result::Err.(lit(&cx, "unclosed for")); },
                         };
                         if active {
-                            let values = match lookup(&cx, site, collections, page, bindings, items) {
-                                Option::Some(value) => match value.as_array() {
-                                    Option::Some(array) => array,
-                                    Option::None => { out.destroy(); return Result::Err.(items); },
-                                },
-                                Option::None => { out.destroy(); return Result::Err.(items); },
+                            let values = match query_array(&cx, site, collections, page, bindings, items) {
+                                Result::Ok(array) => array,
+                                Result::Err(message) => { out.destroy(); return Result::Err.(message); },
                             };
                             var i = 0usize;
                             while i < values.len(&cx) {

@@ -63,6 +63,45 @@ class BuildTests(unittest.TestCase):
                         archive.index('href="/guide/intro/">First note'))
         self.assertIn("<span>Kursal</span><span>Krayon</span><span>Static</span>", archive)
 
+    def test_page_queries_and_record_groups(self):
+        (self.site / "src/child.md").write_text('+++' '\nparent = "/archive/"\ntitle = "Child"\n+++' '\n# Child\n')
+        (self.site / "src/shared.md").write_text('+++' '\nparents = ["/", "/archive/"]\ntitle = "Shared"\n+++' '\n# Shared\n')
+        archive = self.site / "src/archive.html"
+        archive.write_text('+++' '\nlayout = "base.html"\ntitle = "Archive"\n'
+                           'nav_items = [{name = "Alpha", kind = "fn"}, '
+                           '{name = "Beta", kind = "type"}, '
+                           '{name = "Gamma", kind = "fn"}]\n+++' '\n'
+                           '{% for child in collections.pages | children_of: page.url %}'
+                           '<a href="{{ child.url }}">{{ child.title }}</a>{% endfor %}'
+                           '{% for item in page.nav_items | where: "kind", "fn" %}'
+                           '<b>{{ item.name }}</b>{% endfor %}'
+                           '{% for group in page.nav_items | group_by: "kind" %}'
+                           '<h2>{{ group.key }}</h2>'
+                           '{% for item in group.items %}<i>{{ item.name }}</i>{% endfor %}'
+                           '{% endfor %}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/archive/index.html").read_text()
+        self.assertIn('<a href="/child/">Child</a>', html)
+        self.assertIn('<a href="/shared/">Shared</a>', html)
+        self.assertNotIn('<a href="/">Home</a>', html)
+        self.assertIn('<b>Alpha</b><b>Gamma</b>', html)
+        self.assertIn('<h2>fn</h2><i>Alpha</i><i>Gamma</i><h2>type</h2><i>Beta</i>', html)
+
+    def test_explicit_heading_attributes(self):
+        (self.site / "src/heading.md").write_text(
+            "### Fetch & update {#api-fetch .item-heading .kind-fn}\n")
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/heading/index.html").read_text(),
+                         '<h3 id="api-fetch" class="item-heading kind-fn">Fetch &amp; update</h3>\n')
+
+    def test_duplicate_heading_id_is_an_error(self):
+        (self.site / "src/heading.md").write_text("# One {#same}\n## Two {#same}\n")
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("duplicate heading ID", result.stderr)
+
     def test_missing_loop_source_is_an_error(self):
         archive = self.site / "src/archive.html"
         archive.write_text(archive.read_text().replace("collections.pages", "collections.missing"))
