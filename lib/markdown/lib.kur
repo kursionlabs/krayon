@@ -1,0 +1,160 @@
+use std::alloc::arena::Domain!;
+use std::bytes::buffer::Buffer!;
+use std::option::Option;
+use std::raw::Span;
+use std::slice::Slice;
+
+forall 'k.
+fn empty(&cx: Domain!['k]) -> Span['k] { Span::from_static(&cx, "") }
+
+forall 'k.
+fn lit(&cx: Domain!['k], s: Slice[u8, 'static]) -> Span['k] { Span::from_static(&cx, s) }
+
+forall 'k.
+fn starts(&cx: Domain!['k], s: Span['k], prefix: Slice[u8, 'static]) -> bool {
+    s.starts_with(&cx, lit(&cx, prefix))
+}
+
+forall 'k.
+fn at(&cx: Domain!['k], s: Span['k], i: usize) -> u8 { s.byte_or_zero(&cx, i) }
+
+forall 'k.
+fn next_line(&cx: Domain!['k], source: Span['k], start: usize) -> (Span['k], usize) {
+    var i = start;
+    while i < source.len() && at(&cx, source, i) != b'\n' { i = i + 1usize; }
+    let line = source.slice(start, i).trim_end(&cx);
+    (line, if i < source.len() { i + 1usize } else { i })
+}
+
+forall 'k.
+fn html_escape(&cx: Domain!['k], out: Buffer!, s: Span['k]) -> Buffer! {
+    var out = out;
+    var i = 0usize;
+    while i < s.len() {
+        let c = at(&cx, s, i);
+        out = if c == b'&' { out.push_static("&amp;") }
+          else if c == b'<' { out.push_static("&lt;") }
+          else if c == b'>' { out.push_static("&gt;") }
+          else if c == b'"' { out.push_static("&quot;") }
+          else { out.push_byte(c) };
+        i = i + 1usize;
+    }
+    out
+}
+
+forall 'k.
+fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k]) -> Buffer! {
+    var out = out;
+    var i = 0usize;
+    while i < s.len() {
+        let c = at(&cx, s, i);
+        if c == b'`' {
+            match s.find_byte(&cx, b'`', i + 1usize) {
+                Option::Some(end) => {
+                    out = html_escape(&cx, out.push_static("<code>"), s.slice(i + 1usize, end)).push_static("</code>");
+                    i = end + 1usize;
+                },
+                Option::None => { out = out.push_static("`"); i = i + 1usize; },
+            }
+        } else if c == b'[' {
+            match s.find_byte(&cx, b']', i + 1usize) {
+                Option::Some(end) => {
+                    if at(&cx, s, end + 1usize) == b'(' {
+                        match s.find_byte(&cx, b')', end + 2usize) {
+                            Option::Some(close) => {
+                                out = html_escape(&cx, out.push_static("<a href=\""), s.slice(end + 2usize, close)).push_static("\">");
+                                out = inline(&cx, out, s.slice(i + 1usize, end)).push_static("</a>");
+                                i = close + 1usize;
+                            },
+                            Option::None => { out = out.push_byte(c); i = i + 1usize; },
+                        }
+                    } else { out = out.push_byte(c); i = i + 1usize; }
+                },
+                Option::None => { out = out.push_byte(c); i = i + 1usize; },
+            }
+        } else if c == b'*' && at(&cx, s, i + 1usize) == b'*' {
+            match s.find(&cx, lit(&cx, "**"), i + 2usize) {
+                Option::Some(end) => {
+                    out = inline(&cx, out.push_static("<strong>"), s.slice(i + 2usize, end)).push_static("</strong>");
+                    i = end + 2usize;
+                },
+                Option::None => { out = out.push_byte(c); i = i + 1usize; },
+            }
+        } else if c == b'&' || c == b'<' || c == b'>' {
+            out = html_escape(&cx, out, s.slice(i, i + 1usize));
+            i = i + 1usize;
+        } else { out = out.push_byte(c); i = i + 1usize; }
+    }
+    out
+}
+
+forall 'k.
+fn table_row(&cx: Domain!['k], out: Buffer!, line: Span['k], header: bool) -> Buffer! {
+    var out = out.push_static("<tr>\n");
+    var cell_start = 1usize;
+    var j = 1usize;
+    while j < line.len() {
+        if at(&cx, line, j) == b'|' {
+            out = out.push_static(if header { "<th>" } else { "<td>" });
+            out = inline(&cx, out, line.slice(cell_start, j).trim(&cx));
+            out = out.push_static(if header { "</th>\n" } else { "</td>\n" });
+            cell_start = j + 1usize;
+        }
+        j = j + 1usize;
+    }
+    out.push_static("</tr>\n")
+}
+
+forall 'k.
+fn markdown(&cx: Domain!['k], source: Span['k]) -> Buffer! {
+    var out = Buffer!::new();
+    var pos = 0usize;
+    var paragraph = false;
+    var list = false;
+    var code = false;
+    var table = false;
+    var table_body = false;
+    while pos < source.len() {
+        let (line, next) = next_line(&cx, source, pos);
+        pos = next;
+        if starts(&cx, line, "```") {
+            if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
+            if list { out = out.push_static("</ul>\n"); list = false; }
+            if code { out = out.push_static("</code></pre>\n"); code = false; }
+            else {
+                let lang = line.slice(3usize, line.len());
+                out = out.push_static("<pre><code");
+                if !lang.is_empty() { out = html_escape(&cx, out.push_static(" class=\"language-"), lang).push_static("\""); }
+                out = out.push_static(">"); code = true;
+            }
+        } else if code { out = html_escape(&cx, out, line).push_byte(b'\n'); }
+        else if line.is_empty() {
+            if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
+            if list { out = out.push_static("</ul>\n"); list = false; }
+            if table { out = out.push_static("</tbody>\n</table>\n"); table = false; table_body = false; }
+        } else if starts(&cx, line, "<") {
+            if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
+            out = out.push_bytes(&cx, line).push_byte(b'\n');
+        } else if starts(&cx, line, "## ") {
+            if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
+            out = inline(&cx, out.push_static("<h2>"), line.slice(3usize, line.len())).push_static("</h2>\n");
+        } else if starts(&cx, line, "- ") {
+            if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
+            if !list { out = out.push_static("<ul>\n"); list = true; }
+            out = inline(&cx, out.push_static("<li>"), line.slice(2usize, line.len())).push_static("</li>\n");
+        } else if starts(&cx, line, "| ") {
+            if !table { out = out.push_static("<table>\n<thead>\n"); table = true; }
+            if starts(&cx, line, "| ---") { out = out.push_static("</thead>\n<tbody>\n"); table_body = true; }
+            else { out = table_row(&cx, out, line, !table_body); }
+        } else {
+            if !paragraph { out = out.push_static("<p>"); paragraph = true; }
+            else { out = out.push_byte(b' '); }
+            out = inline(&cx, out, line);
+        }
+    }
+    if paragraph { out = out.push_static("</p>\n"); }
+    if list { out = out.push_static("</ul>\n"); }
+    if code { out = out.push_static("</code></pre>\n"); }
+    if table { out = out.push_static("</tbody>\n</table>\n"); }
+    out
+}

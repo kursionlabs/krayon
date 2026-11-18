@@ -1,0 +1,157 @@
+use std::alloc::arena::Domain!;
+use std::bytes::buffer::Buffer!;
+use std::option::Option;
+use std::raw::Span;
+use std::slice::Slice;
+
+forall 'k.
+exposed struct Page {
+    title: Span['k],
+    eyebrow: Span['k],
+    intro: Span['k],
+    description: Span['k],
+    layout: Span['k],
+    url: Span['k],
+    body: Span['k],
+}
+
+forall 'k.
+exposed struct Site {
+    title: Span['k],
+    description: Span['k],
+    source_url: Span['k],
+}
+
+forall 'k.
+fn empty(&cx: Domain!['k]) -> Span['k] { Span::from_static(&cx, "") }
+
+forall 'k.
+fn lit(&cx: Domain!['k], s: Slice[u8, 'static]) -> Span['k] { Span::from_static(&cx, s) }
+
+forall 'k.
+fn starts(&cx: Domain!['k], s: Span['k], prefix: Slice[u8, 'static]) -> bool {
+    s.starts_with(&cx, lit(&cx, prefix))
+}
+
+forall 'k.
+fn at(&cx: Domain!['k], s: Span['k], i: usize) -> u8 { s.byte_or_zero(&cx, i) }
+
+forall 'k.
+fn next_line(&cx: Domain!['k], source: Span['k], start: usize) -> (Span['k], usize) {
+    var i = start;
+    while i < source.len() && at(&cx, source, i) != b'\n' { i = i + 1usize; }
+    let line = source.slice(start, i).trim_end(&cx);
+    (line, if i < source.len() { i + 1usize } else { i })
+}
+
+forall 'k.
+fn parse_page(&cx: Domain!['k], source: Span['k], url: Span['k]) -> Page['k] {
+    var title = empty(&cx);
+    var eyebrow = empty(&cx);
+    var intro = empty(&cx);
+    var description = empty(&cx);
+    var layout = empty(&cx);
+    var start = 0usize;
+    if starts(&cx, source, "---\n") {
+        start = 4usize;
+        var done = false;
+        while start < source.len() && !done {
+            let (line, after) = next_line(&cx, source, start);
+            start = after;
+            if line.is(&cx, "---") { done = true; }
+            else {
+                let colon = line.find_byte(&cx, b':', 0usize);
+                match colon {
+                    Option::Some(i) => {
+                        let key = line.slice(0usize, i);
+                        var value = line.slice(i + 1usize, line.len()).trim(&cx);
+                        if at(&cx, value, 0usize) == b'"' && value.len() >= 2usize {
+                            value = value.slice(1usize, value.len() - 1usize);
+                        }
+                        if key.is(&cx, "title") { title = value; }
+                        else if key.is(&cx, "eyebrow") { eyebrow = value; }
+                        else if key.is(&cx, "intro") { intro = value; }
+                        else if key.is(&cx, "description") { description = value; }
+                        else if key.is(&cx, "layout") { layout = value; }
+                    },
+                    Option::None => (),
+                }
+            }
+        }
+    }
+    Page.{ title, eyebrow, intro, description, layout, url, body: source.slice(start, source.len()) }
+}
+
+// The site data used by the current templates is a flat JSON object of
+// strings. These fields currently contain no JSON escapes.
+forall 'k.
+fn json_string(&cx: Domain!['k], source: Span['k], key: Slice[u8, 'static]) -> Span['k] {
+    let needle = Buffer!::new().push_static("\"").push_static(key).push_static("\"").save(&cx);
+    match source.find(&cx, needle, 0usize) {
+        Option::None => empty(&cx),
+        Option::Some(start) => {
+            var i = start + needle.len();
+            while i < source.len() && at(&cx, source, i) != b':' { i = i + 1usize; }
+            i = i + 1usize;
+            while i < source.len() && at(&cx, source, i) != b'"' { i = i + 1usize; }
+            i = i + 1usize;
+            let first = i;
+            while i < source.len() && at(&cx, source, i) != b'"' { i = i + 1usize; }
+            source.slice(first, i)
+        },
+    }
+}
+
+forall 'k.
+fn value(&cx: Domain!['k], site: Site['k], p: Page['k], content: Span['k], expr: Span['k]) -> Span['k] {
+    if expr.is(&cx, "content | safe") { content }
+    else if expr.is(&cx, "title") { p.title }
+    else if expr.is(&cx, "title or site.title") { if p.title.is_empty() { site.title } else { p.title } }
+    else if expr.is(&cx, "description or site.description") { if p.description.is_empty() { site.description } else { p.description } }
+    else if expr.is(&cx, "intro") { p.intro }
+    else if expr.is(&cx, "eyebrow or 'Explore Kursal'") { if p.eyebrow.is_empty() { lit(&cx, "Explore Kursal") } else { p.eyebrow } }
+    else if expr.is(&cx, "site.sourceUrl") { site.source_url }
+    else { empty(&cx) }
+}
+
+forall 'k.
+fn condition(&cx: Domain!['k], p: Page['k], expr: Span['k]) -> bool {
+    if expr.is(&cx, "title") { !p.title.is_empty() }
+    else if expr.is(&cx, "intro") { !p.intro.is_empty() }
+    else if expr.is(&cx, "page.url == '/start/'") { p.url.is(&cx, "/start/") }
+    else if expr.is(&cx, "page.url == '/language/'") { p.url.is(&cx, "/language/") }
+    else if expr.is(&cx, "page.url == '/resources/'") { p.url.is(&cx, "/resources/") }
+    else { false }
+}
+
+forall 'k.
+fn template(&cx: Domain!['k], site: Site['k], source: Span['k], p: Page['k], content: Span['k]) -> Buffer! {
+    var out = Buffer!::new();
+    var pos = 0usize;
+    var enabled = true;
+    while pos < source.len() {
+        if at(&cx, source, pos) == b'{' && at(&cx, source, pos + 1usize) == b'{' {
+            match source.find(&cx, lit(&cx, "}}"), pos + 2usize) {
+                Option::Some(end) => {
+                    if enabled { out = out.push_bytes(&cx, value(&cx, site, p, content, source.slice(pos + 2usize, end).trim(&cx))); }
+                    pos = end + 2usize;
+                },
+                Option::None => { pos = source.len(); },
+            }
+        } else if at(&cx, source, pos) == b'{' && at(&cx, source, pos + 1usize) == b'%' {
+            match source.find(&cx, lit(&cx, "%}"), pos + 2usize) {
+                Option::Some(end) => {
+                    let directive = source.slice(pos + 2usize, end).trim(&cx);
+                    if starts(&cx, directive, "if ") { enabled = condition(&cx, p, directive.slice(3usize, directive.len())); }
+                    else if directive.is(&cx, "endif") { enabled = true; }
+                    pos = end + 2usize;
+                },
+                Option::None => { pos = source.len(); },
+            }
+        } else {
+            if enabled { out = out.push_byte(at(&cx, source, pos)); }
+            pos = pos + 1usize;
+        }
+    }
+    out
+}

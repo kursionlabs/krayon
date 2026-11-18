@@ -1,0 +1,14 @@
+[package]
+name="krayon"
+source_root="."
+kind="executable"
+entry="main"
+
+[dependencies.std]
+path="../../kursal/lib/std"
+
+[dependencies.markdown]
+path="../lib/markdown"
+
+[dependencies.html]
+path="../lib/html"

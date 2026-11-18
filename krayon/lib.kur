@@ -1,0 +1,145 @@
+use std::alloc::arena::Domain!;
+use std::bytes::buffer::Buffer!;
+use std::fs::{read_to_arena, read_dir, mkdir, path_exists, write};
+use std::io::eprint_buffer;
+use std::option::{Option, Result};
+use std::process::Args;
+use std::raw::Span;
+use std::slice::Slice;
+
+use html::{Page, Site, parse_page, json_string, template};
+use markdown::markdown;
+
+forall 'k.
+fn empty(&cx: Domain!['k]) -> Span['k] { Span::from_static(&cx, "") }
+
+forall 'k.
+fn lit(&cx: Domain!['k], s: Slice[u8, 'static]) -> Span['k] { Span::from_static(&cx, s) }
+
+forall 'k.
+fn path(&cx: Domain!['k], a: Span['k], b: Span['k]) -> Span['k] {
+    Buffer!::new().push_bytes(&cx, a).push_static("/").push_bytes(&cx, b).save(&cx)
+}
+
+forall 'k.
+fn load(&cx: Domain!['k], file: Span['k]) -> Span['k] {
+    match read_to_arena(&cx, file) {
+        Result::Ok(text) => text,
+        Result::Err(e) => {
+            eprint_buffer(Buffer!::new().push_static("krayon: cannot read ").push_bytes(&cx, file).push_static("\n"));
+            empty(&cx)
+        },
+    }
+}
+
+forall 'k.
+fn save(&cx: Domain!['k], file: Span['k], text: Buffer!) -> bool {
+    match write(&cx, file, text) {
+        Result::Ok(nothing) => true,
+        Result::Err(e) => {
+            eprint_buffer(Buffer!::new().push_static("krayon: cannot write ").push_bytes(&cx, file).push_static("\n"));
+            false
+        },
+    }
+}
+
+forall 'k.
+fn make_dir(&cx: Domain!['k], directory: Span['k]) -> bool {
+    match path_exists(&cx, directory) {
+        Result::Ok(found) => if found { true } else { mkdir(&cx, directory).is_ok() },
+        Result::Err(e) => false,
+    }
+}
+
+forall 'k.
+fn build(&cx: Domain!['k], input: Span['k], output: Span['k]) -> bool {
+    if !make_dir(&cx, output) { return false; }
+    let includes = path(&cx, input, lit(&cx, "_includes"));
+    let base = load(&cx, path(&cx, includes, lit(&cx, "base.njk")));
+    let page_layout = load(&cx, path(&cx, includes, lit(&cx, "page.njk")));
+    let data = load(&cx, path(&cx, path(&cx, input, lit(&cx, "_data")), lit(&cx, "site.json")));
+    let site = Site.{ title: json_string(&cx, data, "title"), description: json_string(&cx, data, "description"),
+        source_url: json_string(&cx, data, "sourceUrl") };
+    if base.is_empty() || page_layout.is_empty() || site.title.is_empty() || site.source_url.is_empty() { return false; }
+    var good = true;
+    match read_dir(&cx, input) {
+        Result::Err(e) => return false,
+        Result::Ok(directory) => {
+            var directory = directory;
+            var going = true;
+            while going {
+                match &directory.next() {
+                    Result::Err(e) => { good = false; going = false; },
+                    Result::Ok(next) => match next {
+                        Option::None => { going = false; },
+                        Option::Some(entry) => {
+                            let { name, is_directory } = entry;
+                            let name = name.save(&cx);
+                            if !is_directory && (name.ends_with(&cx, lit(&cx, ".md")) || name.ends_with(&cx, lit(&cx, ".njk"))) {
+                                let suffix = if name.ends_with(&cx, lit(&cx, ".njk")) { 4usize } else { 3usize };
+                                let stem = name.slice(0usize, name.len() - suffix);
+                                let home = stem.is(&cx, "index");
+                                let url = if home { lit(&cx, "/") } else { Buffer!::new().push_static("/").push_bytes(&cx, stem).push_static("/").save(&cx) };
+                                let source = load(&cx, path(&cx, input, name));
+                                let p = parse_page(&cx, source, url);
+                                let body = if name.ends_with(&cx, lit(&cx, ".md")) { markdown(&cx, p.body) } else { template(&cx, site, p.body, p, empty(&cx)) };
+                                let body = body.save(&cx);
+                                let layout_body = parse_page(&cx, page_layout, url).body;
+                                let inner = if p.layout.is(&cx, "page.njk") { template(&cx, site, layout_body, p, body).save(&cx) } else { body };
+                                let html = template(&cx, site, base, p, inner);
+                                let dest = if home { output } else { path(&cx, output, stem) };
+                                if !home { good = make_dir(&cx, dest) && good; }
+                                good = save(&cx, path(&cx, dest, lit(&cx, "index.html")), html) && good;
+                            }
+                        },
+                    },
+                }
+            }
+            if !directory.close().is_ok() { good = false; }
+        },
+    }
+    let assets = path(&cx, input, lit(&cx, "assets"));
+    let out_assets = path(&cx, output, lit(&cx, "assets"));
+    good = make_dir(&cx, out_assets) && good;
+    match read_dir(&cx, assets) {
+        Result::Err(e) => { good = false; },
+        Result::Ok(directory) => {
+            var directory = directory;
+            var going = true;
+            while going {
+                match &directory.next() {
+                    Result::Err(e) => { good = false; going = false; },
+                    Result::Ok(next) => match next {
+                        Option::None => { going = false; },
+                        Option::Some(entry) => {
+                            let { name, is_directory } = entry;
+                            let name = name.save(&cx);
+                            if !is_directory {
+                                let contents = load(&cx, path(&cx, assets, name));
+                                good = save(&cx, path(&cx, out_assets, name), Buffer!::new().push_bytes(&cx, contents)) && good;
+                            }
+                        },
+                    },
+                }
+            }
+            if !directory.close().is_ok() { good = false; }
+        },
+    }
+    good
+}
+
+fn main(args: Args) -> i32 {
+    if args.len() != 4usize {
+        eprint_buffer(Buffer!::new().push_static("usage: krayon build INPUT OUTPUT\n"));
+        return 2i32;
+    }
+    let exists 'k. cx = Domain!::new();
+    var cx = cx;
+    let command = match args.bytes(1usize) { Option::Some(s) => Span::from_static(&cx, s), Option::None => empty(&cx) };
+    if !command.is(&cx, "build") { cx.destroy(); return 2i32; }
+    let input = match args.bytes(2usize) { Option::Some(s) => Span::from_static(&cx, s), Option::None => empty(&cx) };
+    let output = match args.bytes(3usize) { Option::Some(s) => Span::from_static(&cx, s), Option::None => empty(&cx) };
+    let ok = build(&cx, input, output);
+    cx.destroy();
+    if ok { 0i32 } else { 1i32 }
+}
