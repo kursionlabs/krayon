@@ -1,0 +1,9 @@
+[package]
+name="ordering"
+source_root="."
+
+[dependencies.std]
+path="../../../kursal/lib/std"
+
+[dependencies.toml]
+path="../../../kursal/lib/toml"

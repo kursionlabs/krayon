@@ -10,6 +10,7 @@ use std::slice::Slice;
 use toml::parse;
 use toml::value::TomlValue;
 use url::prefix;
+use ordering::sort_records;
 
 forall 'k.
 exposed struct Page {
@@ -545,7 +546,7 @@ fn query_array(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                 i = i + 1usize;
             }
             values = result;
-        } else if operation.is(&cx, "where") || operation.is(&cx, "group_by") {
+        } else if operation.is(&cx, "where") || operation.is(&cx, "group_by") || operation.is(&cx, "sort_by") {
             let comma = arguments.find_byte(&cx, b',', 0usize);
             if operation.is(&cx, "group_by") {
                 match comma { Option::Some(_) => return Result::Err.(filter), Option::None => (), }
@@ -559,7 +560,22 @@ fn query_array(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                 Option::None => return Result::Err.(filter),
             };
             if field_name.is_empty() { return Result::Err.(filter); }
-            if operation.is(&cx, "where") {
+            if operation.is(&cx, "sort_by") {
+                let descending = match comma {
+                    Option::None => false,
+                    Option::Some(at) => match literal(&cx, arguments.slice(at + 1usize, arguments.len())) {
+                        Option::Some(order) => if order.is(&cx, "desc") { true }
+                            else if order.is(&cx, "asc") { false }
+                            else { return Result::Err.(filter); },
+                        Option::None => return Result::Err.(filter),
+                    },
+                };
+                values = match sort_records(&cx, values, field_name, descending) {
+                    Result::Ok(sorted) => sorted,
+                    Result::Err(message) => return Result::Err.(Buffer!::new().push_bytes(&cx, filter)
+                        .push_static(": ").push_static(message).save(&cx)),
+                };
+            } else if operation.is(&cx, "where") {
                 let comma_at = match comma {
                     Option::Some(at) => at,
                     Option::None => return Result::Err.(filter),

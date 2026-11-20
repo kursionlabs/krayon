@@ -12,6 +12,7 @@ use html::{Page, TemplateFormat, parse_page, template};
 use markdown::markdown;
 use links::{Document, Stylesheet, validate};
 use json::validate as validate_json;
+use ordering::sort_records;
 
 extern "C" fn getpid() -> i32;
 
@@ -526,6 +527,34 @@ fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
     let all = match value.as_array() {
         Option::Some(array) => array,
         Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate source must be an array"))),
+    };
+    let all = match template_page.data.get(&cx, lit(&cx, "sort_by")) {
+        Option::None => {
+            if template_page.data.contains(&cx, lit(&cx, "sort_order")) {
+                return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_order requires sort_by")));
+            }
+            all
+        },
+        Option::Some(value) => {
+            let field = match value.as_string() {
+                Option::Some(text) => text,
+                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_by must be a string"))),
+            };
+            let descending = match template_page.data.get(&cx, lit(&cx, "sort_order")) {
+                Option::None => false,
+                Option::Some(value) => match value.as_string() {
+                    Option::Some(order) => if order.is(&cx, "desc") { true }
+                        else if order.is(&cx, "asc") { false }
+                        else { return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_order must be asc or desc"))); },
+                    Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_order must be asc or desc"))),
+                },
+            };
+            match sort_records(&cx, all, field, descending) {
+                Result::Ok(sorted) => sorted,
+                Result::Err(message) => return Result::Err.(report_detail(&cx, file,
+                    Buffer!::new().push_static("sort_by: ").push_static(message).save(&cx))),
+            }
+        },
     };
     let count = all.len(&cx);
     let pages = if count == 0usize { 1usize } else { (count - 1usize) / page_size + 1usize };

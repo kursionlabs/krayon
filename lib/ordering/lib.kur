@@ -1,0 +1,121 @@
+use std::arena::Domain!;
+use std::cmp::Order;
+use std::collections::arena_vec::ArenaVec;
+use std::option::{Option, Result};
+use std::raw::Span;
+use std::slice::Slice;
+use toml::value::TomlValue;
+
+forall 'k.
+struct Entry {
+    value: TomlValue['k],
+    key: TomlValue['k],
+    index: usize,
+}
+
+forall 'k.
+fn field(&cx: Domain!['k], record: TomlValue['k], path: Span['k]) -> Option[TomlValue['k]] {
+    var value = record;
+    var remaining = path;
+    while true {
+        let table = match value.as_table() {
+            Option::Some(found) => found,
+            Option::None => return Option::None,
+        };
+        match remaining.find_byte(&cx, b'.', 0usize) {
+            Option::Some(dot) => {
+                if dot == 0usize { return Option::None; }
+                value = match table.get(&cx, remaining.slice(0usize, dot)) {
+                    Option::Some(found) => found,
+                    Option::None => return Option::None,
+                };
+                remaining = remaining.slice(dot + 1usize, remaining.len());
+            },
+            Option::None => return table.get(&cx, remaining),
+        }
+    }
+    Option::None
+}
+
+forall 'k.
+fn kind(value: TomlValue['k]) -> usize {
+    match value {
+        TomlValue::String(text) => 1usize,
+        TomlValue::Integer(number) => 2usize,
+        TomlValue::Float(number) => 3usize,
+        TomlValue::Boolean(flag) => 4usize,
+        TomlValue::Datetime(date) => 5usize,
+        _ => 0usize,
+    }
+}
+
+fn numeric_order(less: bool, equal: bool) -> Order {
+    if less { Order::Less } else if equal { Order::Equal } else { Order::Greater }
+}
+
+forall 'k.
+fn compare(&cx: Domain!['k], a: TomlValue['k], b: TomlValue['k]) -> Order {
+    match a {
+        TomlValue::String(left) => match b {
+            TomlValue::String(right) => left.cmp(&cx, right),
+            _ => Order::Equal,
+        },
+        TomlValue::Integer(left) => match b {
+            TomlValue::Integer(right) => numeric_order(left < right, left == right),
+            _ => Order::Equal,
+        },
+        TomlValue::Float(left) => match b {
+            TomlValue::Float(right) => numeric_order(left < right, left == right),
+            _ => Order::Equal,
+        },
+        TomlValue::Boolean(left) => match b {
+            TomlValue::Boolean(right) => numeric_order(!left && right, left == right),
+            _ => Order::Equal,
+        },
+        TomlValue::Datetime(left) => match b {
+            TomlValue::Datetime(right) => left.text.cmp(&cx, right.text),
+            _ => Order::Equal,
+        },
+        _ => Order::Equal,
+    }
+}
+
+forall 'k.
+fn sort_records(&cx: Domain!['k], values: ArenaVec[TomlValue['k], 'k], key: Span['k], descending: bool)
+    -> Result[ArenaVec[TomlValue['k], 'k], Slice[u8, 'static]] {
+    if key.is_empty() { return Result::Err.("sort field must not be empty"); }
+    let entries = ArenaVec::new(&cx);
+    var expected = 0usize;
+    var i = 0usize;
+    while i < values.len(&cx) {
+        let value = values.at(&cx, i);
+        let sort_key = match field(&cx, value, key) {
+            Option::Some(found) => found,
+            Option::None => return Result::Err.("sort field is missing"),
+        };
+        let type_id = kind(sort_key);
+        if type_id == 0usize { return Result::Err.("sort field must be a scalar"); }
+        if expected != 0usize && type_id != expected { return Result::Err.("sort fields must have the same type"); }
+        match sort_key {
+            TomlValue::Float(number) => if !number.is_finite() {
+                return Result::Err.("sort field cannot be NaN or infinity");
+            },
+            _ => (),
+        }
+        expected = type_id;
+        entries.push(&cx, Entry.{ value, key: sort_key, index: i });
+        i = i + 1usize;
+    }
+    entries.sort_by(&cx, |&cx, a, b| {
+        let order = compare(&cx, a.key, b.key);
+        let order = if descending { order.reverse() } else { order };
+        if order.is_eq() { numeric_order(a.index < b.index, a.index == b.index) } else { order }
+    });
+    let sorted = ArenaVec::new(&cx);
+    i = 0usize;
+    while i < entries.len(&cx) {
+        sorted.push(&cx, entries.at(&cx, i).value);
+        i = i + 1usize;
+    }
+    Result::Ok.(sorted)
+}

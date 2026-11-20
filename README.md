@@ -101,6 +101,8 @@ An HTML template can split a site data array across list pages:
 +++
 paginate = "site.posts"
 page_size = 10
+sort_by = "date"
+sort_order = "desc"
 permalink = "/blog/"
 +++
 {% for post in page.pagination.items %}<h2>{{ post.title }}</h2>{% endfor %}
@@ -116,6 +118,9 @@ with no items. Pagination preserves array order and accepts any TOML array
 values. Paginated pages appear in `collections.pages`; the template does not
 produce an additional file. `paginate` and `generate` cannot be combined.
 The template's `draft` flag applies to all its pages.
+`sort_by` is optional and accepts a field path such as `author.name`;
+`sort_order` is `asc` by default or `desc`. Sorting happens before page
+slices are chosen.
 
 XML, JSON, and text templates use the same page fields, site data, collections,
 loops, layouts, and includes as HTML. Layouts and includes must use the same
@@ -199,7 +204,8 @@ protocol relative, relative, and fragment URLs alone. Markdown links with root
 relative targets are prefixed automatically; raw HTML in Markdown is passed
 through as written.
 
-Loop sources can be filtered with `children_of`, `where`, and `group_by`:
+Loop sources can be filtered with `children_of`, `where`, `group_by`, and
+`sort_by`:
 
 ```html
 {% for child in collections.pages | children_of: page.url %}{{ child.title }}{% endfor %}
@@ -207,13 +213,19 @@ Loop sources can be filtered with `children_of`, `where`, and `group_by`:
 {% for group in page.nav_items | group_by: "kind" %}
   {{ group.key }}{% for item in group.items %}{{ item.name }}{% endfor %}
 {% endfor %}
+{% for post in site.posts | sort_by: "date", "desc" %}{{ post.title }}{% endfor %}
 ```
 
 `children_of` matches a record's `parent` URL or any URL in its `parents`
 array. These relationships are explicit front matter; URL nesting has no
 effect. `where` compares a scalar field to a quoted value or template field.
 `group_by` preserves first-seen group order and produces records with `key`
-and `items`. All three work on arrays of records, including `collections.pages`.
+and `items`. `sort_by` accepts a field path and an optional `"asc"` or
+`"desc"` order; it preserves source order for equal keys. It compares
+strings lexically, integers and floats numerically, booleans as false before
+true, and TOML dates by their text. Sort keys must be present, scalar, and
+the same type across records. These filters work on arrays of records,
+including `collections.pages`.
 
 The current Markdown renderer supports ATX headings, paragraphs, links,
 images with optional titles, inline code, emphasis, strong text, fenced code
@@ -234,6 +246,7 @@ hyphens, underscores, and colons.
 - `lib/html/` — front matter and templates
 - `lib/markdown/` — Markdown rendering
 - `lib/links/` — local link validation
+- `lib/ordering/` — record sorting shared by queries and pagination
 - `lib/json/` — generated JSON validation
 - `lib/url/` — deployment path prefixes
 - `lib/highlight/` — fenced code highlighting

@@ -272,6 +272,62 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.site / "dist/products/42/index.html").read_text(), "Numbered")
 
+    def test_sort_by_query_orders_records_without_changing_source(self):
+        data = self.site / "src/_data/site.toml"
+        data.write_text('entries = [{name = "Two", rank = 2, date = 2026-01-02}, '
+                        '{name = "Ten", rank = 10, date = 2026-01-10}, '
+                        '{name = "One", rank = 1, date = 2026-01-01}]\n'
+                        + data.read_text())
+        page = self.site / "src/sort.html"
+        page.write_text('{% for item in site.entries | sort_by: "rank", "desc" %}'
+                        '{{ item.name }} {% endfor %}|'
+                        '{% for item in site.entries | sort_by: "date" %}'
+                        '{{ item.name }} {% endfor %}|'
+                        '{% for item in site.entries %}{{ item.name }} {% endfor %}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/sort/index.html").read_text(),
+                         'Ten Two One |One Two Ten |Two Ten One ')
+
+        previous = (self.site / "dist/sort/index.html").read_bytes()
+        page.write_text('{% for item in site.entries | sort_by: "missing" %}'
+                        '{{ item.name }}{% endfor %}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('sort field is missing', result.stderr)
+        self.assertEqual((self.site / "dist/sort/index.html").read_bytes(), previous)
+
+    def test_paginate_sorting_applies_before_page_slicing(self):
+        data = self.site / "src/_data/site.toml"
+        data.write_text('entries = [{name = "First two", meta = {rank = 2}}, '
+                        '{name = "Ten", meta = {rank = 10}}, '
+                        '{name = "Second two", meta = {rank = 2}}, '
+                        '{name = "One", meta = {rank = 1}}]\n' + data.read_text())
+        page = self.site / "src/ranked.html"
+        page.write_text('+++\npaginate = "site.entries"\npage_size = 2\n'
+                        'sort_by = "meta.rank"\nsort_order = "desc"\n+++\n'
+                        '{% for item in page.pagination.items %}{{ item.name }};{% endfor %}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/ranked/index.html").read_text(),
+                         'Ten;First two;')
+        self.assertEqual((self.site / "dist/ranked/page/2/index.html").read_text(),
+                         'Second two;One;')
+
+        page.write_text(page.read_text().replace('sort_order = "desc"',
+                                                 'sort_order = "reverse"'))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('sort_order must be asc or desc', result.stderr)
+
+        page.write_text(page.read_text().replace('sort_order = "reverse"',
+                                                 'sort_order = "desc"'))
+        data.write_text(data.read_text().replace('meta = {rank = 1}',
+                                                 'meta = {rank = "one"}'))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('sort fields must have the same type', result.stderr)
+
     def test_paginate_data_array_and_navigation(self):
         data = self.site / "src/_data/site.toml"
         data.write_text('posts = [{title = "One"}, {title = "Two"}, '

@@ -22,3 +22,6 @@ path="../links"
 
 [dependencies.json]
 path="../json"
+
+[dependencies.ordering]
+path="../ordering"
