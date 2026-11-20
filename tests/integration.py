@@ -458,8 +458,76 @@ class BuildTests(unittest.TestCase):
             'collections.pages', 'collections.missing'))
         result = self.build()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('paginate must name a site data array or collections.pages', result.stderr)
+        self.assertIn('paginate source is missing', result.stderr)
         self.assertTrue((self.site / "dist/blog/page/2/index.html").exists())
+
+    def test_named_page_collections_feed_templates_and_pagination(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        src.mkdir()
+        (self.site / "krayon.toml").write_text(
+            '[collections.posts]\n'
+            'where = { field = "kind", equals = "post" }\n'
+            'sort_by = "date"\n'
+            'sort_order = "desc"\n')
+        for name, date, draft in [
+            ("old", "2024-01-01", False),
+            ("new", "2025-01-01", False),
+            ("draft", "2026-01-01", True),
+        ]:
+            (src / f"{name}.md").write_text(
+                f'+++\ntitle = "{name}"\nkind = "post"\n'
+                f'date = {date}\ndraft = {str(draft).lower()}\n+++\n# {name}\n')
+        (src / "other.md").write_text('+++\nkind = "other"\n+++\n# Other\n')
+        (src / "archive.html").write_text(
+            '+++\npaginate = "collections.posts"\npage_size = 1\n'
+            'kind = "post"\n+++\n'
+            '{{ page.pagination.total_items }}:'
+            '{% for item in page.pagination.items %}{{ item.title }}{% endfor %}')
+        (src / "listing.html").write_text(
+            '{% for item in collections.posts %}{{ item.title }};{% endfor %}')
+        (src / "feed.json").write_text(
+            '{{ collections.posts | json }}')
+
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/listing/index.html").read_text(), 'new;old;')
+        self.assertEqual((self.site / "dist/archive/index.html").read_text(), '2:new')
+        self.assertEqual((self.site / "dist/archive/page/2/index.html").read_text(), '2:old')
+        feed = json.loads((self.site / "dist/feed.json").read_text())
+        self.assertEqual([item['title'] for item in feed], ['new', 'old'])
+
+        result = self.build('--drafts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/listing/index.html").read_text(), 'draft;new;old;')
+        self.assertEqual((self.site / "dist/archive/index.html").read_text(), '3:draft')
+        self.assertEqual((self.site / "dist/archive/page/3/index.html").read_text(), '3:old')
+
+        (self.site / "krayon.toml").write_text(
+            '[collections.posts]\nwhere = { field = "kind", equals = "missing" }\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/listing/index.html").read_text(), '')
+        self.assertEqual((self.site / "dist/archive/index.html").read_text(), '0:')
+        self.assertFalse((self.site / "dist/archive/page/2/index.html").exists())
+
+    def test_named_collection_rejects_invalid_definitions(self):
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        original = (self.site / "dist/index.html").read_text()
+        for config, message in [
+            ('[collections.pages]\n', 'invalid collection name'),
+            ('[collections."bad-name"]\n', 'invalid collection name'),
+            ('[collections]\nposts = true\n', 'collection must be a table'),
+            ('[collections.posts]\nsort_order = "desc"\n', 'sort_order requires sort_by'),
+            ('[collections.posts]\nunknown = true\n', 'unknown collection rule'),
+            ('[collections.posts]\nsort_by = "missing"\n', 'sort_by:'),
+        ]:
+            (self.site / "krayon.toml").write_text(config)
+            result = self.build()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(message, result.stderr)
+            self.assertEqual((self.site / "dist/index.html").read_text(), original)
 
     def test_tag_array_membership_filters_queries_and_pagination(self):
         shutil.rmtree(self.site / "src")

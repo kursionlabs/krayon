@@ -30,12 +30,21 @@ data = "_data/site.toml"
 assets = "assets"
 base_path = ""
 origin = ""
+
+[collections.posts]
+where = { field = "kind", equals = "post" }
+sort_by = "date"
+sort_order = "desc"
 ```
 
 All paths are relative. `input` and `output` are relative to the site root;
-the other paths are relative to `input`. The values above are the defaults.
+the other paths are relative to `input`. The scalar values above are the defaults.
 The site data file and assets directory are optional. The output directory
 must be outside the input directory.
+The optional `[collections.posts]` table defines a named page collection;
+omit it when no collection is needed. Names must start with a letter or
+underscore and contain only letters, digits, and underscores. `pages` is
+reserved for Krayon's built-in collection.
 Set `base_path` to a path such as `"/docs"` when mounting the
 generated output there. The default empty string serves the site at `/`.
 Krayon keeps page URLs and output paths unprefixed, and exposes the setting as
@@ -101,7 +110,7 @@ site data paths such as `site.catalog.products`; it is available in HTML,
 XML, JSON, and text templates. A template or record can set `draft = true`;
 a record's value overrides the template default.
 
-An HTML template can split a site data array or `collections.pages` across
+An HTML template can split a site data array or page collection across
 list pages:
 
 ```html
@@ -147,6 +156,16 @@ their front matter. The source includes published pages (and drafts with
 `collections.pages` read the same snapshot, which excludes pages created by
 those templates; their archive pages appear in the final `collections.pages`
 used while rendering other templates.
+
+Named page collections select from that same initial page snapshot, so they
+also exclude pages created by pagination. Their `where`, `sort_by`, and
+`sort_order` rules use the pagination syntax above. Without rules, a named
+collection contains every page in the snapshot in URL order. Templates and
+layouts can loop over `collections.posts`, and an HTML template can use
+`paginate = "collections.posts"`. Named collections stay fixed during the
+build; `collections.pages` includes generated archive pages when templates
+render. Named collections support drafts according to the build's `--drafts`
+setting.
 
 XML, JSON, and text templates use the same page fields, site data, collections,
 loops, layouts, and includes as HTML. Layouts and includes must use the same

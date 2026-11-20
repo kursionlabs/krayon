@@ -27,6 +27,7 @@ struct Config {
     assets: Span['k],
     base_path: Span['k],
     origin: Span['k],
+    definitions: ArenaMap[Span['k], TomlValue['k], 'k],
 }
 
 forall 'k.
@@ -40,6 +41,8 @@ struct Build {
     base_path: Span['k],
     include_drafts: bool,
     site_data: ArenaMap[Span['k], TomlValue['k], 'k],
+    definitions: ArenaMap[Span['k], TomlValue['k], 'k],
+    config_file: Span['k],
     collections: ArenaMap[Span['k], TomlValue['k], 'k],
     pages: ArenaVec[SourcePage['k], 'k],
     pending_pagination: ArenaVec[PendingPagination['k], 'k],
@@ -242,7 +245,7 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
     let file = join(&cx, root, lit(&cx, "krayon.toml"));
     let defaults = Config.{ input: lit(&cx, "src"), output: lit(&cx, "dist"), layouts: lit(&cx, "_includes"),
         data: lit(&cx, "_data/site.toml"), assets: lit(&cx, "assets"), base_path: lit(&cx, ""),
-        origin: lit(&cx, "") };
+        origin: lit(&cx, ""), definitions: ArenaMap::new(&cx) };
     if !exists_path(&cx, file)? { return Result::Ok.(defaults); }
     let text = load(&cx, file)?;
     match parse(&cx, text) {
@@ -255,7 +258,7 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                     Option::Some(key) => {
                         if !key.is(&cx, "input") && !key.is(&cx, "output") && !key.is(&cx, "layouts")
                             && !key.is(&cx, "data") && !key.is(&cx, "assets") && !key.is(&cx, "base_path")
-                            && !key.is(&cx, "origin") {
+                            && !key.is(&cx, "origin") && !key.is(&cx, "collections") {
                             return Result::Err.(report(&cx, "unknown config key", key));
                         }
                     },
@@ -302,6 +305,13 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                     },
                 },
             };
+            let definitions = match values.get(&cx, lit(&cx, "collections")) {
+                Option::None => ArenaMap::new(&cx),
+                Option::Some(value) => match value.as_table() {
+                    Option::Some(table) => table,
+                    Option::None => return Result::Err.(report(&cx, "collections must be a table", file)),
+                },
+            };
             Result::Ok.(Config.{
                 input: config_string(&cx, values, "input", "src")?,
                 output: config_string(&cx, values, "output", "dist")?,
@@ -310,6 +320,7 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                 assets: config_string(&cx, values, "assets", "assets")?,
                 base_path,
                 origin,
+                definitions,
             })
         },
     }
@@ -574,12 +585,86 @@ fn pagination_url(&cx: Domain!['k], base: Span['k], pattern: Option[PaginationPa
 }
 
 forall 'k.
+fn select_records(&cx: Domain!['k], all: ArenaVec[TomlValue['k], 'k],
+    rules: ArenaMap[Span['k], TomlValue['k], 'k], file: Span['k]) -> Result[ArenaVec[TomlValue['k], 'k], Buffer!] {
+    let all = match rules.get(&cx, lit(&cx, "where")) {
+        Option::None => all,
+        Option::Some(value) => {
+            let rule = match value.as_table() {
+                Option::Some(table) => table,
+                Option::None => return Result::Err.(report_detail(&cx, file,
+                    lit(&cx, "where must be a table with field and equals"))),
+            };
+            let field = match rule.get(&cx, lit(&cx, "field")) {
+                Option::Some(value) => match value.as_string() {
+                    Option::Some(text) => text,
+                    Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where.field must be a string"))),
+                },
+                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where requires field"))),
+            };
+            let equals = rule.get(&cx, lit(&cx, "equals"));
+            let contains = rule.get(&cx, lit(&cx, "contains"));
+            if equals.is_some() && contains.is_some() {
+                return Result::Err.(report_detail(&cx, file,
+                    lit(&cx, "where accepts either equals or contains")));
+            }
+            let membership = contains.is_some();
+            let target_value = if membership { contains } else { equals };
+            let target = match target_value {
+                Option::Some(value) => match scalar(&cx, value) {
+                    Option::Some(text) => text,
+                    Option::None => return Result::Err.(report_detail(&cx, file,
+                        lit(&cx, "where value must be a string, integer, boolean, or date"))),
+                },
+                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where requires equals or contains"))),
+            };
+            let filtered = if membership { filter_contains(&cx, all, field, target) }
+                else { filter_records(&cx, all, field, target) };
+            match filtered {
+                Result::Ok(selected) => selected,
+                Result::Err(message) => return Result::Err.(report_detail(&cx, file,
+                    Buffer!::new().push_static("where: ").push_static(message).save(&cx))),
+            }
+        },
+    };
+    let all = match rules.get(&cx, lit(&cx, "sort_by")) {
+        Option::None => {
+            if rules.contains(&cx, lit(&cx, "sort_order")) {
+                return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_order requires sort_by")));
+            }
+            all
+        },
+        Option::Some(value) => {
+            let field = match value.as_string() {
+                Option::Some(text) => text,
+                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_by must be a string"))),
+            };
+            let descending = match rules.get(&cx, lit(&cx, "sort_order")) {
+                Option::None => false,
+                Option::Some(value) => match value.as_string() {
+                    Option::Some(order) => if order.is(&cx, "desc") { true }
+                        else if order.is(&cx, "asc") { false }
+                        else { return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_order must be asc or desc"))); },
+                    Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_order must be asc or desc"))),
+                },
+            };
+            match sort_records(&cx, all, field, descending) {
+                Result::Ok(sorted) => sorted,
+                Result::Err(message) => return Result::Err.(report_detail(&cx, file,
+                    Buffer!::new().push_static("sort_by: ").push_static(message).save(&cx))),
+            }
+        },
+    };
+    Result::Ok.(all)
+}
+
+forall 'k.
 fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_page: Page['k],
     source: Span['k], default_url: Span['k]) -> Result[(), Buffer!] {
-    let collection = source.is(&cx, "collections.pages");
+    let collection = source.starts_with(&cx, lit(&cx, "collections.")) && source.len() > 12usize;
     if !collection && (!source.starts_with(&cx, lit(&cx, "site.")) || source.len() <= 5usize) {
         return Result::Err.(report_detail(&cx, file,
-            lit(&cx, "paginate must name a site data array or collections.pages")));
+            lit(&cx, "paginate must name a site data array or collection")));
     }
     let page_size = match template_page.data.get(&cx, lit(&cx, "page_size")) {
         Option::Some(value) => match value.as_integer() {
@@ -633,7 +718,7 @@ fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
         },
     };
     let value = if collection {
-        match build.collections.get(&cx, lit(&cx, "pages")) {
+        match build.collections.get(&cx, source.slice(12usize, source.len())) {
             Option::Some(found) => found,
             Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate source is missing"))),
         }
@@ -647,74 +732,7 @@ fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
         Option::Some(array) => array,
         Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate source must be an array"))),
     };
-    let all = match template_page.data.get(&cx, lit(&cx, "where")) {
-        Option::None => all,
-        Option::Some(value) => {
-            let rule = match value.as_table() {
-                Option::Some(table) => table,
-                Option::None => return Result::Err.(report_detail(&cx, file,
-                    lit(&cx, "where must be a table with field and equals"))),
-            };
-            let field = match rule.get(&cx, lit(&cx, "field")) {
-                Option::Some(value) => match value.as_string() {
-                    Option::Some(text) => text,
-                    Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where.field must be a string"))),
-                },
-                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where requires field"))),
-            };
-            let equals = rule.get(&cx, lit(&cx, "equals"));
-            let contains = rule.get(&cx, lit(&cx, "contains"));
-            if equals.is_some() && contains.is_some() {
-                return Result::Err.(report_detail(&cx, file,
-                    lit(&cx, "where accepts either equals or contains")));
-            }
-            let membership = contains.is_some();
-            let target_value = if membership { contains } else { equals };
-            let target = match target_value {
-                Option::Some(value) => match scalar(&cx, value) {
-                    Option::Some(text) => text,
-                    Option::None => return Result::Err.(report_detail(&cx, file,
-                        lit(&cx, "where value must be a string, integer, boolean, or date"))),
-                },
-                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where requires equals or contains"))),
-            };
-            let filtered = if membership { filter_contains(&cx, all, field, target) }
-                else { filter_records(&cx, all, field, target) };
-            match filtered {
-                Result::Ok(selected) => selected,
-                Result::Err(message) => return Result::Err.(report_detail(&cx, file,
-                    Buffer!::new().push_static("where: ").push_static(message).save(&cx))),
-            }
-        },
-    };
-    let all = match template_page.data.get(&cx, lit(&cx, "sort_by")) {
-        Option::None => {
-            if template_page.data.contains(&cx, lit(&cx, "sort_order")) {
-                return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_order requires sort_by")));
-            }
-            all
-        },
-        Option::Some(value) => {
-            let field = match value.as_string() {
-                Option::Some(text) => text,
-                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_by must be a string"))),
-            };
-            let descending = match template_page.data.get(&cx, lit(&cx, "sort_order")) {
-                Option::None => false,
-                Option::Some(value) => match value.as_string() {
-                    Option::Some(order) => if order.is(&cx, "desc") { true }
-                        else if order.is(&cx, "asc") { false }
-                        else { return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_order must be asc or desc"))); },
-                    Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_order must be asc or desc"))),
-                },
-            };
-            match sort_records(&cx, all, field, descending) {
-                Result::Ok(sorted) => sorted,
-                Result::Err(message) => return Result::Err.(report_detail(&cx, file,
-                    Buffer!::new().push_static("sort_by: ").push_static(message).save(&cx))),
-            }
-        },
-    };
+    let all = select_records(&cx, all, template_page.data, file)?;
     let count = all.len(&cx);
     let pages = if count == 0usize { 1usize } else { (count - 1usize) / page_size + 1usize };
     var number = 1usize;
@@ -807,7 +825,7 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Resul
                 Option::Some(text) => text,
                 Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate must be a string"))),
             };
-            if source.is(&cx, "collections.pages") {
+            if source.starts_with(&cx, lit(&cx, "collections.")) {
                 build.pending_pagination.push(&cx, PendingPagination.{ file, page: parsed, source, default_url: url });
                 return Result::Ok.(());
             }
@@ -1129,9 +1147,71 @@ fn publish_pages(&cx: Domain!['k], build: Build['k]) -> () {
 }
 
 forall 'k.
+fn collection_name(&cx: Domain!['k], name: Span['k]) -> bool {
+    if name.is_empty() || name.is(&cx, "pages") { return false; }
+    var i = 0usize;
+    while i < name.len() {
+        let c = byte(&cx, name, i);
+        let letter = (c >= b'a' && c <= b'z') || (c >= b'A' && c <= b'Z');
+        let digit = c >= b'0' && c <= b'9';
+        if !letter && c != b'_' && (i == 0usize || !digit) { return false; }
+        i = i + 1usize;
+    }
+    true
+}
+
+forall 'k.
+fn publish_named_collections(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
+    let pages = match build.collections.get(&cx, lit(&cx, "pages")) {
+        Option::Some(value) => match value.as_array() {
+            Option::Some(array) => array,
+            Option::None => return Result::Err.(report(&cx, "page collection is not an array", build.config_file)),
+        },
+        Option::None => return Result::Err.(report(&cx, "page collection is missing", build.config_file)),
+    };
+    var i = 0usize;
+    while i < build.definitions.positions(&cx) {
+        match build.definitions.key_at(&cx, i) {
+            Option::None => (),
+            Option::Some(name) => {
+                if !collection_name(&cx, name) {
+                    return Result::Err.(report_detail(&cx, build.config_file,
+                        Buffer!::new().push_static("invalid collection name: ").push_bytes(&cx, name).save(&cx)));
+                }
+                let rules = match build.definitions.get(&cx, name) {
+                    Option::Some(value) => match value.as_table() {
+                        Option::Some(table) => table,
+                        Option::None => return Result::Err.(report_detail(&cx, build.config_file,
+                            Buffer!::new().push_static("collection must be a table: ").push_bytes(&cx, name).save(&cx))),
+                    },
+                    Option::None => return Result::Err.(report(&cx, "collection definition is missing", build.config_file)),
+                };
+                var j = 0usize;
+                while j < rules.positions(&cx) {
+                    match rules.key_at(&cx, j) {
+                        Option::Some(key) => if !key.is(&cx, "where") && !key.is(&cx, "sort_by")
+                            && !key.is(&cx, "sort_order") {
+                            return Result::Err.(report_detail(&cx, build.config_file,
+                                Buffer!::new().push_static("unknown collection rule: ").push_bytes(&cx, key).save(&cx)));
+                        },
+                        Option::None => (),
+                    }
+                    j = j + 1usize;
+                }
+                let selected = select_records(&cx, pages, rules, build.config_file)?;
+                let replaced = build.collections.insert(&cx, name, TomlValue::Array.(selected));
+            },
+        }
+        i = i + 1usize;
+    }
+    Result::Ok.(())
+}
+
+forall 'k.
 fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
     scan_pages(&cx, build, lit(&cx, ""), 0usize)?;
     publish_pages(&cx, build);
+    publish_named_collections(&cx, build)?;
     var i = 0usize;
     while i < build.pending_pagination.len(&cx) {
         let pending = build.pending_pagination.at(&cx, i);
@@ -1201,7 +1281,8 @@ fn build_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> 
     let (stage, backup) = stage_paths(&cx, output)?;
     let build = Build.{ source, output: stage, layouts: join(&cx, source, config.layouts), layouts_rel: config.layouts,
         assets: config.assets, data_dir: parent(&cx, config.data), base_path: config.base_path, include_drafts,
-        site_data, collections: ArenaMap::new(&cx), pages: ArenaVec::new(&cx),
+        site_data, definitions: config.definitions, config_file: join(&cx, root, lit(&cx, "krayon.toml")),
+        collections: ArenaMap::new(&cx), pages: ArenaVec::new(&cx),
         pending_pagination: ArenaVec::new(&cx),
         stylesheets: ArenaVec::new(&cx), written: ArenaMap::new(&cx) };
     match render_site(&cx, build) {
