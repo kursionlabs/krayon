@@ -345,6 +345,14 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(json.loads((self.site / "dist/data/beta.json").read_text()),
                          {"title": "B"})
 
+        previous = (self.site / "dist/data/alpha.json").read_bytes()
+        template.write_text(template.read_text().replace('{"title":"{{ page.title }}"}',
+                                                         '{"title":{{ page.title }}}'))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("generated JSON /data/alpha.json", result.stderr)
+        self.assertEqual((self.site / "dist/data/alpha.json").read_bytes(), previous)
+
     def test_non_html_output_suffix_and_collision_checks(self):
         source = self.site / "src/feed.xml"
         source.write_text('+++\npermalink = "/feed.json"\n+++\n<feed/>')
@@ -421,6 +429,50 @@ class BuildTests(unittest.TestCase):
         result = self.build()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("json filter requires a JSON template", result.stderr)
+
+    def test_generated_json_is_validated_before_output_install(self):
+        template = self.site / "src/feed.json"
+        template.write_text('{"title":"Café", "escaped":"\\uD83D\\uDE80",'
+                            ' "items": [1, true, null, {"x": 2}]}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        previous = (self.site / "dist/feed.json").read_bytes()
+        self.assertEqual(json.loads(previous)["escaped"], "🚀")
+
+        template.write_text('{"items": [1,\n 2,]}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{template}: generated JSON /feed.json:2:4: trailing comma in JSON",
+                      result.stderr)
+        self.assertEqual((self.site / "dist/feed.json").read_bytes(), previous)
+
+        template.write_text('{"title":"Café","x":}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("generated JSON /feed.json:1:21: expected JSON value", result.stderr)
+        self.assertEqual((self.site / "dist/feed.json").read_bytes(), previous)
+
+    def test_generated_json_rejects_invalid_strings_and_numbers(self):
+        template = self.site / "src/feed.json"
+        cases = [
+            ('{"x":"\\uD800"}', "high surrogate requires a low surrogate"),
+            ('{"x":"\\q"}', "invalid string escape"),
+            ('{"x":01}', "expected comma or closing bracket"),
+            ('{"x":1e}', "expected exponent digit"),
+            ('{"x":"a\nb"}', "unescaped control character in string"),
+            ('{"x":true} false', "extra content after JSON value"),
+        ]
+        for body, message in cases:
+            with self.subTest(body=body):
+                template.write_text(body)
+                result = self.build()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+
+        template.write_bytes(b'{"x":"\xff"}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid UTF-8 in string", result.stderr)
 
     def test_drafts_are_excluded_until_preview_build(self):
         draft = self.site / "src/draft.md"

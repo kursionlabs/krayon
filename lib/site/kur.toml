@@ -19,3 +19,6 @@ path="../url"
 
 [dependencies.links]
 path="../links"
+
+[dependencies.json]
+path="../json"

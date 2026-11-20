@@ -11,6 +11,7 @@ use toml::value::TomlValue;
 use html::{Page, TemplateFormat, parse_page, template};
 use markdown::markdown;
 use links::{Document, Stylesheet, validate};
+use json::validate as validate_json;
 
 extern "C" fn getpid() -> i32;
 
@@ -562,6 +563,27 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
         Option::None => body,
         Option::Some(name) => render_layout(&cx, build, page, body, name, source.format, 0usize)?,
     };
+    match source.format {
+        TemplateFormat::Json => match validate_json(&cx, rendered) {
+            Result::Ok(nothing) => (),
+            Result::Err(error) => {
+                var line = 1usize;
+                var column = 1usize;
+                var i = 0usize;
+                while i < error.offset {
+                    let c = rendered.byte_or_zero(&cx, i);
+                    if c == b'\n' { line = line + 1usize; column = 1usize; }
+                    else if c < 128u8 || c >= 192u8 { column = column + 1usize; }
+                    i = i + 1usize;
+                }
+                return Result::Err.(Buffer!::new().push_static("krayon: ").push_bytes(&cx, source.file)
+                    .push_static(": generated JSON ").push_bytes(&cx, page.url).push_byte(b':')
+                    .push_usize(line).push_byte(b':').push_usize(column).push_static(": ")
+                    .push_static(error.message).push_byte(b'\n'));
+            },
+        },
+        _ => (),
+    }
     save(&cx, source.destination, Buffer!::new().push_bytes(&cx, rendered))
 }
 
