@@ -39,6 +39,7 @@ struct Build {
     site_data: ArenaMap[Span['k], TomlValue['k], 'k],
     collections: ArenaMap[Span['k], TomlValue['k], 'k],
     pages: ArenaVec[SourcePage['k], 'k],
+    pending_pagination: ArenaVec[PendingPagination['k], 'k],
     stylesheets: ArenaVec[Stylesheet['k], 'k],
     written: ArenaMap[Span['k], Span['k], 'k],
 }
@@ -50,6 +51,14 @@ struct SourcePage {
     is_markdown: bool,
     format: TemplateFormat,
     destination: Span['k],
+}
+
+forall 'k.
+struct PendingPagination {
+    file: Span['k],
+    page: Page['k],
+    source: Span['k],
+    default_url: Span['k],
 }
 
 forall 'k.
@@ -493,9 +502,10 @@ fn pagination_url(&cx: Domain!['k], base: Span['k], number: usize) -> Span['k] {
 forall 'k.
 fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_page: Page['k],
     source: Span['k], default_url: Span['k]) -> Result[(), Buffer!] {
-    if !source.starts_with(&cx, lit(&cx, "site.")) || source.len() <= 5usize {
+    let collection = source.is(&cx, "collections.pages");
+    if !collection && (!source.starts_with(&cx, lit(&cx, "site.")) || source.len() <= 5usize) {
         return Result::Err.(report_detail(&cx, file,
-            lit(&cx, "paginate must name a site data array, such as site.posts")));
+            lit(&cx, "paginate must name a site data array or collections.pages")));
     }
     let page_size = match template_page.data.get(&cx, lit(&cx, "page_size")) {
         Option::Some(value) => match value.as_integer() {
@@ -520,9 +530,16 @@ fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
     if !safe_path(&cx, base, true) || !base.ends_with(&cx, lit(&cx, "/")) {
         return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate permalink must be a safe directory URL ending in /")));
     }
-    let value = match site_value(&cx, build.site_data, source.slice(5usize, source.len())) {
-        Option::Some(found) => found,
-        Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate source is missing"))),
+    let value = if collection {
+        match build.collections.get(&cx, lit(&cx, "pages")) {
+            Option::Some(found) => found,
+            Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate source is missing"))),
+        }
+    } else {
+        match site_value(&cx, build.site_data, source.slice(5usize, source.len())) {
+            Option::Some(found) => found,
+            Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate source is missing"))),
+        }
     };
     let all = match value.as_array() {
         Option::Some(array) => array,
@@ -677,6 +694,10 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Resul
                 Option::Some(text) => text,
                 Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate must be a string"))),
             };
+            if source.is(&cx, "collections.pages") {
+                build.pending_pagination.push(&cx, PendingPagination.{ file, page: parsed, source, default_url: url });
+                return Result::Ok.(());
+            }
             return paginate_pages(&cx, build, file, parsed, source, url);
         },
     }
@@ -973,8 +994,7 @@ fn collection_item(&cx: Domain!['k], page: Page['k]) -> TomlValue['k] {
 }
 
 forall 'k.
-fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
-    scan_pages(&cx, build, lit(&cx, ""), 0usize)?;
+fn publish_pages(&cx: Domain!['k], build: Build['k]) -> () {
     build.pages.sort_by(&cx, |&cx, a, b| a.page.url.cmp(&cx, b.page.url));
     let all = ArenaVec::new(&cx);
     var i = 0usize;
@@ -987,6 +1007,19 @@ fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
         i = i + 1usize;
     }
     let replaced = build.collections.insert(&cx, lit(&cx, "pages"), TomlValue::Array.(all));
+}
+
+forall 'k.
+fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
+    scan_pages(&cx, build, lit(&cx, ""), 0usize)?;
+    publish_pages(&cx, build);
+    var i = 0usize;
+    while i < build.pending_pagination.len(&cx) {
+        let pending = build.pending_pagination.at(&cx, i);
+        paginate_pages(&cx, build, pending.file, pending.page, pending.source, pending.default_url)?;
+        i = i + 1usize;
+    }
+    publish_pages(&cx, build);
     i = 0usize;
     while i < build.pages.len(&cx) {
         render_page(&cx, build, build.pages.at(&cx, i))?;
@@ -1046,6 +1079,7 @@ fn build_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> 
     let build = Build.{ source, output: stage, layouts: join(&cx, source, config.layouts), layouts_rel: config.layouts,
         assets: config.assets, data_dir: parent(&cx, config.data), base_path: config.base_path, include_drafts,
         site_data, collections: ArenaMap::new(&cx), pages: ArenaVec::new(&cx),
+        pending_pagination: ArenaVec::new(&cx),
         stylesheets: ArenaVec::new(&cx), written: ArenaMap::new(&cx) };
     match render_site(&cx, build) {
         Result::Ok(nothing) => (),

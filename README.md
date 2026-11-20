@@ -95,7 +95,8 @@ site data paths such as `site.catalog.products`; it is available in HTML,
 XML, JSON, and text templates. A template or record can set `draft = true`;
 a record's value overrides the template default.
 
-An HTML template can split a site data array across list pages:
+An HTML template can split a site data array or `collections.pages` across
+list pages:
 
 ```html
 +++
@@ -126,6 +127,13 @@ requires array items to be tables.
 `sort_by` is optional and accepts a field path such as `author.name`;
 `sort_order` is `asc` by default or `desc`. Sorting happens before page
 slices are chosen.
+
+Use `paginate = "collections.pages"` to archive Markdown and HTML pages by
+their front matter. The source includes published pages (and drafts with
+`--drafts`) plus pages generated from site data. All templates paginating
+`collections.pages` read the same snapshot, which excludes pages created by
+those templates; their archive pages appear in the final `collections.pages`
+used while rendering other templates.
 
 XML, JSON, and text templates use the same page fields, site data, collections,
 loops, layouts, and includes as HTML. Layouts and includes must use the same

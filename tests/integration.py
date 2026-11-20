@@ -382,6 +382,56 @@ class BuildTests(unittest.TestCase):
         self.assertEqual((self.site / "dist/posts/index.html").read_text(),
                          '<p>1/1:0</p>')
 
+    def test_paginate_page_collection_without_archive_feedback(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        src.mkdir()
+        (src / "old.md").write_text('+++\nkind = "post"\ntitle = "Old"\n'
+                                    'date = 2026-01-01\n+++\n# Old')
+        (src / "new.md").write_text('+++\nkind = "post"\ntitle = "New"\n'
+                                    'date = 2026-01-10\n+++\n# New')
+        (src / "draft.md").write_text('+++\nkind = "post"\ntitle = "Draft"\n'
+                                      'date = 2026-01-20\ndraft = true\n+++\n# Draft')
+        (src / "blog.html").write_text(
+            '+++\npaginate = "collections.pages"\npage_size = 2\n'
+            'where = {field = "kind", equals = "post"}\n'
+            'sort_by = "date"\nsort_order = "desc"\nkind = "archive"\n+++\n'
+            '<p>{{ page.pagination.total_items }}/{{ page.pagination.total_pages }}</p>'
+            '{% for post in page.pagination.items %}'
+            '<a href="{{ post.url }}">{{ post.title }}</a>{% endfor %}')
+        (src / "all.html").write_text(
+            '+++\npaginate = "collections.pages"\npage_size = 10\n'
+            'kind = "archive"\n+++\n{{ page.pagination.total_items }}')
+        (src / "overview.html").write_text(
+            '{% for item in collections.pages | where: "kind", "archive" %}'
+            '{{ item.url }};{% endfor %}')
+
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        blog = (self.site / "dist/blog/index.html").read_text()
+        self.assertIn('<p>2/1</p><a href="/new/">New</a>'
+                      '<a href="/old/">Old</a>', blog)
+        self.assertFalse((self.site / "dist/blog/page/2/index.html").exists())
+        self.assertEqual((self.site / "dist/all/index.html").read_text(), "3")
+        self.assertEqual((self.site / "dist/overview/index.html").read_text(),
+                         "/all/;/blog/;")
+
+        result = self.build("--drafts")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('<p>3/2</p><a href="/draft/">Draft</a>'
+                      '<a href="/new/">New</a>',
+                      (self.site / "dist/blog/index.html").read_text())
+        self.assertIn('<a href="/old/">Old</a>',
+                      (self.site / "dist/blog/page/2/index.html").read_text())
+        self.assertEqual((self.site / "dist/all/index.html").read_text(), "4")
+
+        (src / "blog.html").write_text((src / "blog.html").read_text().replace(
+            'collections.pages', 'collections.missing'))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('paginate must name a site data array or collections.pages', result.stderr)
+        self.assertTrue((self.site / "dist/blog/page/2/index.html").exists())
+
     def test_paginate_data_array_and_navigation(self):
         data = self.site / "src/_data/site.toml"
         data.write_text('posts = [{title = "One"}, {title = "Two"}, '
