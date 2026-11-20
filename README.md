@@ -19,6 +19,14 @@ mkdir -p bin
 bin/krayon build examples/hello-site
 ```
 
+To inspect routes before building, run `bin/krayon routes [SITE_ROOT]`. It
+lists pages as `page<TAB>source<TAB>URL` and redirects as
+`alias<TAB>old URL<TAB>target URL`, sorted by page URL and then alias URL.
+URLs include `base_path`; generated and paginated pages use their source
+template with an item or page number. Add `--drafts` to include drafts.
+`routes` checks source discovery and route collisions, but does not render
+pages, validate links, or write to the output directory.
+
 `build` accepts a site root, defaulting to the current directory. Krayon reads
 `krayon.toml` there when present. This is its complete configuration:
 

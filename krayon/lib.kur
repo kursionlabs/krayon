@@ -1,13 +1,13 @@
 use std::arena::Domain!;
 use std::buffer::Buffer!;
-use std::io::eprint_buffer;
+use std::io::{eprint_buffer, print_buffer};
 use std::option::{Option, Result};
 use std::process::{Args, hash_seed};
 use std::raw::Span;
-use site::build_with_drafts;
+use site::{build_with_drafts, routes_with_drafts};
 
 fn usage() -> () {
-    eprint_buffer(Buffer!::new().push_static("usage: krayon build [SITE_ROOT] [--drafts]\n"));
+    eprint_buffer(Buffer!::new().push_static("usage: krayon <build|routes> [SITE_ROOT] [--drafts]\n"));
 }
 
 fn main(args: Args) -> i32 {
@@ -21,7 +21,7 @@ fn main(args: Args) -> i32 {
         Option::Some(s) => Span::from_static(&cx, s),
         Option::None => Span::from_static(&cx, ""),
     };
-    if !command.is(&cx, "build") {
+    if !command.is(&cx, "build") && !command.is(&cx, "routes") {
         usage();
         cx.destroy();
         return 2i32;
@@ -45,6 +45,17 @@ fn main(args: Args) -> i32 {
             return 2i32;
         }
         i = i + 1usize;
+    }
+    if command.is(&cx, "routes") {
+        let result = routes_with_drafts(&cx, root, include_drafts);
+        cx.destroy();
+        return match result {
+            Result::Ok(listing) => match print_buffer(listing) {
+                Result::Ok(nothing) => 0i32,
+                Result::Err(e) => { eprint_buffer(Buffer!::new().push_static("krayon: cannot write routes\n")); 1i32 },
+            },
+            Result::Err(message) => { eprint_buffer(message); 1i32 },
+        };
     }
     let result = build_with_drafts(&cx, root, include_drafts);
     cx.destroy();

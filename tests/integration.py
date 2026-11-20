@@ -41,6 +41,69 @@ class BuildTests(unittest.TestCase):
             capture_output=True,
         )
 
+    def routes(self, *flags):
+        return subprocess.run(
+            [str(KRAYON), "routes", str(self.site), *flags],
+            text=True,
+            capture_output=True,
+        )
+
+    def test_routes_list_discovered_pages_and_aliases_without_writing(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "_data").mkdir(parents=True)
+        (self.site / "krayon.toml").write_text(
+            'base_path = "/docs"\nexclude = ["private.md"]\n')
+        (src / "_data/site.toml").write_text(
+            'items = [{slug = "a"}, {slug = "b", draft = true}]\n')
+        (src / "index.md").write_text('# Home\n')
+        (src / "new.md").write_text(
+            '+++\npermalink = "/latest/"\naliases = ["/old/"]\n+++\n# New\n')
+        (src / "draft.md").write_text('+++\ndraft = true\n+++\n# Draft\n')
+        (src / "private.md").write_text('# Private\n')
+        (src / "item.json").write_text(
+            '+++\ngenerate = "site.items"\n'
+            'permalink = "/data/{{ item.slug }}.json"\n+++\n{}\n')
+        (src / "archive.html").write_text(
+            '+++\npaginate = "collections.pages"\npage_size = 1\n+++\nArchive\n')
+
+        result = self.routes()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout,
+                         'page\tindex.md\t/docs/\n'
+                         'page\tarchive.html [page 1]\t/docs/archive/\n'
+                         'page\tarchive.html [page 2]\t/docs/archive/page/2/\n'
+                         'page\titem.json [item 1]\t/docs/data/a.json\n'
+                         'page\tnew.md\t/docs/latest/\n'
+                         'alias\t/docs/old/\t/docs/latest/\n')
+        self.assertFalse((self.site / "dist").exists())
+        self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
+
+        result = self.routes("--drafts")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('page\tdraft.md\t/docs/draft/\n', result.stdout)
+        self.assertIn('page\titem.json [item 2]\t/docs/data/b.json\n', result.stdout)
+        self.assertNotIn('private.md', result.stdout)
+        self.assertFalse((self.site / "dist").exists())
+
+        (self.site / "dist").mkdir()
+        (self.site / "dist/sentinel.txt").write_text("keep\n")
+        result = self.routes()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/sentinel.txt").read_text(), "keep\n")
+
+    def test_routes_fail_without_partial_listing_or_output_changes(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        src.mkdir()
+        (src / "one.md").write_text('+++\naliases = ["/two/"]\n+++\n# One\n')
+        (src / "two.md").write_text('# Two\n')
+        result = self.routes()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn('output collision', result.stderr)
+        self.assertFalse((self.site / "dist").exists())
+
     def test_nested_pages_layouts_data_and_assets(self):
         result = self.build()
         self.assertEqual(result.returncode, 0, result.stderr)
