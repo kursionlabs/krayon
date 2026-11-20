@@ -51,7 +51,7 @@ class BuildTests(unittest.TestCase):
         })
         home = (self.site / "dist/index.html").read_text()
         note = (self.site / "dist/guide/intro/index.html").read_text()
-        self.assertIn("<h1>Welcome</h1>", home)
+        self.assertIn('<h1 id="welcome">Welcome</h1>', home)
         self.assertIn("Hello &amp; welcome", home)
         self.assertIn("<main><article>", note)
         self.assertIn("<em>italic</em>", note)
@@ -1184,8 +1184,50 @@ class BuildTests(unittest.TestCase):
         self.assertEqual((self.site / "dist/heading/index.html").read_text(),
                          '<h3 id="api-fetch" class="item-heading kind-fn">Fetch &amp; update</h3>\n')
 
+    def test_markdown_headings_are_available_to_layouts(self):
+        (self.site / "src/target.md").write_text('# Target\n')
+        (self.site / "src/_includes/toc.html").write_text(
+            '<nav>{% for heading in page.headings %}'
+            '<a href="#{{ heading.id }}">{{ heading.level }}:{{ heading.text }}</a>'
+            '{% endfor %}</nav>{{ content | safe }}')
+        (self.site / "src/toc.md").write_text(
+            '+++\nlayout = "toc.html"\n+++\n'
+            '# Hello *Krayon*\n'
+            '## [Read me](/target/) & `tools`\n'
+            '## Hello Krayon\n'
+            '> ### Quoted {#quote}\n'
+            '## Hello Krayon\n'
+            '## !!!\n'
+            '```text\n# Hidden\n```\n'
+            '<h2 id="raw">Raw</h2>\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/toc/index.html").read_text()
+        self.assertIn('<a href="#hello-krayon">1:Hello Krayon</a>', html)
+        self.assertIn('<a href="#read-me-tools">2:Read me &amp; tools</a>', html)
+        self.assertIn('<a href="#hello-krayon-2">2:Hello Krayon</a>', html)
+        self.assertIn('<a href="#quote">3:Quoted</a>', html)
+        self.assertIn('<a href="#hello-krayon-3">2:Hello Krayon</a>', html)
+        self.assertIn('<a href="#section">2:!!!</a>', html)
+        self.assertIn('<h1 id="hello-krayon">Hello <em>Krayon</em></h1>', html)
+        self.assertIn('<h2 id="read-me-tools">', html)
+        self.assertNotIn('Hidden</a>', html)
+        self.assertNotIn('Raw</a>', html)
+
+        page = self.site / "src/toc.md"
+        page.write_text(page.read_text().replace('layout = "toc.html"',
+                                                'layout = "toc.html"\nheadings = []'))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('headings is a reserved Markdown page field', result.stderr)
+        self.assertEqual((self.site / "dist/toc/index.html").read_text(), html)
+
     def test_duplicate_heading_id_is_an_error(self):
         (self.site / "src/heading.md").write_text("# One {#same}\n## Two {#same}\n")
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("duplicate heading ID", result.stderr)
+        (self.site / "src/heading.md").write_text("# Same\n## Another {#same}\n")
         result = self.build()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("duplicate heading ID", result.stderr)
@@ -1624,7 +1666,7 @@ class BuildTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((minimal / "dist/docs/first/index.html").read_text(),
-                         "<h1>First</h1>\n<p>A page.</p>\n")
+                         '<h1 id="first">First</h1>\n<p>A page.</p>\n')
 
     def test_false_condition_uses_else_branch(self):
         data = self.site / "src/_data/site.toml"

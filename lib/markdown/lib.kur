@@ -15,6 +15,13 @@ struct ListFrame {
 }
 
 forall 'k.
+exposed struct Heading {
+    level: usize,
+    text: Span['k],
+    id: Span['k],
+}
+
+forall 'k.
 fn empty(&cx: Domain!['k]) -> Span['k] { Span::from_static(&cx, "") }
 
 forall 'k.
@@ -175,8 +182,55 @@ fn attr_name(&cx: Domain!['k], name: Span['k]) -> bool {
 }
 
 forall 'k.
+fn heading_text(&cx: Domain!['k], source: Span['k]) -> Span['k] {
+    var out = Buffer!::new();
+    var i = 0usize;
+    while i < source.len() {
+        let c = at(&cx, source, i);
+        let opening = if c == b'!' && at(&cx, source, i + 1usize) == b'[' { i + 1usize } else { i };
+        if at(&cx, source, opening) == b'[' {
+            match source.find_byte(&cx, b']', opening + 1usize) {
+                Option::Some(end) => if at(&cx, source, end + 1usize) == b'(' {
+                    match source.find_byte(&cx, b')', end + 2usize) {
+                        Option::Some(close) => {
+                            out = out.push_bytes(&cx, heading_text(&cx, source.slice(opening + 1usize, end)));
+                            i = close + 1usize;
+                        },
+                        Option::None => { out = out.push_byte(c); i = i + 1usize; },
+                    }
+                } else { out = out.push_byte(c); i = i + 1usize; },
+                Option::None => { out = out.push_byte(c); i = i + 1usize; },
+            }
+        } else if c == b'*' || c == b'`' { i = i + 1usize; }
+        else { out = out.push_byte(c); i = i + 1usize; }
+    }
+    out.save(&cx)
+}
+
+forall 'k.
+fn heading_slug(&cx: Domain!['k], text: Span['k]) -> Span['k] {
+    var out = Buffer!::new();
+    var pending_dash = false;
+    var written = false;
+    var i = 0usize;
+    while i < text.len() {
+        let c = at(&cx, text, i);
+        let letter = (c >= b'a' && c <= b'z') || (c >= b'A' && c <= b'Z');
+        let digit = c >= b'0' && c <= b'9';
+        if letter || digit || c >= 128u8 {
+            if pending_dash && written { out = out.push_byte(b'-'); }
+            out = out.push_byte(if c >= b'A' && c <= b'Z' { c + 32u8 } else { c });
+            written = true;
+            pending_dash = false;
+        } else if c == b' ' || c == b'\t' || c == b'-' || c == b'_' { pending_dash = true; }
+        i = i + 1usize;
+    }
+    if written { out.save(&cx) } else { out.destroy(); lit(&cx, "section") }
+}
+
+forall 'k.
 fn heading(&cx: Domain!['k], out: Buffer!, line: Span['k], level: usize,
-    ids: ArenaMap[Span['k], bool, 'k], base: Span['k]) -> Result[Buffer!, Span['k]] {
+    ids: ArenaMap[Span['k], bool, 'k], headings: ArenaVec[Heading['k], 'k], base: Span['k]) -> Result[Buffer!, Span['k]] {
     var out = out;
     var text = line.slice(level + 1usize, line.len());
     var id = empty(&cx);
@@ -214,12 +268,22 @@ fn heading(&cx: Domain!['k], out: Buffer!, line: Span['k], level: usize,
             Option::None => (),
         }
     }
+    let plain = heading_text(&cx, text);
     if !id.is_empty() {
         if ids.contains(&cx, id) { classes.destroy(); out.destroy(); return Result::Err.(lit(&cx, "duplicate heading ID")); }
-        ids.insert(&cx, id, true);
+    } else {
+        let slug = heading_slug(&cx, plain);
+        id = slug;
+        var number = 2usize;
+        while ids.contains(&cx, id) {
+            id = Buffer!::new().push_bytes(&cx, slug).push_byte(b'-').push_usize(number).save(&cx);
+            number = number + 1usize;
+        }
     }
+    ids.insert(&cx, id, true);
+    headings.push(&cx, Heading.{ level, text: plain, id });
     out = out.push_static("<h").push_usize(level);
-    if !id.is_empty() { out = out.push_static(" id=\"").push_bytes(&cx, id).push_static("\""); }
+    out = out.push_static(" id=\"").push_bytes(&cx, id).push_static("\"");
     let class_text = classes.save(&cx);
     if !class_text.is_empty() { out = out.push_static(" class=\"").push_bytes(&cx, class_text).push_static("\""); }
     Result::Ok.(inline(&cx, out.push_static(">"), text, base).push_static("</h").push_usize(level).push_static(">\n"))
@@ -305,7 +369,7 @@ fn list_item(&cx: Domain!['k], out: Buffer!, lists: ArenaVec[ListFrame, 'k],
 
 forall 'k.
 fn render_blocks(&cx: Domain!['k], source: Span['k], base: Span['k],
-    ids: ArenaMap[Span['k], bool, 'k], depth: usize) -> Result[Buffer!, Span['k]] {
+    ids: ArenaMap[Span['k], bool, 'k], headings: ArenaVec[Heading['k], 'k], depth: usize) -> Result[Buffer!, Span['k]] {
     if depth >= 32usize { return Result::Err.(lit(&cx, "Markdown containers nested too deeply")); }
     var out = Buffer!::new();
     let lists: ArenaVec[ListFrame, 'k] = ArenaVec::new(&cx);
@@ -375,7 +439,7 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], base: Span['k],
                     Option::None => { gathering = false; },
                 }
             }
-            let inner = match render_blocks(&cx, quote.save(&cx), base, ids, depth + 1usize) {
+            let inner = match render_blocks(&cx, quote.save(&cx), base, ids, headings, depth + 1usize) {
                 Result::Ok(html) => html,
                 Result::Err(message) => { out.destroy(); return Result::Err.(message); },
             };
@@ -388,7 +452,7 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], base: Span['k],
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
             out = close_lists(&cx, out, lists);
             let level = heading_level(&cx, line);
-            out = match heading(&cx, out, line, level, ids, base) {
+            out = match heading(&cx, out, line, level, ids, headings, base) {
                 Result::Ok(html) => html,
                 Result::Err(message) => return Result::Err.(message),
             };
@@ -431,6 +495,9 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], base: Span['k],
 }
 
 forall 'k.
-fn markdown(&cx: Domain!['k], source: Span['k], base: Span['k]) -> Result[Buffer!, Span['k]] {
-    render_blocks(&cx, source, base, ArenaMap::new(&cx), 0usize)
+fn markdown(&cx: Domain!['k], source: Span['k], base: Span['k])
+    -> Result[(Buffer!, ArenaVec[Heading['k], 'k]), Span['k]] {
+    let headings = ArenaVec::new(&cx);
+    let html = render_blocks(&cx, source, base, ArenaMap::new(&cx), headings, 0usize)?;
+    Result::Ok.((html, headings))
 }

@@ -319,6 +319,20 @@ ATX headings may end with explicit attributes, such as
 `### Function {#api-function .item-heading .kind-fn}`. IDs must be unique
 within a Markdown page. Attribute names may contain ASCII letters, digits,
 hyphens, underscores, and colons.
+Headings without an explicit ID receive one from their visible text: ASCII
+letters become lowercase, spaces, underscores, and hyphens become hyphens,
+ASCII punctuation is omitted, and Unicode text is retained. Repeated IDs get
+`-2`, `-3`, and so on; an empty slug uses `section`.
+Layouts for Markdown pages can build a table of contents from `page.headings`:
+
+```html
+{% for heading in page.headings %}<a href="#{{ heading.id }}">{{ heading.text }}</a>{% endfor %}
+```
+
+Each record has a one-based `level`, plain `text`, and rendered `id`. Headings
+inside blockquotes are included; code fences and raw HTML headings are not.
+`headings` is a reserved Markdown front matter field. Markdown pages without
+headings expose an empty array.
 
 ## Code and checks
 

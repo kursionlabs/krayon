@@ -860,7 +860,7 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Resul
         match markdown_excerpt_source(&cx, page.body) {
             Option::None => Option::None,
             Option::Some(text) => match markdown(&cx, text, build.base_path) {
-                Result::Ok(html) => Option::Some.(html.save(&cx)),
+                Result::Ok(result) => { let (html, headings) = result; Option::Some.(html.save(&cx)) },
                 Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
             },
         }
@@ -884,7 +884,26 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
         Option::None => original,
     };
     let body = if source.is_markdown { match markdown(&cx, page.body, build.base_path) {
-            Result::Ok(html) => html.save(&cx),
+            Result::Ok(result) => {
+                let (html, found) = result;
+                if page.data.contains(&cx, lit(&cx, "headings")) {
+                    html.destroy();
+                    return Result::Err.(report_detail(&cx, source.file, lit(&cx, "headings is a reserved Markdown page field")));
+                }
+                let headings = ArenaVec::new(&cx);
+                var i = 0usize;
+                while i < found.len(&cx) {
+                    let heading = found.at(&cx, i);
+                    let fields = ArenaMap::new(&cx);
+                    let replaced = fields.insert(&cx, lit(&cx, "level"), TomlValue::Integer.(heading.level as i64));
+                    let replaced = fields.insert(&cx, lit(&cx, "text"), TomlValue::String.(heading.text));
+                    let replaced = fields.insert(&cx, lit(&cx, "id"), TomlValue::String.(heading.id));
+                    headings.push(&cx, TomlValue::Table.(fields));
+                    i = i + 1usize;
+                }
+                let replaced = page.data.insert(&cx, lit(&cx, "headings"), TomlValue::Array.(headings));
+                html.save(&cx)
+            },
             Result::Err(message) => return Result::Err.(report_detail(&cx, source.file, message)),
         } }
         else { match template(&cx, build.site_data, build.collections, page, build.layouts,
