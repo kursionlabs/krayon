@@ -1,6 +1,7 @@
 """End-to-end checks for a site built with Krayon's public CLI."""
 
 from pathlib import Path
+import os
 import shutil
 import subprocess
 import tempfile
@@ -9,15 +10,18 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples/hello-site"
-KRAYON = ROOT / "bin/krayon"
+KRAYON = Path(os.environ.get("KRAYON_TEST_BINARY", ROOT / "bin/krayon"))
+KURSAL = Path(os.environ.get("KURSAL_COMPILER", ROOT / "../kursal/bin/kursal"))
 
 
 class BuildTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if os.environ.get("KRAYON_TEST_BINARY"):
+            return
         (ROOT / "bin").mkdir(exist_ok=True)
         subprocess.run(
-            [str(ROOT / "../kursal/bin/kursal"), "build", "krayon", "-o", str(KRAYON)],
+            [str(KURSAL), "build", "krayon", "-o", str(KRAYON)],
             cwd=ROOT,
             check=True,
         )
@@ -153,6 +157,82 @@ class BuildTests(unittest.TestCase):
         self.assertIn('<span class="tok-comment">// &lt;note&gt;</span>', html)
         self.assertIn('<span class="tok-string">&quot;a&amp;b&quot;</span>', html)
         self.assertIn('<code class="language-other">fn &lt;x&gt;', html)
+
+    def test_images_blockquotes_and_nested_lists(self):
+        (self.site / "src/assets/diagram.svg").write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg"></svg>\n')
+        (self.site / "src/containers.md").write_text(
+            '# Containers\n\n'
+            '![A <B> & C](/assets/diagram.svg "Diagram & details")\n\n'
+            '> First *quoted* line\n'
+            '> second line\n'
+            '>\n'
+            '> ## Inside {#inside}\n'
+            '> - quote item\n'
+            '>   - nested quote item\n\n'
+            '- parent\n'
+            '  - first child\n'
+            '  - second child\n'
+            '- sibling\n\n'
+            '1. first\n'
+            '   1. inner\n'
+            '2. second\n\n'
+            '[Inside](#inside)\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/containers/index.html").read_text()
+        self.assertIn('<img src="/assets/diagram.svg" alt="A &lt;B&gt; &amp; C" '
+                      'title="Diagram &amp; details">', html)
+        self.assertIn('<blockquote>\n<p>First <em>quoted</em> line second line</p>\n'
+                      '<h2 id="inside">Inside</h2>\n', html)
+        self.assertIn('<li>quote item<ul>\n<li>nested quote item</li>\n'
+                      '</ul>\n</li>', html)
+        self.assertIn('<li>parent<ul>\n<li>first child</li>\n'
+                      '<li>second child</li>\n</ul>\n</li>\n<li>sibling</li>', html)
+        self.assertIn('<li>first<ol>\n<li>inner</li>\n</ol>\n</li>\n'
+                      '<li>second</li>', html)
+
+    def test_image_uses_base_path_and_missing_image_fails(self):
+        config = self.site / "krayon.toml"
+        config.write_text(config.read_text() + 'base_path = "/docs"\n')
+        layout = self.site / "src/_includes/base.html"
+        layout.write_text(layout.read_text().replace('href="/"', 'href="{{ "/" | url }}"')
+                          .replace('href="/assets/css/site.css"',
+                                   'href="{{ "/assets/css/site.css" | url }}"'))
+        archive = self.site / "src/archive.html"
+        archive.write_text(archive.read_text().replace("{{ entry.url }}", "{{ entry.url | url }}"))
+        image = self.site / "src/image.md"
+        image.write_text("![Logo](/assets/css/site.css)\n")
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('<img src="/docs/assets/css/site.css" alt="Logo">',
+                      (self.site / "dist/image/index.html").read_text())
+        image.write_text("![Gone](/assets/missing.png)\n")
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("broken local link: /docs/assets/missing.png", result.stderr)
+
+    def test_nested_quote_can_contain_code_and_heading_ids_are_page_wide(self):
+        fence = chr(96) * 3
+        page = self.site / "src/quote.md"
+        page.write_text(
+            "> > nested\n"
+            ">\n"
+            f"> {fence}kursal\n"
+            "> fn answer() -> usize { 42 }\n"
+            f"> {fence}\n"
+            "> ## In quote {#shared}\n")
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/quote/index.html").read_text()
+        self.assertIn("<blockquote>\n<blockquote>\n<p>nested</p>\n"
+                      "</blockquote>\n", html)
+        self.assertIn('<pre><code class="language-kursal">'
+                      '<span class="tok-keyword">fn</span>', html)
+        page.write_text(page.read_text() + "\n## Outside {#shared}\n")
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("duplicate heading ID", result.stderr)
 
     def test_broken_page_link_preserves_previous_output(self):
         self.assertEqual(self.build().returncode, 0)

@@ -1,11 +1,18 @@
-use std::alloc::arena::Domain!;
-use std::bytes::buffer::Buffer!;
+use std::arena::Domain!;
+use std::buffer::Buffer!;
 use std::collections::arena_map::ArenaMap;
+use std::collections::arena_vec::ArenaVec;
 use std::option::{Option, Result};
 use std::raw::Span;
 use std::slice::Slice;
 use url::prefix;
 use highlight::render_line;
+
+struct ListFrame {
+    indent: usize,
+    content_indent: usize,
+    ordered: bool,
+}
 
 forall 'k.
 fn empty(&cx: Domain!['k]) -> Span['k] { Span::from_static(&cx, "") }
@@ -58,6 +65,37 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], base: Span['k]) -> Buffer
                     i = end + 1usize;
                 },
                 Option::None => { out = out.push_static("`"); i = i + 1usize; },
+            }
+        } else if c == b'!' && at(&cx, s, i + 1usize) == b'[' {
+            match s.find_byte(&cx, b']', i + 2usize) {
+                Option::Some(end) => {
+                    if at(&cx, s, end + 1usize) == b'(' {
+                        match s.find_byte(&cx, b')', end + 2usize) {
+                            Option::Some(close) => {
+                                let destination = s.slice(end + 2usize, close).trim(&cx);
+                                var target = destination;
+                                var title = empty(&cx);
+                                match destination.find(&cx, lit(&cx, " \""), 0usize) {
+                                    Option::Some(split) => if destination.ends_with(&cx, lit(&cx, "\"")) {
+                                        target = destination.slice(0usize, split);
+                                        title = destination.slice(split + 2usize, destination.len() - 1usize);
+                                    },
+                                    Option::None => (),
+                                }
+                                out = html_escape(&cx, out.push_static("<img src=\""), prefix(&cx, base, target))
+                                    .push_static("\" alt=\"");
+                                out = html_escape(&cx, out, s.slice(i + 2usize, end)).push_static("\"");
+                                if !title.is_empty() {
+                                    out = html_escape(&cx, out.push_static(" title=\""), title).push_static("\"");
+                                }
+                                out = out.push_static(">");
+                                i = close + 1usize;
+                            },
+                            Option::None => { out = out.push_byte(c); i = i + 1usize; },
+                        }
+                    } else { out = out.push_byte(c); i = i + 1usize; }
+                },
+                Option::None => { out = out.push_byte(c); i = i + 1usize; },
             }
         } else if c == b'[' {
             match s.find_byte(&cx, b']', i + 1usize) {
@@ -196,13 +234,83 @@ fn ordered_marker(&cx: Domain!['k], line: Span['k]) -> usize {
 }
 
 forall 'k.
-fn markdown(&cx: Domain!['k], source: Span['k], base: Span['k]) -> Result[Buffer!, Span['k]] {
+fn list_marker(&cx: Domain!['k], line: Span['k]) -> Option[(usize, usize, bool)] {
+    var indent = 0usize;
+    while at(&cx, line, indent) == b' ' { indent = indent + 1usize; }
+    let marker = line.slice(indent, line.len());
+    if starts(&cx, marker, "- ") || starts(&cx, marker, "* ") || starts(&cx, marker, "+ ") {
+        Option::Some.((indent, indent + 2usize, false))
+    } else {
+        let width = ordered_marker(&cx, marker);
+        if width > 0usize { Option::Some.((indent, indent + width, true)) }
+        else { Option::None }
+    }
+}
+
+forall 'k.
+fn quote_line(&cx: Domain!['k], line: Span['k]) -> Option[Span['k]] {
+    var indent = 0usize;
+    while indent < 4usize && at(&cx, line, indent) == b' ' { indent = indent + 1usize; }
+    if indent > 3usize || at(&cx, line, indent) != b'>' { return Option::None; }
+    let start = if at(&cx, line, indent + 1usize) == b' ' { indent + 2usize } else { indent + 1usize };
+    Option::Some.(line.slice(start, line.len()))
+}
+
+forall 'k.
+fn close_lists(&cx: Domain!['k], out: Buffer!, lists: ArenaVec[ListFrame, 'k]) -> Buffer! {
+    var out = out;
+    while lists.len(&cx) > 0usize {
+        match lists.pop(&cx) {
+            Option::Some(frame) => {
+                out = out.push_static("</li>\n").push_static(if frame.ordered { "</ol>\n" } else { "</ul>\n" });
+            },
+            Option::None => (),
+        }
+    }
+    out
+}
+
+forall 'k.
+fn list_item(&cx: Domain!['k], out: Buffer!, lists: ArenaVec[ListFrame, 'k],
+    line: Span['k], indent: usize, content_start: usize, ordered: bool, base: Span['k]) -> Buffer! {
+    var out = out;
+    var adjusting = true;
+    while adjusting && lists.len(&cx) > 0usize {
+        let top = lists.at(&cx, lists.len(&cx) - 1usize);
+        if indent < top.indent || (indent == top.indent && ordered != top.ordered) {
+            match lists.pop(&cx) {
+                Option::Some(frame) => {
+                    out = out.push_static("</li>\n").push_static(if frame.ordered { "</ol>\n" } else { "</ul>\n" });
+                },
+                Option::None => (),
+            }
+        } else { adjusting = false; }
+    }
+    if lists.len(&cx) > 0usize {
+        let top = lists.at(&cx, lists.len(&cx) - 1usize);
+        if indent > top.indent && indent < top.content_indent {
+            return inline(&cx, out.push_byte(b' '), line.trim(&cx), base);
+        }
+        if indent == top.indent { out = out.push_static("</li>\n"); }
+        else {
+            out = out.push_static(if ordered { "<ol>\n" } else { "<ul>\n" });
+            lists.push(&cx, ListFrame.{ indent, content_indent: content_start, ordered });
+        }
+    } else {
+        out = out.push_static(if ordered { "<ol>\n" } else { "<ul>\n" });
+        lists.push(&cx, ListFrame.{ indent, content_indent: content_start, ordered });
+    }
+    inline(&cx, out.push_static("<li>"), line.slice(content_start, line.len()), base)
+}
+
+forall 'k.
+fn render_blocks(&cx: Domain!['k], source: Span['k], base: Span['k],
+    ids: ArenaMap[Span['k], bool, 'k], depth: usize) -> Result[Buffer!, Span['k]] {
+    if depth >= 32usize { return Result::Err.(lit(&cx, "Markdown containers nested too deeply")); }
     var out = Buffer!::new();
-    let ids = ArenaMap::new(&cx);
+    let lists: ArenaVec[ListFrame, 'k] = ArenaVec::new(&cx);
     var pos = 0usize;
     var paragraph = false;
-    var list = false;
-    var ordered = false;
     var code = false;
     var code_lang = empty(&cx);
     var table = false;
@@ -219,9 +327,18 @@ fn markdown(&cx: Domain!['k], source: Span['k], base: Span['k]) -> Result[Buffer
             let (following, after) = next_line(&cx, source, pos);
             starts(&cx, following, "| ---")
         } else { false };
+        let marker = list_marker(&cx, line);
+        let quoted = quote_line(&cx, line);
+        let use_marker = match marker {
+            Option::Some(parts) => {
+                let (indent, content_start, ordered) = parts;
+                lists.len(&cx) > 0usize || indent <= 3usize
+            },
+            Option::None => false,
+        };
         if starts(&cx, line, "```") {
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
-            if list { out = out.push_static(if ordered { "</ol>\n" } else { "</ul>\n" }); list = false; }
+            out = close_lists(&cx, out, lists);
             if code { out = out.push_static("</code></pre>\n"); code = false; code_lang = empty(&cx); }
             else {
                 let lang = line.slice(3usize, line.len());
@@ -233,46 +350,83 @@ fn markdown(&cx: Domain!['k], source: Span['k], base: Span['k]) -> Result[Buffer
         } else if code { out = out.push_buffer(render_line(&cx, code_lang, line)).push_byte(b'\n'); }
         else if line.is_empty() {
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
-            if list { out = out.push_static(if ordered { "</ol>\n" } else { "</ul>\n" }); list = false; }
+            out = close_lists(&cx, out, lists);
             if table { out = out.push_static("</tbody>\n</table>\n"); table = false; table_body = false; }
+        } else if quoted.is_some() {
+            if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
+            out = close_lists(&cx, out, lists);
+            let quote = Buffer!::new();
+            var quote = match quoted {
+                Option::Some(content) => quote.push_bytes(&cx, content).push_byte(b'\n'),
+                Option::None => quote,
+            };
+            var gathering = true;
+            while gathering && pos < source.len() {
+                let (following, after) = next_line(&cx, source, pos);
+                match quote_line(&cx, following) {
+                    Option::Some(content) => {
+                        quote = quote.push_bytes(&cx, content).push_byte(b'\n');
+                        pos = after;
+                    },
+                    Option::None => { gathering = false; },
+                }
+            }
+            let inner = match render_blocks(&cx, quote.save(&cx), base, ids, depth + 1usize) {
+                Result::Ok(html) => html,
+                Result::Err(message) => { out.destroy(); return Result::Err.(message); },
+            };
+            out = out.push_static("<blockquote>\n").push_buffer(inner).push_static("</blockquote>\n");
         } else if starts(&cx, line, "<") {
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
-            if list { out = out.push_static(if ordered { "</ol>\n" } else { "</ul>\n" }); list = false; }
+            out = close_lists(&cx, out, lists);
             out = out.push_bytes(&cx, line).push_byte(b'\n');
         } else if heading_level(&cx, line) > 0usize {
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
-            if list { out = out.push_static(if ordered { "</ol>\n" } else { "</ul>\n" }); list = false; }
+            out = close_lists(&cx, out, lists);
             let level = heading_level(&cx, line);
             out = match heading(&cx, out, line, level, ids, base) {
                 Result::Ok(html) => html,
                 Result::Err(message) => return Result::Err.(message),
             };
-        } else if starts(&cx, line, "- ") || starts(&cx, line, "* ") || starts(&cx, line, "+ ") {
+        } else if use_marker {
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
-            if list && ordered { out = out.push_static("</ol>\n"); list = false; }
-            if !list { out = out.push_static("<ul>\n"); list = true; ordered = false; }
-            out = inline(&cx, out.push_static("<li>"), line.slice(2usize, line.len()), base).push_static("</li>\n");
-        } else if ordered_marker(&cx, line) > 0usize {
-            if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
-            if list && !ordered { out = out.push_static("</ul>\n"); list = false; }
-            if !list { out = out.push_static("<ol>\n"); list = true; ordered = true; }
-            out = inline(&cx, out.push_static("<li>"), line.slice(ordered_marker(&cx, line), line.len()), base).push_static("</li>\n");
+            match marker {
+                Option::Some(parts) => {
+                    let (indent, content_start, ordered) = parts;
+                    out = list_item(&cx, out, lists, line, indent, content_start, ordered, base);
+                },
+                Option::None => (),
+            }
         } else if table || table_start {
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
-            if list { out = out.push_static(if ordered { "</ol>\n" } else { "</ul>\n" }); list = false; }
+            out = close_lists(&cx, out, lists);
             if !table { out = out.push_static("<table>\n<thead>\n"); table = true; }
             if starts(&cx, line, "| ---") { out = out.push_static("</thead>\n<tbody>\n"); table_body = true; }
             else { out = table_row(&cx, out, line, !table_body, base); }
         } else {
-            if list { out = out.push_static(if ordered { "</ol>\n" } else { "</ul>\n" }); list = false; }
-            if !paragraph { out = out.push_static("<p>"); paragraph = true; }
-            else { out = out.push_byte(b' '); }
-            out = inline(&cx, out, line, base);
+            let continuation = if lists.len(&cx) > 0usize {
+                let top = lists.at(&cx, lists.len(&cx) - 1usize);
+                var count = 0usize;
+                while at(&cx, line, count) == b' ' { count = count + 1usize; }
+                count >= top.content_indent
+            } else { false };
+            if continuation { out = inline(&cx, out.push_byte(b' '), line.trim(&cx), base); }
+            else {
+                out = close_lists(&cx, out, lists);
+                if !paragraph { out = out.push_static("<p>"); paragraph = true; }
+                else { out = out.push_byte(b' '); }
+                out = inline(&cx, out, line, base);
+            }
         }
     }
     if paragraph { out = out.push_static("</p>\n"); }
-    if list { out = out.push_static(if ordered { "</ol>\n" } else { "</ul>\n" }); }
+    out = close_lists(&cx, out, lists);
     if code { out = out.push_static("</code></pre>\n"); }
     if table { out = out.push_static("</tbody>\n</table>\n"); }
     Result::Ok.(out)
+}
+
+forall 'k.
+fn markdown(&cx: Domain!['k], source: Span['k], base: Span['k]) -> Result[Buffer!, Span['k]] {
+    render_blocks(&cx, source, base, ArenaMap::new(&cx), 0usize)
 }

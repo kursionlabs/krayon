@@ -1,5 +1,5 @@
-use std::alloc::arena::Domain!;
-use std::bytes::buffer::Buffer!;
+use std::arena::Domain!;
+use std::buffer::Buffer!;
 use std::raw::Span;
 use std::slice::Slice;
 

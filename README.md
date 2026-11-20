@@ -109,10 +109,10 @@ effect. `where` compares a scalar field to a quoted value or template field.
 `group_by` preserves first-seen group order and produces records with `key`
 and `items`. All three work on arrays of records, including `collections.pages`.
 
-The current Markdown renderer supports ATX headings, paragraphs, links, inline
-code, emphasis, strong text, fenced code blocks, flat ordered and unordered
-lists, and pipe tables. It is a documented subset, not a complete CommonMark
-implementation.
+The current Markdown renderer supports ATX headings, paragraphs, links,
+images with optional titles, inline code, emphasis, strong text, fenced code
+blocks, blockquotes, tight nested ordered and unordered lists, and pipe tables.
+It is a documented subset, not a complete CommonMark implementation.
 Fenced `kursal` code receives token classes for keywords, types,
 strings, numbers, and comments. Other fence languages remain escaped plain
 text.
