@@ -1061,6 +1061,64 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("unsafe base_path", result.stderr)
 
+    def test_absolute_url_filter_uses_origin_and_base_path(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        src.mkdir()
+        (self.site / "krayon.toml").write_text(
+            'base_path = "/docs"\norigin = "https://example.org:8443/"\n')
+        (src / "guide.md").write_text('# Guide\n')
+        (src / "index.html").write_text(
+            '<link rel="canonical" href="{{ page.url | absolute_url }}">'
+            '<p>{{ site.origin }}</p>'
+            '<span>{{ "https://other.example/x" | absolute_url }}</span>'
+            '<span>{{ "//cdn.example/x" | absolute_url }}</span>'
+            '<span>{{ "relative/x" | absolute_url }}</span>'
+            '<span>{{ "#section" | absolute_url }}</span>')
+        (src / "sitemap.xml").write_text(
+            '<urlset><loc>{{ "/guide/?a=1&b=2" | absolute_url }}</loc></urlset>')
+        (src / "feed.json").write_text(
+            '{"guide":{{ "/guide/" | absolute_url | json }}}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/index.html").read_text()
+        self.assertIn('href="https://example.org:8443/docs/"', html)
+        self.assertIn('<p>https://example.org:8443</p>', html)
+        self.assertIn('<span>https://other.example/x</span>', html)
+        self.assertIn('<span>//cdn.example/x</span>', html)
+        self.assertIn('<span>relative/x</span>', html)
+        self.assertIn('<span>#section</span>', html)
+        self.assertEqual(ET.parse(self.site / "dist/sitemap.xml").find('.//loc').text,
+                         'https://example.org:8443/docs/guide/?a=1&b=2')
+        self.assertEqual(json.loads((self.site / "dist/feed.json").read_text()),
+                         {"guide": "https://example.org:8443/docs/guide/"})
+
+        previous = (self.site / "dist/index.html").read_bytes()
+        (self.site / "krayon.toml").write_text('base_path = "/docs"\n')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('absolute_url requires origin in krayon.toml', result.stderr)
+        self.assertEqual((self.site / "dist/index.html").read_bytes(), previous)
+
+    def test_origin_config_rejects_non_origins(self):
+        config = self.site / "krayon.toml"
+        for value in ('ftp://example.org', 'https://example.org/path',
+                      'https://user@example.org', 'https://example.org:0',
+                      'https://example.org:99999', 'https://example.org//'):
+            with self.subTest(origin=value):
+                config.write_text(f'origin = "{value}"\n')
+                result = self.build()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('invalid origin', result.stderr)
+
+        config.write_text('origin = "http://[::1]:8080"\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        config.write_text('origin = ""\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_kursal_fence_highlights_and_unknown_language_stays_plain(self):
         fence = chr(96) * 3
         (self.site / "src/code.md").write_text(

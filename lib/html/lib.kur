@@ -9,7 +9,7 @@ use std::raw::Span;
 use std::slice::Slice;
 use toml::parse;
 use toml::value::TomlValue;
-use url::prefix;
+use url::{absolute, prefix};
 use records::{filter_contains, filter_records, sort_records};
 
 forall 'k.
@@ -210,6 +210,29 @@ fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
             Option::Some(value) => scalar(&cx, value),
             Option::None => Option::None,
         };
+    }
+    if expr.ends_with(&cx, lit(&cx, " | absolute_url")) {
+        let source = expr.slice(0usize, expr.len() - 15usize).trim(&cx);
+        let target = match literal(&cx, source) {
+            Option::Some(value) => value,
+            Option::None => match lookup(&cx, site, collections, page, bindings, source) {
+                Option::Some(value) => match scalar(&cx, value) {
+                    Option::Some(text) => text,
+                    Option::None => return Option::None,
+                },
+                Option::None => return Option::None,
+            },
+        };
+        let origin = match string_field(&cx, site, "origin") {
+            Option::Some(value) => value,
+            Option::None => return Option::None,
+        };
+        if origin.is_empty() { return Option::None; }
+        let base = match string_field(&cx, site, "base_path") {
+            Option::Some(path) => path,
+            Option::None => lit(&cx, ""),
+        };
+        return Option::Some.(absolute(&cx, origin, base, target));
     }
     if expr.ends_with(&cx, lit(&cx, " | url")) {
         let source = expr.slice(0usize, expr.len() - 6usize).trim(&cx);
@@ -697,6 +720,17 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                 Option::Some(end) => {
                     if active {
                         let expr = source.slice(pos + 2usize, end).trim(&cx);
+                        if expr.ends_with(&cx, lit(&cx, " | absolute_url"))
+                            || expr.ends_with(&cx, lit(&cx, " | absolute_url | json")) {
+                            let origin = match string_field(&cx, site, "origin") {
+                                Option::Some(value) => value,
+                                Option::None => lit(&cx, ""),
+                            };
+                            if origin.is_empty() {
+                                out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                                    first_line, first_column, lit(&cx, "absolute_url requires origin in krayon.toml")));
+                            }
+                        }
                         if expr.ends_with(&cx, lit(&cx, " | json")) {
                             let json = match format { TemplateFormat::Json => true, _ => false };
                             if !json {
@@ -706,7 +740,8 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                             let field = expr.slice(0usize, expr.len() - 7usize).trim(&cx);
                             let value = match literal(&cx, field) {
                                 Option::Some(text) => Option::Some.(TomlValue::String.(text)),
-                                Option::None => if field.ends_with(&cx, lit(&cx, " | url")) {
+                                Option::None => if field.ends_with(&cx, lit(&cx, " | url"))
+                                    || field.ends_with(&cx, lit(&cx, " | absolute_url")) {
                                     match resolve(&cx, site, collections, page, bindings, field, content) {
                                         Option::Some(text) => Option::Some.(TomlValue::String.(text)),
                                         Option::None => Option::None,

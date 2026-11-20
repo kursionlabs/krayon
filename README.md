@@ -29,6 +29,7 @@ layouts = "_includes"
 data = "_data/site.toml"
 assets = "assets"
 base_path = ""
+origin = ""
 ```
 
 All paths are relative. `input` and `output` are relative to the site root;
@@ -39,6 +40,11 @@ Set `base_path` to a path such as `"/docs"` when mounting the
 generated output there. The default empty string serves the site at `/`.
 Krayon keeps page URLs and output paths unprefixed, and exposes the setting as
 `site.base_path`.
+Set `origin` to the site's HTTP or HTTPS origin, such as
+`"https://example.org"`, when templates need absolute URLs. It accepts an
+optional port and trailing slash, stores the origin without the trailing
+slash, and exposes it as `site.origin`. The default empty origin disables
+`| absolute_url`.
 
 A site can contain Markdown (`.md`), HTML (`.html`), XML (`.xml`), JSON
 (`.json`), and text (`.txt`) templates anywhere under `input`. Krayon copies
@@ -232,6 +238,11 @@ in templates to prefix a root relative local URL. The filter leaves external,
 protocol relative, relative, and fragment URLs alone. Markdown links with root
 relative targets are prefixed automatically; raw HTML in Markdown is passed
 through as written.
+With `origin` configured, `{{ page.url | absolute_url }}` produces a full URL
+including `base_path`. The filter leaves external, protocol relative,
+relative, and fragment URLs unchanged. It works in HTML, XML, and JSON
+templates; use `{{ page.url | absolute_url | json }}` to emit a complete JSON
+string value.
 
 Loop sources can be filtered with `children_of`, `where`, `contains`,
 `group_by`, and `sort_by`:

@@ -10,3 +10,61 @@ fn prefix(&cx: Domain!['k], base: Span['k], target: Span['k]) -> Span['k] {
         || target.byte_or_zero(&cx, 1usize) == b'/' { return target; }
     Buffer!::new().push_bytes(&cx, base).push_bytes(&cx, target).save(&cx)
 }
+
+fn letter_or_digit(c: u8) -> bool {
+    (c >= b'a' && c <= b'z') || (c >= b'A' && c <= b'Z') || (c >= b'0' && c <= b'9')
+}
+
+forall 'k.
+fn valid_origin(&cx: Domain!['k], value: Span['k]) -> bool {
+    let start = if value.starts_with(&cx, Span::from_static(&cx, "https://")) { 8usize }
+        else if value.starts_with(&cx, Span::from_static(&cx, "http://")) { 7usize }
+        else { return false; };
+    if start >= value.len() { return false; }
+    var i = start;
+    if value.byte_or_zero(&cx, i) == b'[' {
+        i = i + 1usize;
+        let host_start = i;
+        var colons = 0usize;
+        while i < value.len() && value.byte_or_zero(&cx, i) != b']' {
+            let c = value.byte_or_zero(&cx, i);
+            let hex = (c >= b'0' && c <= b'9') || (c >= b'a' && c <= b'f') || (c >= b'A' && c <= b'F');
+            if c == b':' { colons = colons + 1usize; }
+            else if !hex && c != b'.' { return false; }
+            i = i + 1usize;
+        }
+        if i == value.len() || i == host_start || colons < 2usize { return false; }
+        i = i + 1usize;
+    } else {
+        var label_start = i;
+        while i < value.len() && value.byte_or_zero(&cx, i) != b':' {
+            let c = value.byte_or_zero(&cx, i);
+            if c == b'.' {
+                if i == label_start || !letter_or_digit(value.byte_or_zero(&cx, i - 1usize)) { return false; }
+                label_start = i + 1usize;
+            } else if !letter_or_digit(c) && c != b'-' { return false; }
+            else if i == label_start && !letter_or_digit(c) { return false; }
+            i = i + 1usize;
+        }
+        if i == label_start || !letter_or_digit(value.byte_or_zero(&cx, i - 1usize)) { return false; }
+    }
+    if i == value.len() { return true; }
+    i = i + 1usize;
+    if i == value.len() { return false; }
+    var port = 0usize;
+    while i < value.len() {
+        let c = value.byte_or_zero(&cx, i);
+        if c < b'0' || c > b'9' { return false; }
+        port = port * 10usize + (c - b'0') as usize;
+        if port > 65535usize { return false; }
+        i = i + 1usize;
+    }
+    port > 0usize
+}
+
+forall 'k.
+fn absolute(&cx: Domain!['k], origin: Span['k], base: Span['k], target: Span['k]) -> Span['k] {
+    if target.is_empty() || target.byte_or_zero(&cx, 0usize) != b'/'
+        || target.byte_or_zero(&cx, 1usize) == b'/' { return target; }
+    Buffer!::new().push_bytes(&cx, origin).push_bytes(&cx, prefix(&cx, base, target)).save(&cx)
+}

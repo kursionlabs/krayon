@@ -13,6 +13,7 @@ use markdown::markdown;
 use links::{Document, Stylesheet, validate};
 use json::validate as validate_json;
 use records::{filter_contains, filter_records, scalar, sort_records};
+use url::valid_origin;
 
 extern "C" fn getpid() -> i32;
 
@@ -24,6 +25,7 @@ struct Config {
     data: Span['k],
     assets: Span['k],
     base_path: Span['k],
+    origin: Span['k],
 }
 
 forall 'k.
@@ -219,7 +221,8 @@ forall 'k.
 fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] {
     let file = join(&cx, root, lit(&cx, "krayon.toml"));
     let defaults = Config.{ input: lit(&cx, "src"), output: lit(&cx, "dist"), layouts: lit(&cx, "_includes"),
-        data: lit(&cx, "_data/site.toml"), assets: lit(&cx, "assets"), base_path: lit(&cx, "") };
+        data: lit(&cx, "_data/site.toml"), assets: lit(&cx, "assets"), base_path: lit(&cx, ""),
+        origin: lit(&cx, "") };
     if !exists_path(&cx, file)? { return Result::Ok.(defaults); }
     let text = load(&cx, file)?;
     match parse(&cx, text) {
@@ -231,7 +234,8 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                     Option::None => (),
                     Option::Some(key) => {
                         if !key.is(&cx, "input") && !key.is(&cx, "output") && !key.is(&cx, "layouts")
-                            && !key.is(&cx, "data") && !key.is(&cx, "assets") && !key.is(&cx, "base_path") {
+                            && !key.is(&cx, "data") && !key.is(&cx, "assets") && !key.is(&cx, "base_path")
+                            && !key.is(&cx, "origin") {
                             return Result::Err.(report(&cx, "unknown config key", key));
                         }
                     },
@@ -262,6 +266,22 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                     },
                 },
             };
+            let origin = match values.get(&cx, lit(&cx, "origin")) {
+                Option::None => lit(&cx, ""),
+                Option::Some(value) => match value.as_string() {
+                    Option::None => return Result::Err.(report(&cx, "origin must be a string", file)),
+                    Option::Some(text) => {
+                        let normalized = if text.is_empty() { text }
+                            else if text.ends_with(&cx, lit(&cx, "/")) {
+                                text.slice(0usize, text.len() - 1usize)
+                            } else { text };
+                        if !normalized.is_empty() && !valid_origin(&cx, normalized) {
+                            return Result::Err.(report(&cx, "invalid origin", text));
+                        }
+                        normalized
+                    },
+                },
+            };
             Result::Ok.(Config.{
                 input: config_string(&cx, values, "input", "src")?,
                 output: config_string(&cx, values, "output", "dist")?,
@@ -269,6 +289,7 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                 data: config_string(&cx, values, "data", "_data/site.toml")?,
                 assets: config_string(&cx, values, "assets", "assets")?,
                 base_path,
+                origin,
             })
         },
     }
@@ -1158,7 +1179,11 @@ fn build_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> 
     if site_data.contains(&cx, lit(&cx, "base_path")) {
         return Result::Err.(report(&cx, "site data key is reserved", lit(&cx, "base_path")));
     }
+    if site_data.contains(&cx, lit(&cx, "origin")) {
+        return Result::Err.(report(&cx, "site data key is reserved", lit(&cx, "origin")));
+    }
     let replaced = site_data.insert(&cx, lit(&cx, "base_path"), TomlValue::String.(config.base_path));
+    let replaced = site_data.insert(&cx, lit(&cx, "origin"), TomlValue::String.(config.origin));
     ensure_dir(&cx, parent(&cx, output))?;
     let previous = check_output(&cx, source, output)?;
     let (stage, backup) = stage_paths(&cx, output)?;
