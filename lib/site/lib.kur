@@ -10,6 +10,7 @@ use toml::parse;
 use toml::value::TomlValue;
 use html::{Page, parse_page, template};
 use markdown::markdown;
+use links::{Document, validate};
 
 extern "C" fn getpid() -> i32;
 
@@ -568,6 +569,17 @@ fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
     }
     let assets = join(&cx, build.source, build.assets);
     if exists_path(&cx, assets)? { copy_assets(&cx, build, lit(&cx, ""), 0usize)?; }
+    let documents = ArenaVec::new(&cx);
+    i = 0usize;
+    while i < build.pages.len(&cx) {
+        let source = build.pages.at(&cx, i);
+        documents.push(&cx, Document.{
+            source: source.file, output: source.destination, url: source.page.url,
+            html: load(&cx, source.destination)?,
+        });
+        i = i + 1usize;
+    }
+    validate(&cx, documents, build.written, build.output, build.base_path)?;
     Result::Ok.(())
 }
 

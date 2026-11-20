@@ -16,3 +16,6 @@ path="../html"
 
 [dependencies.url]
 path="../url"
+
+[dependencies.links]
+path="../links"

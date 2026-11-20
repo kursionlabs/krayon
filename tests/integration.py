@@ -113,13 +113,18 @@ class BuildTests(unittest.TestCase):
                                    'href="{{ "/assets/css/site.css" | url }}"'))
         (self.site / "src/links.md").write_text(
             "[Home](/) [Note](/guide/intro/?q=1&x=2) "
-            "[Local](next/) [Section](#part) [External](https://example.org/)\n")
+            "[Local](next/) [Parent](../guide/intro/) "
+            "[Section](#part) [External](https://example.org/)\n"
+            "\n## Part {#part}\n")
+        (self.site / "src/links/next").mkdir(parents=True)
+        (self.site / "src/links/next/index.md").write_text("# Next\n")
         result = self.build()
         self.assertEqual(result.returncode, 0, result.stderr)
         html = (self.site / "dist/links/index.html").read_text()
         self.assertIn('href="/docs/v1/"', html)
         self.assertIn('href="/docs/v1/guide/intro/?q=1&amp;x=2"', html)
         self.assertIn('href="next/"', html)
+        self.assertIn('href="../guide/intro/"', html)
         self.assertIn('href="#part"', html)
         self.assertIn('href="https://example.org/"', html)
         archive_html = (self.site / "dist/archive/index.html").read_text()
@@ -148,6 +153,69 @@ class BuildTests(unittest.TestCase):
         self.assertIn('<span class="tok-comment">// &lt;note&gt;</span>', html)
         self.assertIn('<span class="tok-string">&quot;a&amp;b&quot;</span>', html)
         self.assertIn('<code class="language-other">fn &lt;x&gt;', html)
+
+    def test_broken_page_link_preserves_previous_output(self):
+        self.assertEqual(self.build().returncode, 0)
+        previous = (self.site / "dist/index.html").read_bytes()
+        home = self.site / "src/index.md"
+        home.write_text(home.read_text() + "\n[Missing](/does-not-exist/)\n")
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("index.md: broken local link: /does-not-exist/", result.stderr)
+        self.assertEqual((self.site / "dist/index.html").read_bytes(), previous)
+        self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
+
+    def test_broken_asset_and_fragment_links(self):
+        layout = self.site / "src/_includes/base.html"
+        layout.write_text(layout.read_text().replace("/assets/css/site.css",
+                                                     "/assets/css/missing.css"))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("broken local link: /assets/css/missing.css", result.stderr)
+
+        layout.write_text(layout.read_text().replace("/assets/css/missing.css",
+                                                     "/assets/css/site.css"))
+        home = self.site / "src/index.md"
+        home.write_text(home.read_text() + "\n[Part](/guide/intro/#part)\n")
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("broken local link: /guide/intro/#part", result.stderr)
+
+        note = self.site / "src/notes/first.md"
+        note.write_text(note.read_text() + "\n## Part {#part}\n")
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_link_scanner_ignores_comments_and_script_text(self):
+        layout = self.site / "src/_includes/base.html"
+        layout.write_text(layout.read_text() +
+                          '<!-- <a href="/missing-comment/">hidden</a> -->\n'
+                          '<script>const text = \'<a href="/missing-script/">\';</script>\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_html_entities_and_percent_encoded_fragments(self):
+        (self.site / "src/a&b.md").write_text("# Ampersand\n")
+        home = self.site / "src/index.md"
+        home.write_text(home.read_text() +
+                        '\n[Page](/a&b/) [Fragment](#a%26b)\n'
+                        '<h2 id="a&amp;b">A and B</h2>\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_html_asset_with_fragment_is_a_valid_local_file(self):
+        (self.site / "src/assets/help.html").write_text('<h1 id="intro">Intro</h1>\n')
+        home = self.site / "src/index.md"
+        home.write_text(home.read_text() + "\n[Help](/assets/help.html#intro)\n")
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_unprefixed_link_fails_for_prefixed_site(self):
+        config = self.site / "krayon.toml"
+        config.write_text(config.read_text() + 'base_path = "/docs"\n')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("broken local link: /assets/css/site.css", result.stderr)
 
     def test_missing_loop_source_is_an_error(self):
         archive = self.site / "src/archive.html"
@@ -235,6 +303,8 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(self.build().returncode, 0)
         (self.site / "dist/stale.txt").write_text("old output")
         (self.site / "src/notes/first.md").unlink()
+        home = self.site / "src/index.md"
+        home.write_text(home.read_text().replace("Read the [first note](/guide/intro/).", "The note was removed."))
         result = self.build()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.site / "dist/guide").exists())

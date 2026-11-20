@@ -50,6 +50,14 @@ only after a successful build. A failed render leaves the previous output
 intact. Krayon owns the output directory and removes its previous contents on
 a successful rebuild, including files placed there by hand.
 
+Before installing the output, Krayon checks local `href` and `src`
+values in generated HTML. Page links and copied assets must
+resolve; fragments targeting generated pages must match an HTML ID. Relative
+URLs, query strings, percent escapes, and `base_path` are handled;
+external URLs are ignored. A broken link fails the build and reports the
+source page and URL.
+CSS `url()` references and `srcset` are not checked.
+
 Pages and layouts may start with TOML front matter between `+++` lines:
 
 ```text
@@ -119,6 +127,9 @@ hyphens, underscores, and colons.
 - `lib/site/` — configuration, discovery, routing, rendering, and output
 - `lib/html/` — front matter and templates
 - `lib/markdown/` — Markdown rendering
+- `lib/links/` — local link validation
+- `lib/url/` — deployment path prefixes
+- `lib/highlight/` — fenced code highlighting
 - `examples/hello-site/` — independent site example
 
 Kursal programs can call `site::build(&cx, root)` directly. It takes a site

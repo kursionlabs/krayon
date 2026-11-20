@@ -1,0 +1,365 @@
+use std::alloc::arena::Domain!;
+use std::bytes::buffer::Buffer!;
+use std::collections::arena_map::ArenaMap;
+use std::collections::arena_vec::ArenaVec;
+use std::option::{Option, Result};
+use std::raw::Span;
+use std::slice::Slice;
+
+forall 'k.
+exposed struct Document {
+    source: Span['k],
+    output: Span['k],
+    url: Span['k],
+    html: Span['k],
+}
+
+forall 'k.
+struct Parsed {
+    source: Span['k],
+    output: Span['k],
+    url: Span['k],
+    ids: ArenaMap[Span['k], bool, 'k],
+    targets: ArenaVec[Span['k], 'k],
+}
+
+forall 'k.
+fn lit(&cx: Domain!['k], text: Slice[u8, 'static]) -> Span['k] { Span::from_static(&cx, text) }
+
+forall 'k.
+fn at(&cx: Domain!['k], text: Span['k], i: usize) -> u8 { text.byte_or_zero(&cx, i) }
+
+fn lower(c: u8) -> u8 { if c >= b'A' && c <= b'Z' { c + 32u8 } else { c } }
+fn space(c: u8) -> bool { c == b' ' || c == b'\n' || c == b'\r' || c == b'\t' }
+fn name_byte(c: u8) -> bool {
+    (c >= b'a' && c <= b'z') || (c >= b'A' && c <= b'Z')
+        || (c >= b'0' && c <= b'9') || c == b'-' || c == b'_' || c == b':'
+}
+
+forall 'k.
+fn equal_ci(&cx: Domain!['k], text: Span['k], expected: Slice[u8, 'static]) -> bool {
+    let expected = lit(&cx, expected);
+    if text.len() != expected.len() { return false; }
+    var i = 0usize;
+    while i < text.len() {
+        if lower(at(&cx, text, i)) != lower(at(&cx, expected, i)) { return false; }
+        i = i + 1usize;
+    }
+    true
+}
+
+forall 'k.
+fn starts_ci(&cx: Domain!['k], text: Span['k], at_pos: usize, expected: Slice[u8, 'static]) -> bool {
+    let expected = lit(&cx, expected);
+    if at_pos + expected.len() > text.len() { return false; }
+    var i = 0usize;
+    while i < expected.len() {
+        if lower(at(&cx, text, at_pos + i)) != lower(at(&cx, expected, i)) { return false; }
+        i = i + 1usize;
+    }
+    true
+}
+
+forall 'k.
+fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
+    let ids = ArenaMap::new(&cx);
+    let targets = ArenaVec::new(&cx);
+    let html = document.html;
+    var pos = 0usize;
+    var raw = 0usize;
+    while pos < html.len() {
+        if raw != 0usize {
+            if at(&cx, html, pos) == b'<' && at(&cx, html, pos + 1usize) == b'/' &&
+                ((raw == 1usize && starts_ci(&cx, html, pos + 2usize, "script") &&
+                    !name_byte(at(&cx, html, pos + 8usize))) ||
+                 (raw == 2usize && starts_ci(&cx, html, pos + 2usize, "style") &&
+                    !name_byte(at(&cx, html, pos + 7usize)))) {
+                raw = 0usize;
+            } else { pos = pos + 1usize; }
+        } else if at(&cx, html, pos) != b'<' {
+            pos = pos + 1usize;
+        } else if starts_ci(&cx, html, pos, "<!--") {
+            match html.find(&cx, lit(&cx, "-->"), pos + 4usize) {
+                Option::Some(end) => { pos = end + 3usize; },
+                Option::None => { pos = html.len(); },
+            }
+        } else if at(&cx, html, pos + 1usize) == b'/' ||
+            at(&cx, html, pos + 1usize) == b'!' || at(&cx, html, pos + 1usize) == b'?' {
+            match html.find_byte(&cx, b'>', pos + 1usize) {
+                Option::Some(end) => { pos = end + 1usize; },
+                Option::None => { pos = html.len(); },
+            }
+        } else {
+            var name_end = pos + 1usize;
+            while name_byte(at(&cx, html, name_end)) { name_end = name_end + 1usize; }
+            if name_end == pos + 1usize { pos = pos + 1usize; }
+            else {
+                let tag = html.slice(pos + 1usize, name_end);
+                pos = name_end;
+                var closed = false;
+                var self_closing = false;
+                while pos < html.len() && !closed {
+                    while space(at(&cx, html, pos)) { pos = pos + 1usize; }
+                    let c = at(&cx, html, pos);
+                    if c == b'>' { pos = pos + 1usize; closed = true; }
+                    else if c == b'/' && at(&cx, html, pos + 1usize) == b'>' {
+                        pos = pos + 2usize; closed = true; self_closing = true;
+                    } else if !name_byte(c) { pos = pos + 1usize; }
+                    else {
+                        let start = pos;
+                        while name_byte(at(&cx, html, pos)) { pos = pos + 1usize; }
+                        let name = html.slice(start, pos);
+                        while space(at(&cx, html, pos)) { pos = pos + 1usize; }
+                        if at(&cx, html, pos) == b'=' {
+                            pos = pos + 1usize;
+                            while space(at(&cx, html, pos)) { pos = pos + 1usize; }
+                            let quote = at(&cx, html, pos);
+                            var value_start = pos;
+                            var value_end = pos;
+                            if quote == b'"' || quote == b'\'' {
+                                pos = pos + 1usize;
+                                value_start = pos;
+                                while pos < html.len() && at(&cx, html, pos) != quote { pos = pos + 1usize; }
+                                value_end = pos;
+                                if pos < html.len() { pos = pos + 1usize; }
+                            } else {
+                                while pos < html.len() && !space(at(&cx, html, pos)) && at(&cx, html, pos) != b'>' {
+                                    pos = pos + 1usize;
+                                }
+                                value_end = pos;
+                            }
+                            let value = html_value(&cx, html.slice(value_start, value_end));
+                            if equal_ci(&cx, name, "id") { ids.insert(&cx, value, true); }
+                            else if equal_ci(&cx, name, "href") || equal_ci(&cx, name, "src") {
+                                targets.push(&cx, value);
+                            }
+                        }
+                    }
+                }
+                if !self_closing && equal_ci(&cx, tag, "script") { raw = 1usize; }
+                if !self_closing && equal_ci(&cx, tag, "style") { raw = 2usize; }
+            }
+        }
+    }
+    Parsed.{ source: document.source, output: document.output, url: document.url, ids, targets }
+}
+
+fn hex(c: u8) -> u8 {
+    if c >= b'0' && c <= b'9' { c - b'0' }
+    else if c >= b'a' && c <= b'f' { c - b'a' + 10u8 }
+    else if c >= b'A' && c <= b'F' { c - b'A' + 10u8 }
+    else { 255u8 }
+}
+
+fn utf8(out: Buffer!, code: usize) -> Buffer! {
+    if code < 128usize { out.push_byte(code as u8) }
+    else if code < 2048usize {
+        out.push_byte((192usize + code / 64usize) as u8)
+            .push_byte((128usize + code % 64usize) as u8)
+    } else if code < 65536usize {
+        out.push_byte((224usize + code / 4096usize) as u8)
+            .push_byte((128usize + (code / 64usize) % 64usize) as u8)
+            .push_byte((128usize + code % 64usize) as u8)
+    } else {
+        out.push_byte((240usize + code / 262144usize) as u8)
+            .push_byte((128usize + (code / 4096usize) % 64usize) as u8)
+            .push_byte((128usize + (code / 64usize) % 64usize) as u8)
+            .push_byte((128usize + code % 64usize) as u8)
+    }
+}
+
+forall 'k.
+fn html_value(&cx: Domain!['k], source: Span['k]) -> Span['k] {
+    var out = Buffer!::new();
+    var i = 0usize;
+    while i < source.len() {
+        if at(&cx, source, i) == b'&' {
+            match source.find_byte(&cx, b';', i + 1usize) {
+                Option::Some(end) => {
+                    if end - i <= 12usize {
+                        let name = source.slice(i + 1usize, end);
+                        var code = 0usize;
+                        var valid = true;
+                        if name.is(&cx, "amp") { code = 38usize; }
+                        else if name.is(&cx, "lt") { code = 60usize; }
+                        else if name.is(&cx, "gt") { code = 62usize; }
+                        else if name.is(&cx, "quot") { code = 34usize; }
+                        else if name.is(&cx, "apos") || name.is(&cx, "#39") { code = 39usize; }
+                        else if at(&cx, name, 0usize) == b'#' {
+                            let hexadecimal = at(&cx, name, 1usize) == b'x' || at(&cx, name, 1usize) == b'X';
+                            let base = if hexadecimal { 16usize } else { 10usize };
+                            var j = if hexadecimal { 2usize } else { 1usize };
+                            if j == name.len() { valid = false; }
+                            while j < name.len() && valid {
+                                let c = at(&cx, name, j);
+                                let digit = if hexadecimal { hex(c) }
+                                    else if c >= b'0' && c <= b'9' { c - b'0' }
+                                    else { 255u8 };
+                                if digit == 255u8 { valid = false; }
+                                else {
+                                    code = code * base + digit as usize;
+                                    if code > 1114111usize { valid = false; }
+                                }
+                                j = j + 1usize;
+                            }
+                        } else { valid = false; }
+                        if valid && code != 0usize && !(code >= 55296usize && code <= 57343usize) {
+                            out = utf8(out, code);
+                            i = end + 1usize;
+                        } else { out = out.push_byte(b'&'); i = i + 1usize; }
+                    } else { out = out.push_byte(b'&'); i = i + 1usize; }
+                },
+                Option::None => { out = out.push_byte(b'&'); i = i + 1usize; },
+            }
+        } else { out = out.push_byte(at(&cx, source, i)); i = i + 1usize; }
+    }
+    out.save(&cx)
+}
+
+forall 'k.
+fn decoded(&cx: Domain!['k], source: Span['k]) -> Span['k] {
+    var out = Buffer!::new();
+    var i = 0usize;
+    while i < source.len() {
+        if at(&cx, source, i) == b'%' && i + 2usize < source.len() &&
+            hex(at(&cx, source, i + 1usize)) != 255u8 && hex(at(&cx, source, i + 2usize)) != 255u8 {
+            out = out.push_byte(hex(at(&cx, source, i + 1usize)) * 16u8 + hex(at(&cx, source, i + 2usize)));
+            i = i + 3usize;
+        } else { out = out.push_byte(at(&cx, source, i)); i = i + 1usize; }
+    }
+    out.save(&cx)
+}
+
+forall 'k.
+fn external(&cx: Domain!['k], target: Span['k]) -> bool {
+    if target.is_empty() { return false; }
+    if at(&cx, target, 0usize) == b'/' && at(&cx, target, 1usize) == b'/' { return true; }
+    var i = 0usize;
+    while i < target.len() {
+        let c = at(&cx, target, i);
+        if c == b':' { return i > 0usize; }
+        if c == b'/' || c == b'?' || c == b'#' { return false; }
+        i = i + 1usize;
+    }
+    false
+}
+
+forall 'k.
+fn parent(&cx: Domain!['k], path: Span['k]) -> Span['k] {
+    var i = path.len();
+    while i > 0usize {
+        i = i - 1usize;
+        if at(&cx, path, i) == b'/' { return path.slice(0usize, i + 1usize); }
+    }
+    lit(&cx, "/")
+}
+
+forall 'k.
+fn normalized(&cx: Domain!['k], path: Span['k]) -> Option[Span['k]] {
+    let parts: ArenaVec[Span['k], 'k] = ArenaVec::new(&cx);
+    var start = 0usize;
+    var i = 0usize;
+    while i <= path.len() {
+        if i == path.len() || at(&cx, path, i) == b'/' {
+            let part = path.slice(start, i);
+            if part.is(&cx, "..") {
+                match parts.pop(&cx) {
+                    Option::Some(_) => (),
+                    Option::None => return Option::None,
+                }
+            } else if !part.is_empty() && !part.is(&cx, ".") { parts.push(&cx, part); }
+            start = i + 1usize;
+        }
+        i = i + 1usize;
+    }
+    var out = Buffer!::new().push_static("/");
+    var j = 0usize;
+    while j < parts.len(&cx) {
+        if j > 0usize { out = out.push_static("/"); }
+        out = out.push_bytes(&cx, parts.at(&cx, j));
+        j = j + 1usize;
+    }
+    if j > 0usize && path.ends_with(&cx, lit(&cx, "/")) { out = out.push_static("/"); }
+    Option::Some.(out.save(&cx))
+}
+
+forall 'k.
+fn output_path(&cx: Domain!['k], root: Span['k], path: Span['k]) -> Span['k] {
+    var out = Buffer!::new().push_bytes(&cx, root).push_static("/");
+    if path.len() > 1usize { out = out.push_bytes(&cx, path.slice(1usize, path.len())); }
+    if path.ends_with(&cx, lit(&cx, "/")) { out = out.push_static("index.html"); }
+    out.save(&cx)
+}
+
+forall 'k.
+fn broken(&cx: Domain!['k], source: Span['k], target: Span['k]) -> Buffer! {
+    Buffer!::new().push_static("krayon: ").push_bytes(&cx, source)
+        .push_static(": broken local link: ").push_bytes(&cx, target).push_byte(b'\n')
+}
+
+forall 'k.
+fn validate(&cx: Domain!['k], documents: ArenaVec[Document['k], 'k],
+    outputs: ArenaMap[Span['k], Span['k], 'k], root: Span['k], base_path: Span['k]) -> Result[(), Buffer!] {
+    let pages: ArenaVec[Parsed['k], 'k] = ArenaVec::new(&cx);
+    var i = 0usize;
+    while i < documents.len(&cx) {
+        pages.push(&cx, scan(&cx, documents.at(&cx, i)));
+        i = i + 1usize;
+    }
+    i = 0usize;
+    while i < pages.len(&cx) {
+        let page = pages.at(&cx, i);
+        var j = 0usize;
+        while j < page.targets.len(&cx) {
+            let target = page.targets.at(&cx, j);
+            if !external(&cx, target) {
+                let hash = match target.find_byte(&cx, b'#', 0usize) {
+                    Option::Some(at_pos) => at_pos,
+                    Option::None => target.len(),
+                };
+                let query = match target.find_byte(&cx, b'?', 0usize) {
+                    Option::Some(at_pos) => if at_pos < hash { at_pos } else { hash },
+                    Option::None => hash,
+                };
+                let original_path = target.slice(0usize, query);
+                let fragment = if hash < target.len() { decoded(&cx, target.slice(hash + 1usize, target.len())) }
+                    else { lit(&cx, "") };
+                var path = original_path;
+                if path.is_empty() { path = page.url; }
+                else if at(&cx, path, 0usize) == b'/' {
+                    if !base_path.is_empty() {
+                        if path.eq(&cx, base_path) { path = lit(&cx, "/"); }
+                        else if path.starts_with(&cx, base_path) && at(&cx, path, base_path.len()) == b'/' {
+                            path = path.slice(base_path.len(), path.len());
+                        } else { return Result::Err.(broken(&cx, page.source, target)); }
+                    }
+                } else {
+                    path = Buffer!::new().push_bytes(&cx, parent(&cx, page.url)).push_bytes(&cx, path).save(&cx);
+                }
+                let path = match normalized(&cx, decoded(&cx, path)) {
+                    Option::Some(found) => found,
+                    Option::None => return Result::Err.(broken(&cx, page.source, target)),
+                };
+                let output = output_path(&cx, root, path);
+                if !outputs.contains(&cx, output) { return Result::Err.(broken(&cx, page.source, target)); }
+                if !fragment.is_empty() && output.ends_with(&cx, lit(&cx, ".html")) {
+                    var found = false;
+                    var generated_page = false;
+                    var k = 0usize;
+                    while k < pages.len(&cx) {
+                        let candidate = pages.at(&cx, k);
+                        if candidate.output.eq(&cx, output) {
+                            generated_page = true;
+                            found = candidate.ids.contains(&cx, fragment);
+                            k = pages.len(&cx);
+                        } else { k = k + 1usize; }
+                    }
+                    if generated_page && !found { return Result::Err.(broken(&cx, page.source, target)); }
+                }
+            }
+            j = j + 1usize;
+        }
+        i = i + 1usize;
+    }
+    Result::Ok.(())
+}
