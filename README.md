@@ -77,6 +77,7 @@ provide front matter defaults for pages beneath it:
 layout = "article.html"
 kind = "post"
 draft = false
+permalink_pattern = "/journal/{{ page.slug }}/"
 ```
 
 Defaults flow into child directories. A child's `_defaults.toml` overrides
@@ -87,9 +88,18 @@ pages generated from data. A generated record still overrides the template's
 defaults. Set `layout = ""` on a page to omit an inherited layout. Layouts
 must have the same extension as the output template, so use directory defaults
 or page overrides when a site mixes output formats.
-Routing and generation fields such as `permalink`, `generate`, `paginate`, and
-pagination options cannot appear in `_defaults.toml`; Krayon reports an error
-if they do. `_defaults.toml` itself is never published.
+`permalink_pattern` sets URLs for ordinary pages beneath the directory. It
+substitutes `{{ page.<field> }}` from the merged front matter, including dotted
+fields, and accepts strings, integers, and TOML dates. If no `slug` is set,
+`page.slug` defaults to the source filename without its extension. A page can
+override the pattern with `permalink`, replace it with another
+`permalink_pattern`, or set `permalink_pattern = ""` to use its normal source
+URL. The resulting URL must match the output format and pass the usual path
+and collision checks. Generated and paginated templates use their own URL
+rules; the directory pattern does not route their outputs.
+Other routing and generation fields such as `permalink`, `generate`,
+`paginate`, and pagination options cannot appear in `_defaults.toml`; Krayon
+reports an error if they do. `_defaults.toml` itself is never published.
 
 Set `draft = true` in a page's front matter to omit it from a normal build and
 from `collections.pages`. Run `krayon build [SITE_ROOT] --drafts` to include

@@ -125,6 +125,76 @@ class BuildTests(unittest.TestCase):
             self.assertIn(message, result.stderr)
             self.assertEqual((self.site / "dist/index.html").read_text(), original)
 
+    def test_directory_permalink_patterns_and_page_overrides(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "posts/deep").mkdir(parents=True)
+        (src / "feeds").mkdir()
+        (src / "_data").mkdir()
+        (self.site / "krayon.toml").write_text('base_path = "/docs"\n')
+        (src / "posts/_defaults.toml").write_text(
+            'kind = "post"\npermalink_pattern = "/journal/{{ page.slug }}/"\n')
+        (src / "posts/deep/_defaults.toml").write_text(
+            'permalink_pattern = "/deep/{{ page.date }}/{{ page.slug }}/"\n')
+        (src / "feeds/_defaults.toml").write_text(
+            'permalink_pattern = "/rss/{{ page.slug }}.xml"\n')
+        (src / "posts/first.md").write_text('# First\n\n[Second](second.md)\n')
+        (src / "posts/second.md").write_text(
+            '+++\nslug = "custom"\n+++\n# Second\n')
+        (src / "posts/manual.md").write_text(
+            '+++\npermalink = "/manual/"\n+++\n# Manual\n')
+        (src / "posts/normal.md").write_text(
+            '+++\npermalink_pattern = ""\n+++\n# Normal\n')
+        (src / "posts/deep/child.html").write_text(
+            '+++\ndate = 2026-11-20\n+++\n{{ page.kind }}:{{ page.slug }}')
+        (src / "feeds/news.xml").write_text('<feed/>')
+        (src / "_data/site.toml").write_text('[[items]]\nslug = "widget"\n')
+        (src / "posts/product.html").write_text(
+            '+++\ngenerate = "site.items"\n'
+            'permalink = "/products/{{ item.slug }}/"\n+++\nGenerated')
+        (src / "links.html").write_text(
+            '<a href="{{ "posts/first.md" | page_url }}">First</a>')
+
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('href="/docs/journal/custom/"',
+                      (self.site / "dist/journal/first/index.html").read_text())
+        self.assertTrue((self.site / "dist/journal/custom/index.html").exists())
+        self.assertTrue((self.site / "dist/manual/index.html").exists())
+        self.assertTrue((self.site / "dist/posts/normal/index.html").exists())
+        self.assertEqual((self.site / "dist/deep/2026-11-20/child/index.html").read_text(),
+                         'post:child')
+        self.assertEqual((self.site / "dist/rss/news.xml").read_text(), '<feed/>')
+        self.assertEqual((self.site / "dist/products/widget/index.html").read_text(), 'Generated')
+        self.assertIn('href="/docs/journal/first/"',
+                      (self.site / "dist/links/index.html").read_text())
+
+    def test_invalid_directory_permalink_patterns_preserve_output(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        src.mkdir()
+        (src / "_defaults.toml").write_text('permalink_pattern = "/posts/{{ page.slug }}/"\n')
+        (src / "a.md").write_text('# A\n')
+        (src / "b.md").write_text('# B\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        original = (self.site / "dist/posts/a/index.html").read_text()
+        for contents, message in [
+            ('permalink_pattern = 7\n', 'permalink_pattern must be a string'),
+            ('permalink_pattern = ""\n', 'permalink_pattern must not be empty'),
+            ('permalink_pattern = "/posts/{{ item.slug }}/"\n',
+             'permalink placeholders must use page.<field>'),
+            ('permalink_pattern = "/posts/{{ page.missing }}/"\n',
+             'missing permalink field: page.missing'),
+            ('permalink_pattern = "/posts/../{{ page.slug }}/"\n', 'unsafe URL'),
+            ('permalink_pattern = "/same/"\n', 'output collision'),
+        ]:
+            (src / "_defaults.toml").write_text(contents)
+            result = self.build()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(message, result.stderr)
+            self.assertEqual((self.site / "dist/posts/a/index.html").read_text(), original)
+
     def test_collections_and_nested_loops(self):
         result = self.build()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -337,7 +407,7 @@ class BuildTests(unittest.TestCase):
         data.write_text('products = [{slug = [1]}]\n' + original)
         result = self.build()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("permalink field must be a string or integer", result.stderr)
+        self.assertIn("permalink field must be a string, integer, or date", result.stderr)
 
         data.write_text('products = [{slug = ".."}]\n' + original)
         result = self.build()

@@ -443,7 +443,8 @@ fn draft(&cx: Domain!['k], data: ArenaMap[Span['k], TomlValue['k], 'k], file: Sp
 }
 
 forall 'k.
-fn permalink_pattern(&cx: Domain!['k], pattern: Span['k], record: ArenaMap[Span['k], TomlValue['k], 'k])
+fn permalink_pattern(&cx: Domain!['k], pattern: Span['k], record: ArenaMap[Span['k], TomlValue['k], 'k],
+    field_prefix: Slice[u8, 'static])
     -> Result[Span['k], Span['k]] {
     var out = Buffer!::new();
     var pos = 0usize;
@@ -465,10 +466,12 @@ fn permalink_pattern(&cx: Domain!['k], pattern: Span['k], record: ArenaMap[Span[
             Option::None => { out.destroy(); return Result::Err.(lit(&cx, "unclosed permalink placeholder")); },
         };
         let expression = pattern.slice(opening + 2usize, closing).trim(&cx);
-        if !expression.starts_with(&cx, lit(&cx, "item.")) || expression.len() <= 5usize {
-            out.destroy(); return Result::Err.(lit(&cx, "permalink placeholders must use item.<field>"));
+        let prefix = lit(&cx, field_prefix);
+        if !expression.starts_with(&cx, prefix) || expression.len() <= prefix.len() {
+            out.destroy(); return Result::Err.(Buffer!::new().push_static("permalink placeholders must use ")
+                .push_static(field_prefix).push_static("<field>").save(&cx));
         }
-        let value = match site_value(&cx, record, expression.slice(5usize, expression.len())) {
+        let value = match site_value(&cx, record, expression.slice(prefix.len(), expression.len())) {
             Option::Some(value) => value,
             Option::None => { out.destroy(); return Result::Err.(Buffer!::new().push_static("missing permalink field: ")
                 .push_bytes(&cx, expression).save(&cx)); },
@@ -476,7 +479,8 @@ fn permalink_pattern(&cx: Domain!['k], pattern: Span['k], record: ArenaMap[Span[
         let text = match value {
             TomlValue::String(text) => text,
             TomlValue::Integer(number) => Buffer!::new().push_i64(number).save(&cx),
-            _ => { out.destroy(); return Result::Err.(Buffer!::new().push_static("permalink field must be a string or integer: ")
+            TomlValue::Datetime(date) => date.text,
+            _ => { out.destroy(); return Result::Err.(Buffer!::new().push_static("permalink field must be a string, integer, or date: ")
                 .push_bytes(&cx, expression).save(&cx)); },
         };
         out = out.push_bytes(&cx, text);
@@ -493,7 +497,7 @@ fn generated_fields(&cx: Domain!['k], defaults: ArenaMap[Span['k], TomlValue['k]
     while i < defaults.positions(&cx) {
         match defaults.key_at(&cx, i) {
             Option::None => (),
-            Option::Some(key) => if !key.is(&cx, "generate") {
+            Option::Some(key) => if !key.is(&cx, "generate") && !key.is(&cx, "permalink_pattern") {
                 match defaults.get(&cx, key) {
                     Option::None => (),
                     Option::Some(value) => { let replaced = fields.insert(&cx, key, value); },
@@ -571,6 +575,15 @@ fn directory_defaults(&cx: Domain!['k], build: Build['k], relative: Span['k],
         }
         i = i + 1usize;
     }
+    match local.get(&cx, lit(&cx, "permalink_pattern")) {
+        Option::Some(value) => match value.as_string() {
+            Option::Some(pattern) => if pattern.is_empty() {
+                return Result::Err.(report_detail(&cx, file, lit(&cx, "permalink_pattern must not be empty")));
+            },
+            Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "permalink_pattern must be a string"))),
+        },
+        Option::None => (),
+    }
     Result::Ok.(merge_defaults(&cx, inherited, local))
 }
 
@@ -616,7 +629,7 @@ fn generate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
                     Option::None => return Result::Err.(report_detail(&cx, label, lit(&cx, "generate item url must be a string"))),
                 },
                 Option::None => match pattern {
-                    Option::Some(text) => match permalink_pattern(&cx, text, record) {
+                    Option::Some(text) => match permalink_pattern(&cx, text, record, "item.") {
                         Result::Ok(url) => url,
                         Result::Err(message) => return Result::Err.(report_detail(&cx, label, message)),
                     },
@@ -913,12 +926,34 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k],
     let is_draft = draft(&cx, parsed.data, file)?;
     if is_draft && !build.include_drafts { return Result::Ok.(()); }
     let url = match parsed.data.get(&cx, lit(&cx, "permalink")) {
-        Option::None => url,
+        Option::None => match parsed.data.get(&cx, lit(&cx, "permalink_pattern")) {
+            Option::None => url,
+            Option::Some(value) => {
+                let pattern = match value.as_string() {
+                    Option::Some(text) => text,
+                    Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "permalink_pattern must be a string"))),
+                };
+                if pattern.is_empty() { url }
+                else {
+                    if !parsed.data.contains(&cx, lit(&cx, "slug")) {
+                        let filename = basename(&cx, relative);
+                        let extension = if is_markdown { 3usize } else { format_suffix(&cx, format).len() };
+                        let slug = filename.slice(0usize, filename.len() - extension);
+                        let replaced = parsed.data.insert(&cx, lit(&cx, "slug"), TomlValue::String.(slug));
+                    }
+                    match permalink_pattern(&cx, pattern, parsed.data, "page.") {
+                        Result::Ok(resolved) => resolved,
+                        Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
+                    }
+                }
+            },
+        },
         Option::Some(value) => match value.as_string() {
             Option::Some(link) => link,
             Option::None => return Result::Err.(report(&cx, "permalink must be a string", file)),
         },
     };
+    let removed = parsed.data.remove(&cx, lit(&cx, "permalink_pattern"));
     let page = Page.{ data: parsed.data, source_urls: build.source_urls,
         url, body: parsed.body, body_line: parsed.body_line };
     let destination = output_for_url(&cx, build.output, url, file, format)?;
