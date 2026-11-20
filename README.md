@@ -276,6 +276,14 @@ in templates to prefix a root relative local URL. The filter leaves external,
 protocol relative, relative, and fragment URLs alone. Markdown links with root
 relative targets are prefixed automatically; raw HTML in Markdown is passed
 through as written.
+Markdown links to local `.md` source files resolve to the target page's
+generated URL, including a custom `permalink`. Relative paths are resolved
+from the linking source file; paths beginning with `/` are resolved from
+`input`. Queries and fragments are preserved, and `base_path` is applied to
+the resolved URL. For example, `[Guide](../guide/index.md#setup)` can link to
+`/guide/` or any permalink set by that source page. Links to omitted drafts
+fail the local link check in a normal build. External links and raw HTML links
+keep their existing behavior. Markdown excerpts use the same resolution.
 With `origin` configured, `{{ page.url | absolute_url }}` produces a full URL
 including `base_path`. The filter leaves external, protocol relative,
 relative, and fragment URLs unchanged. It works in HTML, XML, and JSON

@@ -1396,6 +1396,46 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("broken local link: /docs/assets/missing.png", result.stderr)
 
+    def test_markdown_source_links_use_generated_urls(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "posts").mkdir(parents=True)
+        (src / "guide").mkdir()
+        (self.site / "krayon.toml").write_text('base_path = "/docs"\n')
+        (src / "guide/index.md").write_text(
+            '+++\npermalink = "/manual/"\n+++\n# Manual\n## Section\n')
+        (src / "other.md").write_text(
+            '+++\npermalink = "/outside.html"\n+++\n# Outside\n')
+        post = src / "posts/first.md"
+        post.write_text(
+            '# First\n\n'
+            '[Relative](../guide/index.md#section) '
+            '[Root](/guide/index.md?view=all#section) '
+            '[Other](/other.md) '
+            '[Self](first.md#first) '
+            '[External](https://example.org/file.md)\n\n'
+            '<!-- more -->\n\nRest.\n')
+        (src / "archive.html").write_text(
+            '{% for entry in collections.pages %}'
+            '{% if entry.excerpt %}{{ entry.excerpt | safe }}{% endif %}'
+            '{% endfor %}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/posts/first/index.html").read_text()
+        excerpt = (self.site / "dist/archive/index.html").read_text()
+        for rendered in (html, excerpt):
+            self.assertIn('href="/docs/manual/#section"', rendered)
+            self.assertIn('href="/docs/manual/?view=all#section"', rendered)
+            self.assertIn('href="/docs/outside.html"', rendered)
+            self.assertIn('href="/docs/posts/first/#first"', rendered)
+            self.assertIn('href="https://example.org/file.md"', rendered)
+
+        post.write_text(post.read_text() + '\n[Missing](missing.md)\n')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('broken local link', result.stderr)
+        self.assertEqual((self.site / "dist/posts/first/index.html").read_text(), html)
+
     def test_nested_quote_can_contain_code_and_heading_ids_are_page_wide(self):
         fence = chr(96) * 3
         page = self.site / "src/quote.md"
