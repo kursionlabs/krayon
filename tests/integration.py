@@ -272,6 +272,73 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.site / "dist/products/42/index.html").read_text(), "Numbered")
 
+    def test_paginate_data_array_and_navigation(self):
+        data = self.site / "src/_data/site.toml"
+        data.write_text('posts = [{title = "One"}, {title = "Two"}, '
+                        '{title = "Three"}, {title = "Four"}, {title = "Five"}]\n'
+                        + data.read_text())
+        template = self.site / "src/posts.html"
+        template.write_text('+++\npaginate = "site.posts"\npage_size = 2\n'
+                            'permalink = "/blog/"\nkind = "listing"\n+++\n'
+                            '<p>{{ page.pagination.number }}/{{ page.pagination.total_pages }}:'
+                            '{{ page.pagination.total_items }}</p>'
+                            '{% for post in page.pagination.items %}'
+                            '<span>{{ post.title }}</span>{% endfor %}'
+                            '{% if page.pagination.previous %}'
+                            '<a href="{{ page.pagination.previous | url }}">Previous</a>{% endif %}'
+                            '{% if page.pagination.next %}'
+                            '<a href="{{ page.pagination.next | url }}">Next</a>{% endif %}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        first = (self.site / "dist/blog/index.html").read_text()
+        second = (self.site / "dist/blog/page/2/index.html").read_text()
+        third = (self.site / "dist/blog/page/3/index.html").read_text()
+        self.assertIn('<p>1/3:5</p><span>One</span><span>Two</span>', first)
+        self.assertIn('href="/blog/page/2/"', first)
+        self.assertNotIn('>Previous</a>', first)
+        self.assertIn('<p>2/3:5</p><span>Three</span><span>Four</span>', second)
+        self.assertIn('href="/blog/"', second)
+        self.assertIn('href="/blog/page/3/"', second)
+        self.assertIn('<p>3/3:5</p><span>Five</span>', third)
+        self.assertNotIn('>Next</a>', third)
+        self.assertFalse((self.site / "dist/posts/index.html").exists())
+
+        data.write_text(data.read_text().replace('{title = "Three"}, {title = "Four"}, '
+                                                 '{title = "Five"}', ''))
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.site / "dist/blog/page/2/index.html").exists())
+        self.assertFalse((self.site / "dist/blog/page/3/index.html").exists())
+
+    def test_paginate_empty_array_drafts_and_invalid_configuration(self):
+        data = self.site / "src/_data/site.toml"
+        data.write_text('posts = []\n' + data.read_text())
+        template = self.site / "src/posts.html"
+        template.write_text('+++\npaginate = "site.posts"\npage_size = 2\n'
+                            'draft = true\n+++\n'
+                            '<p>{{ page.pagination.number }}:{{ page.pagination.total_items }}</p>')
+        self.assertEqual(self.build().returncode, 0)
+        self.assertFalse((self.site / "dist/posts/index.html").exists())
+        result = self.build("--drafts")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/posts/index.html").read_text(), '<p>1:0</p>')
+
+        template.write_text('+++\npaginate = "site.posts"\npage_size = 0\n+++\n')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('page_size must be a positive integer', result.stderr)
+
+        template.write_text('+++\npaginate = "site.posts"\n+++\n')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('paginate requires page_size', result.stderr)
+
+        template.write_text('+++\npaginate = "site.posts"\npage_size = 1\n'
+                            'permalink = "/"\n+++\n')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('output collision', result.stderr)
+
     def test_xml_json_and_text_templates(self):
         value = 'A "quote" \\ path\nNext\t\x01'
         data = self.site / "src/_data/site.toml"

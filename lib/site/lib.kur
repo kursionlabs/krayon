@@ -483,6 +483,91 @@ fn generate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
 }
 
 forall 'k.
+fn pagination_url(&cx: Domain!['k], base: Span['k], number: usize) -> Span['k] {
+    if number == 1usize { return base; }
+    Buffer!::new().push_bytes(&cx, base).push_static("page/").push_usize(number)
+        .push_byte(b'/').save(&cx)
+}
+
+forall 'k.
+fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_page: Page['k],
+    source: Span['k], default_url: Span['k]) -> Result[(), Buffer!] {
+    if !source.starts_with(&cx, lit(&cx, "site.")) || source.len() <= 5usize {
+        return Result::Err.(report_detail(&cx, file,
+            lit(&cx, "paginate must name a site data array, such as site.posts")));
+    }
+    let page_size = match template_page.data.get(&cx, lit(&cx, "page_size")) {
+        Option::Some(value) => match value.as_integer() {
+            Option::Some(number) => if number > 0i64 { number as usize }
+                else { return Result::Err.(report_detail(&cx, file, lit(&cx, "page_size must be a positive integer"))); },
+            Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "page_size must be a positive integer"))),
+        },
+        Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate requires page_size"))),
+    };
+    if template_page.data.contains(&cx, lit(&cx, "pagination")) {
+        return Result::Err.(report_detail(&cx, file, lit(&cx, "pagination is a reserved page field")));
+    }
+    let is_draft = draft(&cx, template_page.data, file)?;
+    if is_draft && !build.include_drafts { return Result::Ok.(()); }
+    let base = match template_page.data.get(&cx, lit(&cx, "permalink")) {
+        Option::None => default_url,
+        Option::Some(value) => match value.as_string() {
+            Option::Some(text) => text,
+            Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "permalink must be a string"))),
+        },
+    };
+    if !safe_path(&cx, base, true) || !base.ends_with(&cx, lit(&cx, "/")) {
+        return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate permalink must be a safe directory URL ending in /")));
+    }
+    let value = match site_value(&cx, build.site_data, source.slice(5usize, source.len())) {
+        Option::Some(found) => found,
+        Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate source is missing"))),
+    };
+    let all = match value.as_array() {
+        Option::Some(array) => array,
+        Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate source must be an array"))),
+    };
+    let count = all.len(&cx);
+    let pages = if count == 0usize { 1usize } else { (count - 1usize) / page_size + 1usize };
+    var number = 1usize;
+    while number <= pages {
+        let label = Buffer!::new().push_bytes(&cx, file).push_static(" [page ")
+            .push_usize(number).push_static("]").save(&cx);
+        let url = pagination_url(&cx, base, number);
+        let destination = output_for_url(&cx, build.output, url, label, TemplateFormat::Html)?;
+        claim(&cx, build, destination, label)?;
+        let items = ArenaVec::new(&cx);
+        let start = (number - 1usize) * page_size;
+        var i = start;
+        while i < count && i - start < page_size {
+            items.push(&cx, all.at(&cx, i));
+            i = i + 1usize;
+        }
+        let pagination = ArenaMap::new(&cx);
+        let replaced = pagination.insert(&cx, lit(&cx, "items"), TomlValue::Array.(items));
+        let replaced = pagination.insert(&cx, lit(&cx, "number"), TomlValue::Integer.(number as i64));
+        let replaced = pagination.insert(&cx, lit(&cx, "total_pages"), TomlValue::Integer.(pages as i64));
+        let replaced = pagination.insert(&cx, lit(&cx, "total_items"), TomlValue::Integer.(count as i64));
+        if number > 1usize {
+            let replaced = pagination.insert(&cx, lit(&cx, "previous"),
+                TomlValue::String.(pagination_url(&cx, base, number - 1usize)));
+        }
+        if number < pages {
+            let replaced = pagination.insert(&cx, lit(&cx, "next"),
+                TomlValue::String.(pagination_url(&cx, base, number + 1usize)));
+        }
+        let fields = generated_fields(&cx, template_page.data, ArenaMap::new(&cx));
+        let replaced = fields.insert(&cx, lit(&cx, "pagination"), TomlValue::Table.(pagination));
+        let replaced = fields.insert(&cx, lit(&cx, "permalink"), TomlValue::String.(url));
+        let page = Page.{ data: fields, url, body: template_page.body, body_line: template_page.body_line };
+        build.pages.push(&cx, SourcePage.{ file: label, page, is_markdown: false,
+            format: TemplateFormat::Html, destination });
+        number = number + 1usize;
+    }
+    Result::Ok.(())
+}
+
+forall 'k.
 fn render_layout(&cx: Domain!['k], build: Build['k], page: Page['k], content: Span['k], name: Span['k],
     format: TemplateFormat, depth: usize) -> Result[Span['k], Buffer!] {
     if depth >= 32usize { return Result::Err.(report(&cx, "layout chain too deep or cyclic", name)); }
@@ -520,6 +605,23 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Resul
         Result::Ok(page) => page,
         Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
     };
+    match parsed.data.get(&cx, lit(&cx, "paginate")) {
+        Option::None => (),
+        Option::Some(value) => {
+            if parsed.data.contains(&cx, lit(&cx, "generate")) {
+                return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate and generate cannot be combined")));
+            }
+            let html = match format { TemplateFormat::Html => true, _ => false };
+            if is_markdown || !html {
+                return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate requires an HTML template")));
+            }
+            let source = match value.as_string() {
+                Option::Some(text) => text,
+                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate must be a string"))),
+            };
+            return paginate_pages(&cx, build, file, parsed, source, url);
+        },
+    }
     match parsed.data.get(&cx, lit(&cx, "generate")) {
         Option::None => (),
         Option::Some(value) => {

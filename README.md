@@ -95,6 +95,28 @@ site data paths such as `site.catalog.products`; it is available in HTML,
 XML, JSON, and text templates. A template or record can set `draft = true`;
 a record's value overrides the template default.
 
+An HTML template can split a site data array across list pages:
+
+```html
++++
+paginate = "site.posts"
+page_size = 10
+permalink = "/blog/"
++++
+{% for post in page.pagination.items %}<h2>{{ post.title }}</h2>{% endfor %}
+{% if page.pagination.previous %}<a href="{{ page.pagination.previous | url }}">Previous</a>{% endif %}
+{% if page.pagination.next %}<a href="{{ page.pagination.next | url }}">Next</a>{% endif %}
+```
+
+The first page uses `/blog/`; later pages use `/blog/page/2/`,
+`/blog/page/3/`, and so on. Without `permalink`, the template's normal URL is
+the base. The base must end in `/`. `page.pagination` also exposes the one-based
+`number`, `total_pages`, and `total_items`. An empty array produces one page
+with no items. Pagination preserves array order and accepts any TOML array
+values. Paginated pages appear in `collections.pages`; the template does not
+produce an additional file. `paginate` and `generate` cannot be combined.
+The template's `draft` flag applies to all its pages.
+
 XML, JSON, and text templates use the same page fields, site data, collections,
 loops, layouts, and includes as HTML. Layouts and includes must use the same
 extension as their template. HTML and XML substitutions escape markup;
