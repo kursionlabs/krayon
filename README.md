@@ -167,6 +167,21 @@ build; `collections.pages` includes generated archive pages when templates
 render. Named collections support drafts according to the build's `--drafts`
 setting.
 
+A page in a named collection can link to its neighbors in that collection's
+configured order. `page.collection_navigation.posts.previous` and `.next`
+contain the neighboring page records, including their `url` and front matter.
+At either end of the collection, the missing neighbor has no fields. Check its
+URL in a condition before rendering a link:
+
+```html
+{% if page.collection_navigation.posts.previous.url %}<a href="{{ page.collection_navigation.posts.previous.url | url }}">Previous: {{ page.collection_navigation.posts.previous.title }}</a>{% endif %}
+{% if page.collection_navigation.posts.next.url %}<a href="{{ page.collection_navigation.posts.next.url | url }}">Next: {{ page.collection_navigation.posts.next.title }}</a>{% endif %}
+```
+
+Pages can belong to multiple named collections and get separate navigation
+for each. Pages outside a collection have no navigation for it. The
+`collection_navigation` front matter field is reserved.
+
 XML, JSON, and text templates use the same page fields, site data, collections,
 loops, layouts, and includes as HTML. Layouts and includes must use the same
 extension as their template. HTML and XML substitutions escape markup;

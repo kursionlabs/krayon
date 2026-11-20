@@ -469,7 +469,23 @@ class BuildTests(unittest.TestCase):
             '[collections.posts]\n'
             'where = { field = "kind", equals = "post" }\n'
             'sort_by = "date"\n'
-            'sort_order = "desc"\n')
+            'sort_order = "desc"\n'
+            '[collections.chronological]\n'
+            'where = { field = "kind", equals = "post" }\n'
+            'sort_by = "date"\n')
+        (src / "_includes").mkdir()
+        (src / "_includes/nav.html").write_text(
+            '{% if page.collection_navigation.posts.previous.url %}'
+            '<a href="{{ page.collection_navigation.posts.previous.url }}">'
+            '{{ page.collection_navigation.posts.previous.title }}</a>{% endif %}'
+            '<b>{{ content | safe }}</b>'
+            '{% if page.collection_navigation.posts.next.url %}'
+            '<a href="{{ page.collection_navigation.posts.next.url }}">'
+            '{{ page.collection_navigation.posts.next.title }}</a>{% endif %}'
+            '{% if page.collection_navigation.chronological.previous.url %}'
+            '<i>{{ page.collection_navigation.chronological.previous.title }}</i>{% endif %}'
+            '{% if page.collection_navigation.chronological.next.url %}'
+            '<i>{{ page.collection_navigation.chronological.next.title }}</i>{% endif %}')
         for name, date, draft in [
             ("old", "2024-01-01", False),
             ("new", "2025-01-01", False),
@@ -477,8 +493,9 @@ class BuildTests(unittest.TestCase):
         ]:
             (src / f"{name}.md").write_text(
                 f'+++\ntitle = "{name}"\nkind = "post"\n'
-                f'date = {date}\ndraft = {str(draft).lower()}\n+++\n# {name}\n')
-        (src / "other.md").write_text('+++\nkind = "other"\n+++\n# Other\n')
+                f'date = {date}\ndraft = {str(draft).lower()}\n'
+                f'layout = "nav.html"\n+++\n# {name}\n')
+        (src / "other.md").write_text('+++\nkind = "other"\nlayout = "nav.html"\n+++\n# Other\n')
         (src / "archive.html").write_text(
             '+++\npaginate = "collections.posts"\npage_size = 1\n'
             'kind = "post"\n+++\n'
@@ -496,12 +513,19 @@ class BuildTests(unittest.TestCase):
         self.assertEqual((self.site / "dist/archive/page/2/index.html").read_text(), '2:old')
         feed = json.loads((self.site / "dist/feed.json").read_text())
         self.assertEqual([item['title'] for item in feed], ['new', 'old'])
+        self.assertIn('<a href="/old/">old</a>', (self.site / "dist/new/index.html").read_text())
+        self.assertIn('<i>old</i>', (self.site / "dist/new/index.html").read_text())
+        self.assertIn('<a href="/new/">new</a>', (self.site / "dist/old/index.html").read_text())
+        self.assertIn('<i>new</i>', (self.site / "dist/old/index.html").read_text())
+        self.assertNotIn('<a ', (self.site / "dist/other/index.html").read_text())
 
         result = self.build('--drafts')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.site / "dist/listing/index.html").read_text(), 'draft;new;old;')
         self.assertEqual((self.site / "dist/archive/index.html").read_text(), '3:draft')
         self.assertEqual((self.site / "dist/archive/page/3/index.html").read_text(), '3:old')
+        self.assertIn('<a href="/draft/">draft</a>', (self.site / "dist/new/index.html").read_text())
+        self.assertIn('<a href="/new/">new</a>', (self.site / "dist/draft/index.html").read_text())
 
         (self.site / "krayon.toml").write_text(
             '[collections.posts]\nwhere = { field = "kind", equals = "missing" }\n')
@@ -510,6 +534,18 @@ class BuildTests(unittest.TestCase):
         self.assertEqual((self.site / "dist/listing/index.html").read_text(), '')
         self.assertEqual((self.site / "dist/archive/index.html").read_text(), '0:')
         self.assertFalse((self.site / "dist/archive/page/2/index.html").exists())
+
+    def test_collection_navigation_front_matter_is_reserved(self):
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        original = (self.site / "dist/index.html").read_text()
+        index = self.site / "src/index.md"
+        index.write_text(index.read_text().replace(
+            'title = "Home"', 'title = "Home"\ncollection_navigation = {}'))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('collection_navigation is a reserved page field', result.stderr)
+        self.assertEqual((self.site / "dist/index.html").read_text(), original)
 
     def test_named_collection_rejects_invalid_definitions(self):
         result = self.build()
