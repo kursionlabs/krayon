@@ -166,6 +166,48 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.site / "dist/partial/index.html").read_text(), "Reusable")
 
+    def test_template_error_locations_after_front_matter_and_in_loops(self):
+        page = self.site / "src/located.html"
+        page.write_text('+++\ntitle = "Located"\n+++\n<p>\n  {{ page.missing }}\n')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{page}:5:3: page.missing", result.stderr)
+
+        page.write_text('é {{ page.missing }}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{page}:1:3: page.missing", result.stderr)
+
+        page.write_text('{% for entry in collections.pages %}\n'
+                        '  {{ entry.missing }}\n{% endfor %}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{page}:2:3: entry.missing", result.stderr)
+
+        page.write_text('<p>\n {% if page.title %}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{page}:2:2: unclosed if", result.stderr)
+
+    def test_template_error_locations_in_layout_and_include_chain(self):
+        layout = self.site / "src/_includes/located-layout.html"
+        layout.write_text('+++\ntitle = "Layout"\n+++\n<div>\n {{ site.missing }}\n')
+        page = self.site / "src/located.html"
+        page.write_text('+++\nlayout = "located-layout.html"\n+++\nHello')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{layout}:5:2: site.missing", result.stderr)
+
+        page.write_text('First\n{% include "a.html" %}')
+        a = self.site / "src/_includes/a.html"
+        b = self.site / "src/_includes/b.html"
+        a.write_text('First\n{% include "b.html" %}')
+        b.write_text('First\n  {{ site.missing }}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{page}:2:1: include {a}:2:1: include {b}:2:3: site.missing",
+                      result.stderr)
+
     def test_explicit_heading_attributes(self):
         (self.site / "src/heading.md").write_text(
             "### Fetch & update {#api-fetch .item-heading .kind-fn}\n")

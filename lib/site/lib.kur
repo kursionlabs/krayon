@@ -72,6 +72,11 @@ fn report_detail(&cx: Domain!['k], file: Span['k], detail: Span['k]) -> Buffer! 
 }
 
 forall 'k.
+fn report_template(&cx: Domain!['k], detail: Span['k]) -> Buffer! {
+    Buffer!::new().push_static("krayon: ").push_bytes(&cx, detail).push_byte(b'\n')
+}
+
+forall 'k.
 fn exists_path(&cx: Domain!['k], file: Span['k]) -> Result[bool, Buffer!] {
     match path_exists(&cx, file) {
         Result::Ok(found) => Result::Ok.(found),
@@ -281,9 +286,10 @@ fn render_layout(&cx: Domain!['k], build: Build['k], page: Page['k], content: Sp
         Result::Ok(layout) => layout,
         Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
     };
-    let rendered = match template(&cx, build.site_data, build.collections, page, build.layouts, layout.body, content) {
+    let rendered = match template(&cx, build.site_data, build.collections, page, build.layouts,
+        file, layout.body, content, layout.body_line) {
         Result::Ok(html) => html.save(&cx),
-        Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
+        Result::Err(message) => return Result::Err.(report_template(&cx, message)),
     };
     match layout_name(&cx, layout.data)? {
         Option::None => Result::Ok.(rendered),
@@ -308,7 +314,7 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Resul
             Option::None => return Result::Err.(report(&cx, "permalink must be a string", file)),
         },
     };
-    let page = Page.{ data: parsed.data, url, body: parsed.body };
+    let page = Page.{ data: parsed.data, url, body: parsed.body, body_line: parsed.body_line };
     let destination = output_for_url(&cx, build.output, url)?;
     claim(&cx, build, destination, file)?;
     build.pages.push(&cx, SourcePage.{ file, page, is_markdown, destination });
@@ -322,9 +328,10 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
             Result::Ok(html) => html.save(&cx),
             Result::Err(message) => return Result::Err.(report_detail(&cx, source.file, message)),
         } }
-        else { match template(&cx, build.site_data, build.collections, page, build.layouts, page.body, lit(&cx, "")) {
+        else { match template(&cx, build.site_data, build.collections, page, build.layouts,
+            source.file, page.body, lit(&cx, ""), page.body_line) {
             Result::Ok(html) => html.save(&cx),
-            Result::Err(message) => return Result::Err.(report_detail(&cx, source.file, message)),
+            Result::Err(message) => return Result::Err.(report_template(&cx, message)),
         } };
     let rendered = match layout_name(&cx, page.data)? {
         Option::None => body,

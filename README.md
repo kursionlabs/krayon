@@ -99,6 +99,8 @@ Includes share the current page, site data, loop variables, and rendered
 `.html`. Missing files, paths that escape the layouts directory,
 and include cycles fail the build. An include in an inactive `if`
 branch is not loaded.
+Template errors report the source file, line, and column. Errors inside an
+include also show the include chain, with each call site's location.
 
 Use `{{ page.url | url }}` or `{{ "/assets/site.css" | url }}`
 in templates to prefix a root relative local URL. The filter leaves external,
