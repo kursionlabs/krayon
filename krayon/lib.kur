@@ -4,10 +4,10 @@ use std::io::{eprint_buffer, print_buffer};
 use std::option::{Option, Result};
 use std::process::{Args, hash_seed};
 use std::raw::Span;
-use site::{build_with_drafts, init, routes_with_drafts};
+use site::{build_with_drafts, check_with_drafts, init, routes_with_drafts};
 
 fn usage() -> () {
-    eprint_buffer(Buffer!::new().push_static("usage: krayon <build|routes> [SITE_ROOT] [--drafts]\n")
+    eprint_buffer(Buffer!::new().push_static("usage: krayon <build|check|routes> [SITE_ROOT] [--drafts]\n")
         .push_static("       krayon init [DIR]\n"));
 }
 
@@ -22,7 +22,8 @@ fn main(args: Args) -> i32 {
         Option::Some(s) => Span::from_static(&cx, s),
         Option::None => Span::from_static(&cx, ""),
     };
-    if !command.is(&cx, "build") && !command.is(&cx, "routes") && !command.is(&cx, "init") {
+    if !command.is(&cx, "build") && !command.is(&cx, "check")
+        && !command.is(&cx, "routes") && !command.is(&cx, "init") {
         usage();
         cx.destroy();
         return 2i32;
@@ -86,7 +87,8 @@ fn main(args: Args) -> i32 {
             Result::Err(message) => { eprint_buffer(message); 1i32 },
         };
     }
-    let result = build_with_drafts(&cx, root, include_drafts);
+    let result = if command.is(&cx, "check") { check_with_drafts(&cx, root, include_drafts) }
+        else { build_with_drafts(&cx, root, include_drafts) };
     cx.destroy();
     match result {
         Result::Ok(nothing) => 0i32,

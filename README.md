@@ -30,6 +30,12 @@ HTML layout, and a `.gitignore` for `dist`.
 bin/krayon build examples/hello-site
 ```
 
+Run `bin/krayon check [SITE_ROOT]` to render and validate a site without
+replacing its output directory. It catches the same template, output, and
+local link errors as `build`, then removes its temporary staging directory.
+The configured output remains untouched, whether or not the check succeeds.
+Add `--drafts` to check draft pages too.
+
 To inspect routes before building, run `bin/krayon routes [SITE_ROOT]`. It
 lists pages as `page<TAB>source<TAB>URL` and redirects as
 `alias<TAB>old URL<TAB>target URL`, sorted by page URL and then alias URL.

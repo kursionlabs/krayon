@@ -48,6 +48,58 @@ class BuildTests(unittest.TestCase):
             capture_output=True,
         )
 
+    def check(self, *flags):
+        return subprocess.run(
+            [str(KRAYON), "check", str(self.site), *flags],
+            text=True,
+            capture_output=True,
+        )
+
+    def test_check_validates_without_installing_output(self):
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.site / "dist").exists())
+        self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
+
+        self.assertEqual(self.build().returncode, 0)
+        previous = (self.site / "dist/index.html").read_bytes()
+        (self.site / "dist/sentinel.txt").write_text("keep\n")
+        home = self.site / "src/index.md"
+        home.write_text(home.read_text() + "\nNew content.\n")
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/index.html").read_bytes(), previous)
+        self.assertEqual((self.site / "dist/sentinel.txt").read_text(), "keep\n")
+        self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
+
+        home.write_text(home.read_text() + "\n[Broken](/missing/)\n")
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("broken local link: /missing/", result.stderr)
+        self.assertEqual((self.site / "dist/index.html").read_bytes(), previous)
+        self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
+
+    def test_check_accepts_drafts_and_reports_template_errors(self):
+        draft = self.site / "src/draft.md"
+        draft.write_text('+++\ndraft = true\n+++\n# Draft\n')
+        home = self.site / "src/index.md"
+        home.write_text(home.read_text() + "\n[Draft](/draft/)\n")
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("broken local link: /draft/", result.stderr)
+        result = self.check("--drafts")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.site / "dist").exists())
+        self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
+
+        layout = self.site / "src/_includes/base.html"
+        layout.write_text(layout.read_text() + "{{ site.unknown }}\n")
+        result = self.check("--drafts")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("site.unknown", result.stderr)
+        self.assertFalse((self.site / "dist").exists())
+        self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
+
     def test_init_creates_buildable_site_and_refuses_existing_content(self):
         target = Path(self.temp.name) / "nested/new-site"
         result = subprocess.run(

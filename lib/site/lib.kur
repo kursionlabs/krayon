@@ -1825,6 +1825,23 @@ fn routes_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) ->
 }
 
 forall 'k.
+fn check_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> Result[(), Buffer!] {
+    let config = read_config(&cx, root)?;
+    check_config_output(&cx, config)?;
+    let source = join(&cx, root, config.input);
+    let output = join(&cx, root, config.output);
+    let site_data = read_site_data(&cx, source, config)?;
+    ensure_dir(&cx, parent(&cx, output))?;
+    let previous = check_output(&cx, source, output)?;
+    let (stage, backup) = stage_paths(&cx, output)?;
+    let build = new_build(&cx, root, config, source, stage, include_drafts, site_data);
+    match render_site(&cx, build) {
+        Result::Ok(nothing) => remove_tree(&cx, stage),
+        Result::Err(message) => Result::Err.(clean_after_error(&cx, stage, message)),
+    }
+}
+
+forall 'k.
 fn build_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> Result[(), Buffer!] {
     let config = read_config(&cx, root)?;
     check_config_output(&cx, config)?;
