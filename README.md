@@ -30,6 +30,7 @@ data = "_data/site.toml"
 assets = "assets"
 base_path = ""
 origin = ""
+exclude = []
 
 [collections.posts]
 where = { field = "kind", equals = "post" }
@@ -41,6 +42,12 @@ All paths are relative. `input` and `output` are relative to the site root;
 the other paths are relative to `input`. The scalar values above are the defaults.
 The site data file and assets directory are optional. The output directory
 must be outside the input directory.
+Use `exclude = ["internal/", "notes/private.md"]` to skip source discovery.
+Entries are paths relative to `input`: a file path matches exactly, and a
+trailing `/` excludes a directory and everything beneath it. Patterns and
+globs are not supported. Excluded pages do not appear in collections or
+`page_url` lookups; links to them fail the usual local link check. Exclusions
+also apply to `--drafts` builds. They do not affect asset copying.
 The optional `[collections.posts]` table defines a named page collection;
 omit it when no collection is needed. Names must start with a letter or
 underscore and contain only letters, digits, and underscores. `pages` is

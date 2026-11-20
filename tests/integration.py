@@ -109,6 +109,59 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.site / "dist/drafts/hidden/index.html").exists())
 
+    def test_source_discovery_exclusions_leave_assets_alone(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "internal/deep").mkdir(parents=True)
+        (src / "notes").mkdir()
+        (src / "assets").mkdir()
+        (self.site / "krayon.toml").write_text(
+            'exclude = ["internal/", "notes/private.md", "assets/"]\n')
+        (src / "internal/_defaults.toml").write_text('layout = [\n')
+        (src / "internal/deep/broken.md").write_text('+++\ntitle = [\n+++\nBroken')
+        (src / "notes/private.md").write_text('# Private\n')
+        (src / "notes/public.md").write_text('# Public\n')
+        (src / "assets/logo.txt").write_text('asset\n')
+        index = src / "index.html"
+        index.write_text('{% for entry in collections.pages %}{{ entry.url }};{% endfor %}')
+
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/index.html").read_text(),
+                         '/;/notes/public/;')
+        self.assertFalse((self.site / "dist/internal").exists())
+        self.assertFalse((self.site / "dist/notes/private").exists())
+        self.assertEqual((self.site / "dist/assets/logo.txt").read_text(), 'asset\n')
+        result = self.build('--drafts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.site / "dist/notes/private").exists())
+
+        index.write_text('<a href="/notes/private/">Private</a>')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('broken local link: /notes/private/', result.stderr)
+        self.assertEqual((self.site / "dist/index.html").read_text(),
+                         '/;/notes/public/;')
+
+    def test_invalid_source_exclusions_preserve_output(self):
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        original = (self.site / "dist/index.html").read_text()
+        config = self.site / "krayon.toml"
+        for contents, message in [
+            ('exclude = "notes/"\n', 'exclude must be an array'),
+            ('exclude = [42]\n', 'exclude entry must be a string'),
+            ('exclude = ["../outside"]\n', 'invalid exclude path'),
+            ('exclude = ["/absolute"]\n', 'invalid exclude path'),
+            ('exclude = ["notes/*.md"]\n', 'invalid exclude path'),
+            ('exclude = ["notes//private.md"]\n', 'invalid exclude path'),
+        ]:
+            config.write_text(contents)
+            result = self.build()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(message, result.stderr)
+            self.assertEqual((self.site / "dist/index.html").read_text(), original)
+
     def test_invalid_directory_defaults_preserve_output(self):
         result = self.build()
         self.assertEqual(result.returncode, 0, result.stderr)

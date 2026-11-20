@@ -27,6 +27,7 @@ struct Config {
     assets: Span['k],
     base_path: Span['k],
     origin: Span['k],
+    exclude: ArenaVec[Span['k], 'k],
     definitions: ArenaMap[Span['k], TomlValue['k], 'k],
 }
 
@@ -40,6 +41,7 @@ struct Build {
     data_dir: Span['k],
     base_path: Span['k],
     include_drafts: bool,
+    exclude: ArenaVec[Span['k], 'k],
     site_data: ArenaMap[Span['k], TomlValue['k], 'k],
     definitions: ArenaMap[Span['k], TomlValue['k], 'k],
     config_file: Span['k],
@@ -255,7 +257,7 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
     let file = join(&cx, root, lit(&cx, "krayon.toml"));
     let defaults = Config.{ input: lit(&cx, "src"), output: lit(&cx, "dist"), layouts: lit(&cx, "_includes"),
         data: lit(&cx, "_data/site.toml"), assets: lit(&cx, "assets"), base_path: lit(&cx, ""),
-        origin: lit(&cx, ""), definitions: ArenaMap::new(&cx) };
+        origin: lit(&cx, ""), exclude: ArenaVec::new(&cx), definitions: ArenaMap::new(&cx) };
     if !exists_path(&cx, file)? { return Result::Ok.(defaults); }
     let text = load(&cx, file)?;
     match parse(&cx, text) {
@@ -268,7 +270,8 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                     Option::Some(key) => {
                         if !key.is(&cx, "input") && !key.is(&cx, "output") && !key.is(&cx, "layouts")
                             && !key.is(&cx, "data") && !key.is(&cx, "assets") && !key.is(&cx, "base_path")
-                            && !key.is(&cx, "origin") && !key.is(&cx, "collections") {
+                            && !key.is(&cx, "origin") && !key.is(&cx, "exclude")
+                            && !key.is(&cx, "collections") {
                             return Result::Err.(report(&cx, "unknown config key", key));
                         }
                     },
@@ -322,6 +325,35 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                     Option::None => return Result::Err.(report(&cx, "collections must be a table", file)),
                 },
             };
+            let exclude = ArenaVec::new(&cx);
+            match values.get(&cx, lit(&cx, "exclude")) {
+                Option::None => (),
+                Option::Some(value) => {
+                    let rules = match value.as_array() {
+                        Option::Some(items) => items,
+                        Option::None => return Result::Err.(report(&cx, "exclude must be an array of paths", file)),
+                    };
+                    var j = 0usize;
+                    while j < rules.len(&cx) {
+                        let rule = match rules.at(&cx, j).as_string() {
+                            Option::Some(path) => path,
+                            Option::None => return Result::Err.(report(&cx, "exclude entry must be a string path", file)),
+                        };
+                        let path = if rule.ends_with(&cx, lit(&cx, "/")) {
+                            rule.slice(0usize, rule.len() - 1usize)
+                        } else { rule };
+                        if !safe_path(&cx, path, false) || rule.find_byte(&cx, b'*', 0usize).is_some()
+                            || rule.find_byte(&cx, b'?', 0usize).is_some()
+                            || rule.find_byte(&cx, b'[', 0usize).is_some()
+                            || rule.find_byte(&cx, b']', 0usize).is_some() {
+                            return Result::Err.(report_detail(&cx, file,
+                                Buffer!::new().push_static("invalid exclude path: ").push_bytes(&cx, rule).save(&cx)));
+                        }
+                        exclude.push(&cx, rule);
+                        j = j + 1usize;
+                    }
+                },
+            }
             Result::Ok.(Config.{
                 input: config_string(&cx, values, "input", "src")?,
                 output: config_string(&cx, values, "output", "dist")?,
@@ -330,6 +362,7 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                 assets: config_string(&cx, values, "assets", "assets")?,
                 base_path,
                 origin,
+                exclude,
                 definitions,
             })
         },
@@ -1109,6 +1142,20 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
 }
 
 forall 'k.
+fn excluded(&cx: Domain!['k], rules: ArenaVec[Span['k], 'k], relative: Span['k]) -> bool {
+    var i = 0usize;
+    while i < rules.len(&cx) {
+        let rule = rules.at(&cx, i);
+        if rule.ends_with(&cx, lit(&cx, "/")) {
+            let directory = rule.slice(0usize, rule.len() - 1usize);
+            if relative.eq(&cx, directory) || relative.starts_with(&cx, rule) { return true; }
+        } else if relative.eq(&cx, rule) { return true; }
+        i = i + 1usize;
+    }
+    false
+}
+
+forall 'k.
 fn scan_pages(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usize,
     inherited: ArenaMap[Span['k], TomlValue['k], 'k]) -> Result[(), Buffer!] {
     if depth >= 64usize { return Result::Err.(report(&cx, "source tree too deep", relative)); }
@@ -1128,7 +1175,9 @@ fn scan_pages(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usi
                 Option::Some(entry) => {
                     let { name, is_directory } = entry;
                     let child = join(&cx, relative, name.save(&cx));
-                    if child.eq(&cx, build.assets) || child.eq(&cx, build.layouts_rel) || (!build.data_dir.is_empty() && child.eq(&cx, build.data_dir)) {
+                    if excluded(&cx, build.exclude, child) {
+                        // excluded source path
+                    } else if child.eq(&cx, build.assets) || child.eq(&cx, build.layouts_rel) || (!build.data_dir.is_empty() && child.eq(&cx, build.data_dir)) {
                         // reserved source directories
                     } else if is_directory {
                         match scan_pages(&cx, build, child, depth + 1usize, defaults) {
@@ -1576,7 +1625,8 @@ fn build_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> 
     let previous = check_output(&cx, source, output)?;
     let (stage, backup) = stage_paths(&cx, output)?;
     let build = Build.{ source, output: stage, layouts: join(&cx, source, config.layouts), layouts_rel: config.layouts,
-        assets: config.assets, data_dir: parent(&cx, config.data), base_path: config.base_path, include_drafts,
+        assets: config.assets, data_dir: parent(&cx, config.data), base_path: config.base_path,
+        include_drafts, exclude: config.exclude,
         site_data, definitions: config.definitions, config_file: join(&cx, root, lit(&cx, "krayon.toml")),
         collections: ArenaMap::new(&cx), navigation: ArenaMap::new(&cx),
         source_urls: ArenaMap::new(&cx), pages: ArenaVec::new(&cx), redirects: ArenaVec::new(&cx),
