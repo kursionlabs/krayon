@@ -2,6 +2,7 @@ use std::arena::Domain!;
 use std::buffer::Buffer!;
 use std::collections::arena_map::ArenaMap;
 use std::collections::arena_vec::ArenaVec;
+use std::fs::{canonicalize, read_to_arena};
 use std::option::{Option, Result};
 use std::raw::Span;
 use std::slice::Slice;
@@ -261,6 +262,49 @@ fn valid_name(&cx: Domain!['k], name: Span['k]) -> bool {
 }
 
 forall 'k.
+fn include_name(&cx: Domain!['k], name: Span['k]) -> bool {
+    if name.is_empty() || !name.ends_with(&cx, lit(&cx, ".html")) || byte(&cx, name, 0usize) == b'/' { return false; }
+    var start = 0usize;
+    var i = 0usize;
+    while i <= name.len() {
+        if i == name.len() || byte(&cx, name, i) == b'/' {
+            let part = name.slice(start, i);
+            if part.is_empty() || part.is(&cx, ".") || part.is(&cx, "..") { return false; }
+            start = i + 1usize;
+        } else if byte(&cx, name, i) == b'\\' || byte(&cx, name, i) == b'"'
+            || byte(&cx, name, i) == b'\'' || byte(&cx, name, i) < 32u8 { return false; }
+        i = i + 1usize;
+    }
+    true
+}
+
+forall 'k.
+fn include_error(&cx: Domain!['k], name: Span['k], detail: Slice[u8, 'static]) -> Span['k] {
+    Buffer!::new().push_static("include ").push_bytes(&cx, name).push_static(": ").push_static(detail).save(&cx)
+}
+
+forall 'k.
+fn include_source(&cx: Domain!['k], root: Span['k], name: Span['k]) -> Result[Span['k], Span['k]] {
+    let base = match canonicalize(&cx, root) {
+        Result::Ok(path) => path.save(&cx),
+        Result::Err(e) => return Result::Err.(include_error(&cx, name, "cannot resolve layouts directory")),
+    };
+    let requested = Buffer!::new().push_bytes(&cx, root).push_static("/").push_bytes(&cx, name).save(&cx);
+    let actual = match canonicalize(&cx, requested) {
+        Result::Ok(path) => path.save(&cx),
+        Result::Err(e) => return Result::Err.(include_error(&cx, name, "cannot read file")),
+    };
+    let prefix = Buffer!::new().push_bytes(&cx, base).push_static("/").save(&cx);
+    if !actual.starts_with(&cx, prefix) {
+        return Result::Err.(include_error(&cx, name, "path escapes layouts directory"));
+    }
+    match read_to_arena(&cx, actual) {
+        Result::Ok(source) => Result::Ok.(source),
+        Result::Err(e) => Result::Err.(include_error(&cx, name, "cannot read file")),
+    }
+}
+
+forall 'k.
 fn query_value(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
     collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k],
     bindings: ArenaVec[Binding['k], 'k], text: Span['k]) -> Option[Span['k]] {
@@ -465,8 +509,9 @@ fn find_endfor(&cx: Domain!['k], source: Span['k], start: usize) -> Option[(usiz
 forall 'k.
 fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
     collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k], bindings: ArenaVec[Binding['k], 'k],
-    source: Span['k], content: Span['k], depth: usize) -> Result[Buffer!, Span['k]] {
-    if depth >= 64usize { return Result::Err.(lit(&cx, "template loops nested too deeply")); }
+    includes: ArenaVec[Span['k], 'k], root: Span['k], source: Span['k], content: Span['k],
+    depth: usize) -> Result[Buffer!, Span['k]] {
+    if depth >= 64usize { return Result::Err.(lit(&cx, "template scopes nested too deeply")); }
     var out = Buffer!::new();
     let stack = ArenaVec::new(&cx);
     var active = true;
@@ -534,7 +579,8 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                             var i = 0usize;
                             while i < values.len(&cx) {
                                 bindings.push(&cx, Binding.{ name, value: values.at(&cx, i) });
-                                let part = render_scope(&cx, site, collections, page, bindings, source.slice(after, body_end), content, depth + 1usize);
+                                let part = render_scope(&cx, site, collections, page, bindings, includes, root,
+                                    source.slice(after, body_end), content, depth + 1usize);
                                 let popped = bindings.pop(&cx);
                                 match part {
                                     Result::Ok(html) => { out = out.push_buffer(html); },
@@ -544,6 +590,40 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                             }
                         }
                         after = tag_end;
+                    } else if starts(&cx, directive, "include ") {
+                        let operand = directive.slice(8usize, directive.len()).trim(&cx);
+                        let name = match literal(&cx, operand) {
+                            Option::Some(path) => path,
+                            Option::None => { out.destroy(); return Result::Err.(directive); },
+                        };
+                        if !include_name(&cx, name) {
+                            out.destroy(); return Result::Err.(include_error(&cx, name, "unsafe path"));
+                        }
+                        if active {
+                            var i = 0usize;
+                            while i < includes.len(&cx) {
+                                if includes.at(&cx, i).eq(&cx, name) {
+                                    out.destroy(); return Result::Err.(include_error(&cx, name, "cyclic include"));
+                                }
+                                i = i + 1usize;
+                            }
+                            let partial = match include_source(&cx, root, name) {
+                                Result::Ok(source) => source,
+                                Result::Err(message) => { out.destroy(); return Result::Err.(message); },
+                            };
+                            includes.push(&cx, name);
+                            let part = render_scope(&cx, site, collections, page, bindings, includes, root,
+                                partial, content, depth + 1usize);
+                            let popped = includes.pop(&cx);
+                            match part {
+                                Result::Ok(html) => { out = out.push_buffer(html); },
+                                Result::Err(message) => {
+                                    out.destroy();
+                                    return Result::Err.(Buffer!::new().push_static("include ")
+                                        .push_bytes(&cx, name).push_static(": ").push_bytes(&cx, message).save(&cx));
+                                },
+                            }
+                        }
                     } else if directive.is(&cx, "endfor") {
                         out.destroy(); return Result::Err.(lit(&cx, "endfor without for"));
                     } else { out.destroy(); return Result::Err.(directive); }
@@ -562,6 +642,7 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
 forall 'k.
 fn template(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
     collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k],
-    source: Span['k], content: Span['k]) -> Result[Buffer!, Span['k]] {
-    render_scope(&cx, site, collections, page, ArenaVec::new(&cx), source, content, 0usize)
+    root: Span['k], source: Span['k], content: Span['k]) -> Result[Buffer!, Span['k]] {
+    render_scope(&cx, site, collections, page, ArenaVec::new(&cx), ArenaVec::new(&cx),
+        root, source, content, 0usize)
 }

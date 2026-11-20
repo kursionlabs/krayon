@@ -87,6 +87,19 @@ substitutions fail the build. Markdown page bodies are rendered as Markdown;
 template expressions are evaluated in HTML pages and layouts. Raw HTML in
 Markdown is passed through deliberately.
 
+HTML templates can reuse fragments from the configured `layouts`
+directory:
+
+```html
+{% include "components/card.html" %}
+```
+
+Includes share the current page, site data, loop variables, and rendered
+`content`. Paths are relative to `layouts` and must end in
+`.html`. Missing files, paths that escape the layouts directory,
+and include cycles fail the build. An include in an inactive `if`
+branch is not loaded.
+
 Use `{{ page.url | url }}` or `{{ "/assets/site.css" | url }}`
 in templates to prefix a root relative local URL. The filter leaves external,
 protocol relative, relative, and fragment URLs alone. Markdown links with root

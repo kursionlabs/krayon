@@ -281,7 +281,7 @@ fn render_layout(&cx: Domain!['k], build: Build['k], page: Page['k], content: Sp
         Result::Ok(layout) => layout,
         Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
     };
-    let rendered = match template(&cx, build.site_data, build.collections, page, layout.body, content) {
+    let rendered = match template(&cx, build.site_data, build.collections, page, build.layouts, layout.body, content) {
         Result::Ok(html) => html.save(&cx),
         Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
     };
@@ -322,7 +322,7 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
             Result::Ok(html) => html.save(&cx),
             Result::Err(message) => return Result::Err.(report_detail(&cx, source.file, message)),
         } }
-        else { match template(&cx, build.site_data, build.collections, page, page.body, lit(&cx, "")) {
+        else { match template(&cx, build.site_data, build.collections, page, build.layouts, page.body, lit(&cx, "")) {
             Result::Ok(html) => html.save(&cx),
             Result::Err(message) => return Result::Err.(report_detail(&cx, source.file, message)),
         } };

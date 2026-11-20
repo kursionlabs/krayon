@@ -92,6 +92,80 @@ class BuildTests(unittest.TestCase):
         self.assertIn('<b>Alpha</b><b>Gamma</b>', html)
         self.assertIn('<h2>fn</h2><i>Alpha</i><i>Gamma</i><h2>type</h2><i>Beta</i>', html)
 
+    def test_includes_share_page_site_and_loop_scope(self):
+        components = self.site / "src/_includes/components"
+        components.mkdir()
+        (components / "row.html").write_text(
+            '<a href="{{ entry.url }}">{{ entry.title }}</a>'
+            '<small>{{ page.title }} · {{ site.title }}</small>')
+        (components / "list.html").write_text(
+            '{% for entry in collections.pages %}'
+            '{% if entry.title %}{% include "components/row.html" %}{% endif %}'
+            '{% endfor %}')
+        (components / "shell.html").write_text('<div>{{ content | safe }}</div>')
+        (self.site / "src/_includes/partial-layout.html").write_text(
+            '+++\nlayout = "base.html"\n+++\n'
+            '{% include "components/shell.html" %}')
+        (self.site / "src/includes.html").write_text(
+            '+++\nlayout = "partial-layout.html"\ntitle = "Included page"\n+++\n'
+            '<section>{% include "components/list.html" %}</section>')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/includes/index.html").read_text()
+        self.assertIn("<main><div><section>", html)
+        self.assertIn('<a href="/">Home</a>'
+                      '<small>Included page · Hello &amp; welcome</small>', html)
+        self.assertIn('<a href="/guide/intro/">First note</a>'
+                      '<small>Included page · Hello &amp; welcome</small>', html)
+
+    def test_include_cycle_and_missing_file_fail_without_replacing_output(self):
+        self.assertEqual(self.build().returncode, 0)
+        previous = (self.site / "dist/index.html").read_bytes()
+        (self.site / "src/_includes/a.html").write_text('{% include "b.html" %}')
+        (self.site / "src/_includes/b.html").write_text('{% include "a.html" %}')
+        (self.site / "src/cycle.html").write_text('{% include "a.html" %}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cyclic include", result.stderr)
+        self.assertEqual((self.site / "dist/index.html").read_bytes(), previous)
+
+        (self.site / "src/cycle.html").write_text('{% include "missing.html" %}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("include missing.html: cannot read file", result.stderr)
+
+    def test_include_rejects_escape_and_ignores_inactive_branch(self):
+        page = self.site / "src/partial.html"
+        page.write_text('{% include "../secret.html" %}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsafe path", result.stderr)
+
+        outside = Path(self.temp.name) / "outside.html"
+        outside.write_text("outside")
+        (self.site / "src/_includes/linked.html").symlink_to(outside)
+        page.write_text('{% include "linked.html" %}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("path escapes layouts directory", result.stderr)
+
+        page.write_text('{% if page.missing %}{% include "missing.html" %}'
+                        '{% else %}inactive{% endif %}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/partial/index.html").read_text(), "inactive")
+
+    def test_include_uses_configured_layouts_directory(self):
+        config = self.site / "krayon.toml"
+        config.write_text(config.read_text().replace('layouts = "_includes"',
+                                                    'layouts = "templates"'))
+        (self.site / "src/_includes").rename(self.site / "src/templates")
+        (self.site / "src/templates/part.html").write_text("Reusable")
+        (self.site / "src/partial.html").write_text('{% include "part.html" %}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/partial/index.html").read_text(), "Reusable")
+
     def test_explicit_heading_attributes(self):
         (self.site / "src/heading.md").write_text(
             "### Fetch & update {#api-fetch .item-heading .kind-fn}\n")
