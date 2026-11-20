@@ -62,6 +62,12 @@ struct PendingPagination {
 }
 
 forall 'k.
+struct PaginationPattern {
+    prefix: Span['k],
+    suffix: Span['k],
+}
+
+forall 'k.
 fn lit(&cx: Domain!['k], s: Slice[u8, 'static]) -> Span['k] { Span::from_static(&cx, s) }
 
 forall 'k.
@@ -493,10 +499,14 @@ fn generate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
 }
 
 forall 'k.
-fn pagination_url(&cx: Domain!['k], base: Span['k], number: usize) -> Span['k] {
+fn pagination_url(&cx: Domain!['k], base: Span['k], pattern: Option[PaginationPattern['k]], number: usize) -> Span['k] {
     if number == 1usize { return base; }
-    Buffer!::new().push_bytes(&cx, base).push_static("page/").push_usize(number)
-        .push_byte(b'/').save(&cx)
+    match pattern {
+        Option::Some(parts) => Buffer!::new().push_bytes(&cx, parts.prefix).push_usize(number)
+            .push_bytes(&cx, parts.suffix).save(&cx),
+        Option::None => Buffer!::new().push_bytes(&cx, base).push_static("page/").push_usize(number)
+            .push_byte(b'/').save(&cx),
+    }
 }
 
 forall 'k.
@@ -530,6 +540,34 @@ fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
     if !safe_path(&cx, base, true) || !base.ends_with(&cx, lit(&cx, "/")) {
         return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate permalink must be a safe directory URL ending in /")));
     }
+    let pattern = match template_page.data.get(&cx, lit(&cx, "page_permalink")) {
+        Option::None => Option::None,
+        Option::Some(value) => {
+            let text = match value.as_string() {
+                Option::Some(text) => text,
+                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "page_permalink must be a string"))),
+            };
+            let placeholder = lit(&cx, "{{ page.pagination.number }}");
+            let at = match text.find(&cx, placeholder, 0usize) {
+                Option::Some(at) => at,
+                Option::None => return Result::Err.(report_detail(&cx, file,
+                    lit(&cx, "page_permalink must contain {{ page.pagination.number }}"))),
+            };
+            let prefix = text.slice(0usize, at);
+            let suffix = text.slice(at + placeholder.len(), text.len());
+            if prefix.find(&cx, lit(&cx, "{{"), 0usize).is_some()
+                || prefix.find(&cx, lit(&cx, "}}"), 0usize).is_some()
+                || suffix.find(&cx, lit(&cx, "{{"), 0usize).is_some()
+                || suffix.find(&cx, lit(&cx, "}}"), 0usize).is_some() {
+                return Result::Err.(report_detail(&cx, file,
+                    lit(&cx, "page_permalink accepts only one page number placeholder")));
+            }
+            let parts = PaginationPattern.{ prefix, suffix };
+            let example = pagination_url(&cx, base, Option::Some.(parts), 2usize);
+            let destination = output_for_url(&cx, build.output, example, file, TemplateFormat::Html)?;
+            Option::Some.(parts)
+        },
+    };
     let value = if collection {
         match build.collections.get(&cx, lit(&cx, "pages")) {
             Option::Some(found) => found,
@@ -608,7 +646,7 @@ fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
     while number <= pages {
         let label = Buffer!::new().push_bytes(&cx, file).push_static(" [page ")
             .push_usize(number).push_static("]").save(&cx);
-        let url = pagination_url(&cx, base, number);
+        let url = pagination_url(&cx, base, pattern, number);
         let destination = output_for_url(&cx, build.output, url, label, TemplateFormat::Html)?;
         claim(&cx, build, destination, label)?;
         let items = ArenaVec::new(&cx);
@@ -625,11 +663,11 @@ fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
         let replaced = pagination.insert(&cx, lit(&cx, "total_items"), TomlValue::Integer.(count as i64));
         if number > 1usize {
             let replaced = pagination.insert(&cx, lit(&cx, "previous"),
-                TomlValue::String.(pagination_url(&cx, base, number - 1usize)));
+                TomlValue::String.(pagination_url(&cx, base, pattern, number - 1usize)));
         }
         if number < pages {
             let replaced = pagination.insert(&cx, lit(&cx, "next"),
-                TomlValue::String.(pagination_url(&cx, base, number + 1usize)));
+                TomlValue::String.(pagination_url(&cx, base, pattern, number + 1usize)));
         }
         let fields = generated_fields(&cx, template_page.data, ArenaMap::new(&cx));
         let replaced = fields.insert(&cx, lit(&cx, "pagination"), TomlValue::Table.(pagination));

@@ -470,6 +470,62 @@ class BuildTests(unittest.TestCase):
         self.assertFalse((self.site / "dist/blog/page/2/index.html").exists())
         self.assertFalse((self.site / "dist/blog/page/3/index.html").exists())
 
+    def test_custom_numbered_page_permalinks_and_validation(self):
+        data = self.site / "src/_data/site.toml"
+        data.write_text('posts = [{title = "One"}, {title = "Two"}, '
+                        '{title = "Three"}, {title = "Four"}, {title = "Five"}]\n'
+                        + data.read_text())
+        template = self.site / "src/posts.html"
+        template.write_text('+++\npaginate = "site.posts"\npage_size = 2\n'
+                            'permalink = "/blog/"\n'
+                            'page_permalink = "/blog/p{{ page.pagination.number }}.html"\n+++\n'
+                            '{{ page.permalink }}:'
+                            '{% if page.pagination.previous %}'
+                            '<a href="{{ page.pagination.previous }}">Previous</a>{% endif %}'
+                            '{% if page.pagination.next %}'
+                            '<a href="{{ page.pagination.next }}">Next</a>{% endif %}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        first = (self.site / "dist/blog/index.html").read_text()
+        second = (self.site / "dist/blog/p2.html").read_text()
+        third = (self.site / "dist/blog/p3.html").read_text()
+        self.assertIn('/blog/:<a href="/blog/p2.html">Next</a>', first)
+        self.assertIn('/blog/p2.html:<a href="/blog/">Previous</a>'
+                      '<a href="/blog/p3.html">Next</a>', second)
+        self.assertIn('/blog/p3.html:<a href="/blog/p2.html">Previous</a>', third)
+        self.assertFalse((self.site / "dist/blog/page/2/index.html").exists())
+
+        previous = (self.site / "dist/blog/p2.html").read_bytes()
+        template.write_text(template.read_text().replace(
+            '{{ page.pagination.number }}.html', '{{ page.url }}.html'))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('page_permalink must contain {{ page.pagination.number }}', result.stderr)
+        self.assertEqual((self.site / "dist/blog/p2.html").read_bytes(), previous)
+
+        template.write_text(template.read_text().replace(
+            '{{ page.url }}.html', '{{ page.pagination.number }}{{ page.pagination.number }}.html'))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('page_permalink accepts only one page number placeholder', result.stderr)
+
+        template.write_text(template.read_text().replace(
+            '/blog/p{{ page.pagination.number }}{{ page.pagination.number }}.html',
+            '/blog/../p{{ page.pagination.number }}.html'))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('unsafe URL', result.stderr)
+
+        template.write_text(template.read_text().replace(
+            '/blog/../p{{ page.pagination.number }}.html',
+            '/blog/p{{ page.pagination.number }}.html'))
+        (self.site / "src/collision.html").write_text(
+            '+++\npermalink = "/blog/p2.html"\n+++\nCollision')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('output collision', result.stderr)
+        self.assertEqual((self.site / "dist/blog/p2.html").read_bytes(), previous)
+
     def test_paginate_empty_array_drafts_and_invalid_configuration(self):
         data = self.site / "src/_data/site.toml"
         data.write_text('posts = []\n' + data.read_text())

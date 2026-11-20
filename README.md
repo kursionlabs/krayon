@@ -114,8 +114,13 @@ permalink = "/blog/"
 
 The first page uses `/blog/`; later pages use `/blog/page/2/`,
 `/blog/page/3/`, and so on. Without `permalink`, the template's normal URL is
-the base. The base must end in `/`. `page.pagination` also exposes the one-based
-`number`, `total_pages`, and `total_items`. An empty array produces one page
+the base. The base must end in `/`. Set
+`page_permalink = "/blog/p{{ page.pagination.number }}.html"` to choose the
+URLs for pages 2 and later. The pattern must contain that placeholder exactly
+once and resolve to safe HTML URLs; the generated pages pass the usual output
+collision checks. `previous` and `next` use the chosen URLs.
+`page.pagination` also exposes the one-based `number`, `total_pages`, and
+`total_items`. An empty array produces one page
 with no items. Pagination preserves array order and accepts any TOML array
 values. Paginated pages appear in `collections.pages`; the template does not
 produce an additional file. `paginate` and `generate` cannot be combined.
