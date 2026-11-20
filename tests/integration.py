@@ -69,6 +69,35 @@ class BuildTests(unittest.TestCase):
                         archive.index('href="/guide/intro/">First note'))
         self.assertIn("<span>Kursal</span><span>Krayon</span><span>Static</span>", archive)
 
+    def test_markdown_excerpt_marker_in_page_collection(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        src.mkdir()
+        (self.site / "krayon.toml").write_text('base_path = "/docs"\n')
+        (src / "post.md").write_text('+++\ntitle = "Post"\n+++\n'
+                                     'Intro **bold** and [other](/other/).\n\n'
+                                     '<!-- more -->\n\nRest of the post.\n')
+        (src / "other.md").write_text('# Other\n')
+        (src / "code.md").write_text('+++\ntitle = "Code"\n+++\n'
+                                     '```text\n<!-- more -->\n```\n')
+        (src / "archive.html").write_text(
+            '{% for entry in collections.pages %}'
+            '{% if entry.excerpt %}<section>{{ entry.excerpt | safe }}</section>'
+            '<pre>{{ entry.excerpt }}</pre>{% endif %}'
+            '{% endfor %}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        archive = (self.site / "dist/archive/index.html").read_text()
+        self.assertIn('<section><p>Intro <strong>bold</strong> and '
+                      '<a href="/docs/other/">other</a>.</p>\n</section>', archive)
+        self.assertIn('&lt;p&gt;Intro &lt;strong&gt;bold&lt;/strong&gt;', archive)
+        self.assertEqual(archive.count('<section>'), 1)
+        post = (self.site / "dist/post/index.html").read_text()
+        self.assertNotIn('<!-- more -->', post)
+        self.assertIn('<p>Rest of the post.</p>', post)
+        self.assertIn('&lt;!-- more --&gt;',
+                      (self.site / "dist/code/index.html").read_text())
+
     def test_page_queries_and_record_groups(self):
         (self.site / "src/child.md").write_text('+++' '\nparent = "/archive/"\ntitle = "Child"\n+++' '\n# Child\n')
         (self.site / "src/shared.md").write_text('+++' '\nparents = ["/", "/archive/"]\ntitle = "Shared"\n+++' '\n# Shared\n')

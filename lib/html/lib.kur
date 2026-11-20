@@ -204,6 +204,13 @@ fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
     expr: Span['k], content: Span['k]) -> Option[Span['k]] {
     let expr = expr.trim(&cx);
     if expr.is(&cx, "content") || expr.is(&cx, "content | safe") { return Option::Some.(content); }
+    if expr.ends_with(&cx, lit(&cx, " | safe")) {
+        let source = expr.slice(0usize, expr.len() - 7usize).trim(&cx);
+        return match lookup(&cx, site, collections, page, bindings, source) {
+            Option::Some(value) => scalar(&cx, value),
+            Option::None => Option::None,
+        };
+    }
     if expr.ends_with(&cx, lit(&cx, " | url")) {
         let source = expr.slice(0usize, expr.len() - 6usize).trim(&cx);
         let target = match literal(&cx, source) {
@@ -721,7 +728,7 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                                 Option::None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                                     first_line, first_column, expr)); },
                                 Option::Some(value) => {
-                                    if expr.is(&cx, "content | safe") { out = out.push_bytes(&cx, value); }
+                                    if expr.ends_with(&cx, lit(&cx, " | safe")) { out = out.push_bytes(&cx, value); }
                                     else {
                                         if xml && !valid_xml(&cx, value) {
                                             out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,

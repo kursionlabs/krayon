@@ -348,6 +348,10 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], base: Span['k],
                 out = out.push_static(">"); code = true;
             }
         } else if code { out = out.push_buffer(render_line(&cx, code_lang, line)).push_byte(b'\n'); }
+        else if depth == 0usize && line.is(&cx, "<!-- more -->") {
+            if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
+            out = close_lists(&cx, out, lists);
+        }
         else if line.is_empty() {
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
             out = close_lists(&cx, out, lists);

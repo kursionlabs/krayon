@@ -51,6 +51,7 @@ struct SourcePage {
     is_markdown: bool,
     format: TemplateFormat,
     destination: Span['k],
+    excerpt: Option[Span['k]],
 }
 
 forall 'k.
@@ -69,6 +70,27 @@ struct PaginationPattern {
 
 forall 'k.
 fn lit(&cx: Domain!['k], s: Slice[u8, 'static]) -> Span['k] { Span::from_static(&cx, s) }
+
+// A standalone marker outside a fenced block splits the rendered excerpt.
+forall 'k.
+fn markdown_excerpt_source(&cx: Domain!['k], source: Span['k]) -> Option[Span['k]] {
+    var pos = 0usize;
+    var code = false;
+    while pos < source.len() {
+        let start = pos;
+        let end = match source.find_byte(&cx, b'\n', pos) {
+            Option::Some(at) => at,
+            Option::None => source.len(),
+        };
+        let line = source.slice(pos, end).trim_end(&cx);
+        pos = if end < source.len() { end + 1usize } else { end };
+        if line.starts_with(&cx, lit(&cx, "```")) { code = !code; }
+        else if !code && line.is(&cx, "<!-- more -->") {
+            return Option::Some.(source.slice(0usize, start));
+        }
+    }
+    Option::None
+}
 
 forall 'k.
 fn byte(&cx: Domain!['k], s: Span['k], i: usize) -> u8 { s.byte_or_zero(&cx, i) }
@@ -491,7 +513,8 @@ fn generate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
             claim(&cx, build, destination, label)?;
             let replaced = fields.insert(&cx, lit(&cx, "permalink"), TomlValue::String.(url));
             let page = Page.{ data: fields, url, body: template_page.body, body_line: template_page.body_line };
-            build.pages.push(&cx, SourcePage.{ file: label, page, is_markdown: false, format, destination });
+            build.pages.push(&cx, SourcePage.{ file: label, page, is_markdown: false, format,
+                destination, excerpt: Option::None });
         }
         i = i + 1usize;
     }
@@ -685,7 +708,7 @@ fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
         let replaced = fields.insert(&cx, lit(&cx, "permalink"), TomlValue::String.(url));
         let page = Page.{ data: fields, url, body: template_page.body, body_line: template_page.body_line };
         build.pages.push(&cx, SourcePage.{ file: label, page, is_markdown: false,
-            format: TemplateFormat::Html, destination });
+            format: TemplateFormat::Html, destination, excerpt: Option::None });
         number = number + 1usize;
     }
     Result::Ok.(())
@@ -773,7 +796,16 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Resul
     let page = Page.{ data: parsed.data, url, body: parsed.body, body_line: parsed.body_line };
     let destination = output_for_url(&cx, build.output, url, file, format)?;
     claim(&cx, build, destination, file)?;
-    build.pages.push(&cx, SourcePage.{ file, page, is_markdown, format, destination });
+    let excerpt = if is_markdown {
+        match markdown_excerpt_source(&cx, page.body) {
+            Option::None => Option::None,
+            Option::Some(text) => match markdown(&cx, text, build.base_path) {
+                Result::Ok(html) => Option::Some.(html.save(&cx)),
+                Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
+            },
+        }
+    } else { Option::None };
+    build.pages.push(&cx, SourcePage.{ file, page, is_markdown, format, destination, excerpt });
     Result::Ok.(())
 }
 
@@ -1025,7 +1057,8 @@ fn check_output(&cx: Domain!['k], source: Span['k], output: Span['k]) -> Result[
 }
 
 forall 'k.
-fn collection_item(&cx: Domain!['k], page: Page['k]) -> TomlValue['k] {
+fn collection_item(&cx: Domain!['k], source: SourcePage['k]) -> TomlValue['k] {
+    let page = source.page;
     let fields = ArenaMap::new(&cx);
     var i = 0usize;
     while i < page.data.positions(&cx) {
@@ -1039,6 +1072,10 @@ fn collection_item(&cx: Domain!['k], page: Page['k]) -> TomlValue['k] {
         i = i + 1usize;
     }
     let replaced = fields.insert(&cx, lit(&cx, "url"), TomlValue::String.(page.url));
+    match source.excerpt {
+        Option::Some(html) => { let replaced = fields.insert(&cx, lit(&cx, "excerpt"), TomlValue::String.(html)); },
+        Option::None => (),
+    }
     TomlValue::Table.(fields)
 }
 
@@ -1050,7 +1087,7 @@ fn publish_pages(&cx: Domain!['k], build: Build['k]) -> () {
     while i < build.pages.len(&cx) {
         let entry = build.pages.at(&cx, i);
         match entry.format {
-            TemplateFormat::Html => all.push(&cx, collection_item(&cx, entry.page)),
+            TemplateFormat::Html => all.push(&cx, collection_item(&cx, entry)),
             _ => (),
         }
         i = i + 1usize;

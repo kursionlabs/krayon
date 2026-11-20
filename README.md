@@ -193,7 +193,9 @@ and so on; `page.url` is the resolved URL. Values from the site data TOML file
 are available as `site.title`, `site.links.repository`, and other dotted keys.
 
 Templates use `{{ page.title }}` for escaped output and `{{ content | safe }}`
-for rendered page or layout HTML. They support `or` with a quoted fallback,
+for rendered page or layout HTML. The `| safe` filter writes a scalar value
+unchanged, including rendered Markdown excerpts. Templates support `or` with
+a quoted fallback,
 `{% if ... %}`, `{% else %}`, and `{% endif %}`. Conditions can test a value
 or compare it to a quoted string with `==`. An HTML page can list all pages,
 ordered by URL, with `{% for entry in collections.pages %}` and
@@ -202,6 +204,13 @@ Loops also work over arrays in site data and can be nested. Unknown
 substitutions fail the build. Markdown page bodies are rendered as Markdown;
 template expressions are evaluated in HTML pages and layouts. Raw HTML in
 Markdown is passed through deliberately.
+
+A Markdown page can put `<!-- more -->` on its own line outside a fenced code
+block to mark an archive excerpt. `collections.pages` exposes the Markdown
+before that line as rendered HTML in `entry.excerpt`. Use
+`{{ entry.excerpt | safe }}` in an HTML archive template; an ordinary
+`{{ entry.excerpt }}` substitution escapes the HTML. Pages without a marker
+have no generated excerpt. The marker is omitted from the full page.
 
 Templates can reuse same-format fragments from the configured `layouts`
 directory:
