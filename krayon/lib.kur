@@ -2,7 +2,7 @@ use std::arena::Domain!;
 use std::buffer::Buffer!;
 use std::io::eprint_buffer;
 use std::option::{Option, Result};
-use std::process::Args;
+use std::process::{Args, hash_seed};
 use std::raw::Span;
 use site::build;
 
@@ -11,7 +11,7 @@ fn main(args: Args) -> i32 {
         eprint_buffer(Buffer!::new().push_static("usage: krayon build [SITE_ROOT]\n"));
         return 2i32;
     }
-    let exists 'k. cx = Domain!::new();
+    let exists 'k. cx = Domain!::new(hash_seed());
     var cx = cx;
     let command = match args.bytes(1usize) {
         Option::Some(s) => Span::from_static(&cx, s),
