@@ -8,7 +8,7 @@ use std::raw::Span;
 use std::slice::Slice;
 use toml::parse;
 use toml::value::TomlValue;
-use html::{Page, parse_page, template};
+use html::{Page, TemplateFormat, parse_page, template};
 use markdown::markdown;
 use links::{Document, Stylesheet, validate};
 
@@ -46,6 +46,7 @@ struct SourcePage {
     file: Span['k],
     page: Page['k],
     is_markdown: bool,
+    format: TemplateFormat,
     destination: Span['k],
 }
 
@@ -255,18 +256,47 @@ fn source_url(&cx: Domain!['k], relative: Span['k], ext_len: usize) -> Span['k] 
 }
 
 forall 'k.
-fn output_for_url(&cx: Domain!['k], output: Span['k], url: Span['k], source: Span['k]) -> Result[Span['k], Buffer!] {
+fn page_format(&cx: Domain!['k], relative: Span['k]) -> TemplateFormat {
+    if relative.ends_with(&cx, lit(&cx, ".xml")) { TemplateFormat::Xml }
+    else if relative.ends_with(&cx, lit(&cx, ".json")) { TemplateFormat::Json }
+    else if relative.ends_with(&cx, lit(&cx, ".txt")) { TemplateFormat::Text }
+    else { TemplateFormat::Html }
+}
+
+forall 'k.
+fn format_suffix(&cx: Domain!['k], format: TemplateFormat) -> Span['k] {
+    lit(&cx, match format {
+        TemplateFormat::Html => ".html",
+        TemplateFormat::Xml => ".xml",
+        TemplateFormat::Json => ".json",
+        TemplateFormat::Text => ".txt",
+    })
+}
+
+forall 'k.
+fn output_for_url(&cx: Domain!['k], output: Span['k], url: Span['k], source: Span['k],
+    format: TemplateFormat) -> Result[Span['k], Buffer!] {
     if !safe_path(&cx, url, true) { return Result::Err.(report_detail(&cx, source,
         Buffer!::new().push_static("unsafe URL: ").push_bytes(&cx, url).save(&cx))); }
     let relative = url.slice(1usize, url.len());
-    if url.ends_with(&cx, lit(&cx, "/")) {
-        return Result::Ok.(join(&cx, output, join(&cx, relative, lit(&cx, "index.html"))));
+    match format {
+        TemplateFormat::Html => if url.ends_with(&cx, lit(&cx, "/")) {
+            return Result::Ok.(join(&cx, output, join(&cx, relative, lit(&cx, "index.html"))));
+        },
+        _ => (),
     }
-    if url.ends_with(&cx, lit(&cx, ".html")) {
+    if url.ends_with(&cx, format_suffix(&cx, format)) {
         return Result::Ok.(join(&cx, output, relative));
     }
+    let expected = match format {
+        TemplateFormat::Html => "/ or .html",
+        TemplateFormat::Xml => ".xml",
+        TemplateFormat::Json => ".json",
+        TemplateFormat::Text => ".txt",
+    };
     Result::Err.(report_detail(&cx, source,
-        Buffer!::new().push_static("URL must end in / or .html: ").push_bytes(&cx, url).save(&cx)))
+        Buffer!::new().push_static("URL must end in ").push_static(expected)
+            .push_static(": ").push_bytes(&cx, url).save(&cx)))
 }
 
 forall 'k.
@@ -393,7 +423,7 @@ fn generated_fields(&cx: Domain!['k], defaults: ArenaMap[Span['k], TomlValue['k]
 
 forall 'k.
 fn generate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_page: Page['k],
-    source: Span['k]) -> Result[(), Buffer!] {
+    source: Span['k], format: TemplateFormat) -> Result[(), Buffer!] {
     if !source.starts_with(&cx, lit(&cx, "site.")) || source.len() <= 5usize {
         return Result::Err.(report_detail(&cx, file, lit(&cx, "generate must name a site data array, such as site.products")));
     }
@@ -440,11 +470,11 @@ fn generate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
                     Option::None => return Result::Err.(report_detail(&cx, label, lit(&cx, "generate item needs a url or template permalink"))),
                 },
             };
-            let destination = output_for_url(&cx, build.output, url, label)?;
+            let destination = output_for_url(&cx, build.output, url, label, format)?;
             claim(&cx, build, destination, label)?;
             let replaced = fields.insert(&cx, lit(&cx, "permalink"), TomlValue::String.(url));
             let page = Page.{ data: fields, url, body: template_page.body, body_line: template_page.body_line };
-            build.pages.push(&cx, SourcePage.{ file: label, page, is_markdown: false, destination });
+            build.pages.push(&cx, SourcePage.{ file: label, page, is_markdown: false, format, destination });
         }
         i = i + 1usize;
     }
@@ -452,8 +482,12 @@ fn generate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
 }
 
 forall 'k.
-fn render_layout(&cx: Domain!['k], build: Build['k], page: Page['k], content: Span['k], name: Span['k], depth: usize) -> Result[Span['k], Buffer!] {
+fn render_layout(&cx: Domain!['k], build: Build['k], page: Page['k], content: Span['k], name: Span['k],
+    format: TemplateFormat, depth: usize) -> Result[Span['k], Buffer!] {
     if depth >= 32usize { return Result::Err.(report(&cx, "layout chain too deep or cyclic", name)); }
+    if !name.ends_with(&cx, format_suffix(&cx, format)) {
+        return Result::Err.(report(&cx, "layout has the wrong suffix", name));
+    }
     let file = join(&cx, build.layouts, name);
     let source = load(&cx, file)?;
     let layout = match parse_page(&cx, source, page.url) {
@@ -461,13 +495,13 @@ fn render_layout(&cx: Domain!['k], build: Build['k], page: Page['k], content: Sp
         Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
     };
     let rendered = match template(&cx, build.site_data, build.collections, page, build.layouts,
-        file, layout.body, content, layout.body_line) {
+        file, layout.body, content, layout.body_line, format) {
         Result::Ok(html) => html.save(&cx),
         Result::Err(message) => return Result::Err.(report_template(&cx, message)),
     };
     match layout_name(&cx, layout.data)? {
         Option::None => Result::Ok.(rendered),
-        Option::Some(outer) => render_layout(&cx, build, page, rendered, outer, depth + 1usize),
+        Option::Some(outer) => render_layout(&cx, build, page, rendered, outer, format, depth + 1usize),
     }
 }
 
@@ -476,7 +510,11 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Resul
     let file = join(&cx, build.source, relative);
     let source = load(&cx, file)?;
     let is_markdown = relative.ends_with(&cx, lit(&cx, ".md"));
-    let url = source_url(&cx, relative, if is_markdown { 3usize } else { 5usize });
+    let format = page_format(&cx, relative);
+    let url = match format {
+        TemplateFormat::Html => source_url(&cx, relative, if is_markdown { 3usize } else { 5usize }),
+        _ => Buffer!::new().push_static("/").push_bytes(&cx, relative).save(&cx),
+    };
     let parsed = match parse_page(&cx, source, url) {
         Result::Ok(page) => page,
         Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
@@ -489,7 +527,7 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Resul
                 Option::Some(text) => text,
                 Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "generate must be a string"))),
             };
-            return generate_pages(&cx, build, file, parsed, source);
+            return generate_pages(&cx, build, file, parsed, source, format);
         },
     }
     let is_draft = draft(&cx, parsed.data, file)?;
@@ -502,9 +540,9 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Resul
         },
     };
     let page = Page.{ data: parsed.data, url, body: parsed.body, body_line: parsed.body_line };
-    let destination = output_for_url(&cx, build.output, url, file)?;
+    let destination = output_for_url(&cx, build.output, url, file, format)?;
     claim(&cx, build, destination, file)?;
-    build.pages.push(&cx, SourcePage.{ file, page, is_markdown, destination });
+    build.pages.push(&cx, SourcePage.{ file, page, is_markdown, format, destination });
     Result::Ok.(())
 }
 
@@ -516,13 +554,13 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
             Result::Err(message) => return Result::Err.(report_detail(&cx, source.file, message)),
         } }
         else { match template(&cx, build.site_data, build.collections, page, build.layouts,
-            source.file, page.body, lit(&cx, ""), page.body_line) {
+            source.file, page.body, lit(&cx, ""), page.body_line, source.format) {
             Result::Ok(html) => html.save(&cx),
             Result::Err(message) => return Result::Err.(report_template(&cx, message)),
         } };
     let rendered = match layout_name(&cx, page.data)? {
         Option::None => body,
-        Option::Some(name) => render_layout(&cx, build, page, body, name, 0usize)?,
+        Option::Some(name) => render_layout(&cx, build, page, body, name, source.format, 0usize)?,
     };
     save(&cx, source.destination, Buffer!::new().push_bytes(&cx, rendered))
 }
@@ -552,7 +590,9 @@ fn scan_pages(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usi
                             Result::Ok(nothing) => (),
                             Result::Err(message) => { directory.close(); return Result::Err.(message); },
                         }
-                    } else if child.ends_with(&cx, lit(&cx, ".md")) || child.ends_with(&cx, lit(&cx, ".html")) {
+                    } else if child.ends_with(&cx, lit(&cx, ".md")) || child.ends_with(&cx, lit(&cx, ".html"))
+                        || child.ends_with(&cx, lit(&cx, ".xml")) || child.ends_with(&cx, lit(&cx, ".json"))
+                        || child.ends_with(&cx, lit(&cx, ".txt")) {
                         match collect_page(&cx, build, child) {
                             Result::Ok(nothing) => (),
                             Result::Err(message) => { directory.close(); return Result::Err.(message); },
@@ -757,7 +797,11 @@ fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
     let all = ArenaVec::new(&cx);
     var i = 0usize;
     while i < build.pages.len(&cx) {
-        all.push(&cx, collection_item(&cx, build.pages.at(&cx, i).page));
+        let entry = build.pages.at(&cx, i);
+        match entry.format {
+            TemplateFormat::Html => all.push(&cx, collection_item(&cx, entry.page)),
+            _ => (),
+        }
         i = i + 1usize;
     }
     let replaced = build.collections.insert(&cx, lit(&cx, "pages"), TomlValue::Array.(all));
@@ -772,10 +816,13 @@ fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
     i = 0usize;
     while i < build.pages.len(&cx) {
         let source = build.pages.at(&cx, i);
-        documents.push(&cx, Document.{
-            source: source.file, output: source.destination, url: source.page.url,
-            html: load(&cx, source.destination)?,
-        });
+        match source.format {
+            TemplateFormat::Html => documents.push(&cx, Document.{
+                source: source.file, output: source.destination, url: source.page.url,
+                html: load(&cx, source.destination)?,
+            }),
+            _ => (),
+        }
         i = i + 1usize;
     }
     validate(&cx, documents, build.stylesheets, build.written, build.output, build.base_path)?;

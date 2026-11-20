@@ -18,6 +18,13 @@ exposed struct Page {
     body_line: usize,
 }
 
+exposed enum TemplateFormat {
+    Html,
+    Xml,
+    Json,
+    Text,
+}
+
 struct Frame {
     parent: bool,
     matched: bool,
@@ -257,7 +264,7 @@ fn truth(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
 }
 
 forall 'k.
-fn escape(&cx: Domain!['k], out: Buffer!, text: Span['k]) -> Buffer! {
+fn escape_markup(&cx: Domain!['k], out: Buffer!, text: Span['k]) -> Buffer! {
     var out = out;
     var i = 0usize;
     while i < text.len() {
@@ -271,6 +278,65 @@ fn escape(&cx: Domain!['k], out: Buffer!, text: Span['k]) -> Buffer! {
         i = i + 1usize;
     }
     out
+}
+
+fn hex_digit(n: u8) -> u8 { if n < 10u8 { b'0' + n } else { b'a' + n - 10u8 } }
+
+forall 'k.
+fn escape_json(&cx: Domain!['k], out: Buffer!, text: Span['k]) -> Buffer! {
+    var out = out;
+    var i = 0usize;
+    while i < text.len() {
+        let c = byte(&cx, text, i);
+        out = if c == b'"' { out.push_static("\\\"") }
+            else if c == b'\\' { out.push_static("\\\\") }
+            else if c == b'\n' { out.push_static("\\n") }
+            else if c == b'\r' { out.push_static("\\r") }
+            else if c == b'\t' { out.push_static("\\t") }
+            else if c == 8u8 { out.push_static("\\b") }
+            else if c == 12u8 { out.push_static("\\f") }
+            else if c < 32u8 { out.push_static("\\u00").push_byte(hex_digit(c / 16u8)).push_byte(hex_digit(c % 16u8)) }
+            else { out.push_byte(c) };
+        i = i + 1usize;
+    }
+    out
+}
+
+forall 'k.
+fn valid_xml(&cx: Domain!['k], text: Span['k]) -> bool {
+    var i = 0usize;
+    while i < text.len() {
+        let c = byte(&cx, text, i);
+        if !valid_xml_byte(c) { return false; }
+        i = i + 1usize;
+    }
+    true
+}
+
+fn valid_xml_byte(c: u8) -> bool { c >= 32u8 || c == b'\t' || c == b'\n' || c == b'\r' }
+
+forall 'k.
+fn escape_value(&cx: Domain!['k], out: Buffer!, value: Span['k], format: TemplateFormat) -> Buffer! {
+    match format {
+        TemplateFormat::Html => escape_markup(&cx, out, value),
+        TemplateFormat::Xml => escape_markup(&cx, out, value),
+        TemplateFormat::Json => escape_json(&cx, out, value),
+        TemplateFormat::Text => out.push_bytes(&cx, value),
+    }
+}
+
+fn xml_format(format: TemplateFormat) -> bool {
+    match format { TemplateFormat::Xml => true, _ => false }
+}
+
+forall 'k.
+fn format_extension(&cx: Domain!['k], format: TemplateFormat) -> Span['k] {
+    lit(&cx, match format {
+        TemplateFormat::Html => ".html",
+        TemplateFormat::Xml => ".xml",
+        TemplateFormat::Json => ".json",
+        TemplateFormat::Text => ".txt",
+    })
 }
 
 forall 'k.
@@ -291,7 +357,7 @@ fn valid_name(&cx: Domain!['k], name: Span['k]) -> bool {
 
 forall 'k.
 fn include_name(&cx: Domain!['k], name: Span['k]) -> bool {
-    if name.is_empty() || !name.ends_with(&cx, lit(&cx, ".html")) || byte(&cx, name, 0usize) == b'/' { return false; }
+    if name.is_empty() || byte(&cx, name, 0usize) == b'/' { return false; }
     var start = 0usize;
     var i = 0usize;
     while i <= name.len() {
@@ -538,10 +604,11 @@ forall 'k.
 fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
     collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k], bindings: ArenaVec[Binding['k], 'k],
     includes: ArenaVec[Span['k], 'k], root: Span['k], file: Span['k], source: Span['k], content: Span['k],
-    first_line: usize, first_column: usize, depth: usize) -> Result[Buffer!, Span['k]] {
+    format: TemplateFormat, first_line: usize, first_column: usize, depth: usize) -> Result[Buffer!, Span['k]] {
     if depth >= 64usize { return Result::Err.(template_error(&cx, file, source, 0usize,
         first_line, first_column, lit(&cx, "template scopes nested too deeply"))); }
     var out = Buffer!::new();
+    let xml = xml_format(format);
     let stack = ArenaVec::new(&cx);
     var active = true;
     var pos = 0usize;
@@ -558,7 +625,13 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                                 first_line, first_column, expr)); },
                             Option::Some(value) => {
                                 if expr.is(&cx, "content | safe") { out = out.push_bytes(&cx, value); }
-                                else { out = escape(&cx, out, value); }
+                                else {
+                                    if xml && !valid_xml(&cx, value) {
+                                        out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                                            first_line, first_column, lit(&cx, "XML value contains an invalid control character")));
+                                    }
+                                    out = escape_value(&cx, out, value, format);
+                                }
                             },
                         }
                     }
@@ -618,10 +691,16 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                             let (line, column) = position(&cx, source, after, first_line, first_column);
                             var i = 0usize;
                             while i < values.len(&cx) {
+                                let loop_data = ArenaMap::new(&cx);
+                                let first = loop_data.insert(&cx, lit(&cx, "first"), TomlValue::Boolean.(i == 0usize));
+                                let last = loop_data.insert(&cx, lit(&cx, "last"), TomlValue::Boolean.(i + 1usize == values.len(&cx)));
+                                let index = loop_data.insert(&cx, lit(&cx, "index"), TomlValue::Integer.((i + 1usize) as i64));
+                                bindings.push(&cx, Binding.{ name: lit(&cx, "loop"), value: TomlValue::Table.(loop_data) });
                                 bindings.push(&cx, Binding.{ name, value: values.at(&cx, i) });
                                 let part = render_scope(&cx, site, collections, page, bindings, includes, root, file,
-                                    source.slice(after, body_end), content, line, column, depth + 1usize);
+                                    source.slice(after, body_end), content, format, line, column, depth + 1usize);
                                 let popped = bindings.pop(&cx);
+                                let popped_loop = bindings.pop(&cx);
                                 match part {
                                     Result::Ok(html) => { out = out.push_buffer(html); },
                                     Result::Err(message) => { out.destroy(); return Result::Err.(message); },
@@ -637,6 +716,10 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                             Option::None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                                 first_line, first_column, directive)); },
                         };
+                        if !name.ends_with(&cx, format_extension(&cx, format)) {
+                            out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                                first_line, first_column, include_error(&cx, name, "wrong suffix for template format")));
+                        }
                         if !include_name(&cx, name) {
                             out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                                 first_line, first_column, include_error(&cx, name, "unsafe path")));
@@ -658,7 +741,7 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                             includes.push(&cx, name);
                             let child_file = Buffer!::new().push_bytes(&cx, root).push_byte(b'/').push_bytes(&cx, name).save(&cx);
                             let part = render_scope(&cx, site, collections, page, bindings, includes, root, child_file,
-                                partial, content, 1usize, 1usize, depth + 1usize);
+                                partial, content, format, 1usize, 1usize, depth + 1usize);
                             let popped = includes.pop(&cx);
                             match part {
                                 Result::Ok(html) => { out = out.push_buffer(html); },
@@ -678,7 +761,13 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                 },
             }
         } else {
-            if active { out = out.push_byte(byte(&cx, source, pos)); }
+            if active {
+                if xml && !valid_xml_byte(byte(&cx, source, pos)) {
+                    out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                        first_line, first_column, lit(&cx, "XML template contains an invalid control character")));
+                }
+                out = out.push_byte(byte(&cx, source, pos));
+            }
             pos = pos + 1usize;
         }
     }
@@ -693,7 +782,8 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
 forall 'k.
 fn template(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
     collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k],
-    root: Span['k], file: Span['k], source: Span['k], content: Span['k], first_line: usize) -> Result[Buffer!, Span['k]] {
+    root: Span['k], file: Span['k], source: Span['k], content: Span['k], first_line: usize,
+    format: TemplateFormat) -> Result[Buffer!, Span['k]] {
     render_scope(&cx, site, collections, page, ArenaVec::new(&cx), ArenaVec::new(&cx),
-        root, file, source, content, first_line, 1usize, 0usize)
+        root, file, source, content, format, first_line, 1usize, 0usize)
 }

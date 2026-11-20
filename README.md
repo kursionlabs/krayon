@@ -1,7 +1,8 @@
 # Krayon
 
-Krayon builds static websites from Markdown, HTML templates, site data, and
-assets. It is written in Kursal and produces files for any static host.
+Krayon builds static websites from Markdown, HTML, XML, JSON, and text
+templates, site data, and assets. It is written in Kursal and produces files
+for any static host.
 
 ## Build Krayon
 
@@ -39,11 +40,14 @@ generated output there. The default empty string serves the site at `/`.
 Krayon keeps page URLs and output paths unprefixed, and exposes the setting as
 `site.base_path`.
 
-A site can contain Markdown (`.md`) and HTML (`.html`) pages anywhere under
-`input`. Krayon copies `assets` recursively and omits layouts and data from
-page discovery. `index.md` becomes `/index.html`, `guide/setup.md` becomes
+A site can contain Markdown (`.md`), HTML (`.html`), XML (`.xml`), JSON
+(`.json`), and text (`.txt`) templates anywhere under `input`. Krayon copies
+`assets` recursively and omits layouts and data from page discovery.
+`index.md` becomes `/index.html`, `guide/setup.md` becomes
 `/guide/setup/index.html`, and `guide/index.md` becomes
-`/guide/index.html`. A page can set a `permalink` ending in `/` or `.html`.
+`/guide/index.html`. HTML pages can set a `permalink` ending in `/` or
+`.html`; XML, JSON, and text outputs keep their source path by default and
+require a matching `.xml`, `.json`, or `.txt` suffix when given a permalink.
 Krayon fails on output collisions, unsafe paths, missing layouts, and template
 errors. It renders into a staging directory and replaces the configured output
 only after a successful build. A failed render leaves the previous output
@@ -56,7 +60,7 @@ drafts in a preview build. This replaces the configured output with the preview;
 run a normal build again to restore the published output. `draft` must be a
 boolean.
 
-An HTML template can generate a page for each table in a site data array:
+An output template can generate a file for each table in a site data array:
 
 ```html
 +++
@@ -79,16 +83,33 @@ title = "Widget"
 The template's `permalink` pattern substitutes `{{ item.<field> }}` from each
 record, including nested fields. Substituted fields must be strings or integers.
 A record can set an explicit string `url` to override the pattern. Each resolved
-URL must end in `/` or `.html` and pass the usual path and collision checks.
+URL must have the suffix for the template format (or end in `/` for HTML) and
+pass the usual path and collision checks.
 Record fields become `page.*` fields and override the template's front matter
 defaults; `page.permalink` is the resolved URL. A template can omit `permalink`
 when every record supplies `url`.
-The template itself produces no page. Generated pages appear in
-`collections.pages`, support layouts and includes, and pass the same output
-collision and link checks as ordinary pages. `generate` accepts dotted site
-data paths such as `site.catalog.products`; it is available only in HTML
-templates. A template or record can set `draft = true`; a record's value
-overrides the template default.
+The template itself produces no file. Generated HTML pages appear in
+`collections.pages`. Generated files support layouts and includes and pass
+the same output collision checks as ordinary files. `generate` accepts dotted
+site data paths such as `site.catalog.products`; it is available in HTML,
+XML, JSON, and text templates. A template or record can set `draft = true`;
+a record's value overrides the template default.
+
+XML, JSON, and text templates use the same page fields, site data, collections,
+loops, layouts, and includes as HTML. Layouts and includes must use the same
+extension as their template. HTML and XML substitutions escape markup;
+JSON substitutions escape JSON string contents and must be placed inside JSON
+quotes; text substitutions are copied unchanged. Krayon does not parse the
+completed XML or JSON document. For JSON arrays, loops expose
+`loop.first`, `loop.last`, and the one-based `loop.index`:
+
+```text
+{"pages":[{% for entry in collections.pages %}{% if loop.first %}{% else %},{% endif %}"{{ entry.url }}"{% endfor %}]}
+```
+
+`collections.pages` contains rendered HTML and Markdown pages; output files
+such as `sitemap.xml` are excluded. HTML link checks accept links to these
+files, while references inside XML, JSON, and text files are not scanned.
 
 Before installing the output, Krayon checks local `href`, `src`, and `srcset`
 values in generated HTML, plus CSS `url()` references in inline styles and
@@ -129,7 +150,7 @@ substitutions fail the build. Markdown page bodies are rendered as Markdown;
 template expressions are evaluated in HTML pages and layouts. Raw HTML in
 Markdown is passed through deliberately.
 
-HTML templates can reuse fragments from the configured `layouts`
+Templates can reuse same-format fragments from the configured `layouts`
 directory:
 
 ```html

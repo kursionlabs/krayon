@@ -1,11 +1,13 @@
 """End-to-end checks for a site built with Krayon's public CLI."""
 
 from pathlib import Path
+import json
 import os
 import shutil
 import subprocess
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -269,6 +271,102 @@ class BuildTests(unittest.TestCase):
         result = self.build()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.site / "dist/products/42/index.html").read_text(), "Numbered")
+
+    def test_xml_json_and_text_templates(self):
+        value = 'A "quote" \\ path\nNext\t\x01'
+        data = self.site / "src/_data/site.toml"
+        data.write_text(f'json_title = {json.dumps(value)}\n' + data.read_text())
+        (self.site / "src/_includes/url.xml").write_text(
+            '<url><loc>{{ entry.url | url }}</loc></url>')
+        (self.site / "src/_includes/xml-shell.xml").write_text(
+            '<?xml version="1.0"?><root>{{ content | safe }}</root>')
+        (self.site / "src/sitemap.xml").write_text(
+            '+++\nlayout = "xml-shell.xml"\n+++\n'
+            '<name>{{ site.title }}</name>'
+            '{% for entry in collections.pages %}{% include "url.xml" %}{% endfor %}')
+        (self.site / "src/_includes/json-shell.json").write_text(
+            '{"title":"{{ site.json_title }}","pages":[{{ content | safe }}]}')
+        (self.site / "src/_includes/page.json").write_text(
+            '{"url":"{{ entry.url }}","index":"{{ loop.index }}",'
+            '"last":{{ loop.last }}}')
+        (self.site / "src/manifest.json").write_text(
+            '+++\nlayout = "json-shell.json"\n+++\n'
+            '{% for entry in collections.pages %}'
+            '{% if loop.first %}{% else %},{% endif %}'
+            '{% include "page.json" %}'
+            '{% endfor %}')
+        (self.site / "src/_includes/line.txt").write_text('Site: {{ site.title }}\n')
+        (self.site / "src/robots.txt").write_text('{% include "line.txt" %}')
+        (self.site / "src/references.html").write_text(
+            '<a href="/sitemap.xml">Map</a><a href="/manifest.json">Data</a>'
+            '<a href="/robots.txt">Robots</a>')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        root = ET.fromstring((self.site / "dist/sitemap.xml").read_text())
+        self.assertEqual(root.find("name").text, "Hello & welcome")
+        self.assertEqual(len(root.findall("url")), 4)
+        manifest = json.loads((self.site / "dist/manifest.json").read_text())
+        self.assertEqual(manifest["title"], value)
+        self.assertEqual([p["index"] for p in manifest["pages"]], ["1", "2", "3", "4"])
+        self.assertEqual([p["last"] for p in manifest["pages"]],
+                         [False, False, False, True])
+        self.assertEqual({p["url"] for p in manifest["pages"]},
+                         {"/", "/archive/", "/guide/intro/", "/references/"})
+        self.assertEqual((self.site / "dist/robots.txt").read_text(),
+                         "Site: Hello & welcome\n")
+
+        previous = (self.site / "dist/sitemap.xml").read_bytes()
+        sitemap = self.site / "src/sitemap.xml"
+        sitemap.write_text(sitemap.read_text().replace("{{ site.title }}",
+                                                      "{{ site.json_title }}"))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("XML value contains an invalid control character", result.stderr)
+        self.assertEqual((self.site / "dist/sitemap.xml").read_bytes(), previous)
+
+    def test_generated_json_templates_and_drafts(self):
+        data = self.site / "src/_data/site.toml"
+        data.write_text('products = [{slug = "alpha", title = "A & B"}, '
+                        '{slug = "beta", title = "B", draft = true}]\n' + data.read_text())
+        template = self.site / "src/product.json"
+        template.write_text('+++\ngenerate = "site.products"\n'
+                            'permalink = "/data/{{ item.slug }}.json"\n+++\n'
+                            '{"title":"{{ page.title }}"}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads((self.site / "dist/data/alpha.json").read_text()),
+                         {"title": "A & B"})
+        self.assertFalse((self.site / "dist/data/beta.json").exists())
+        self.assertFalse((self.site / "dist/product.json").exists())
+
+        result = self.build("--drafts")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads((self.site / "dist/data/beta.json").read_text()),
+                         {"title": "B"})
+
+    def test_non_html_output_suffix_and_collision_checks(self):
+        source = self.site / "src/feed.xml"
+        source.write_text('+++\npermalink = "/feed.json"\n+++\n<feed/>')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("URL must end in .xml", result.stderr)
+
+        source.write_text('+++\nlayout = "base.html"\n+++\n<feed/>')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("layout has the wrong suffix", result.stderr)
+
+        source.write_text('{% include "part.html" %}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("wrong suffix for template format", result.stderr)
+
+        (self.site / "src/assets/feed.xml").write_text('<asset/>')
+        source.write_text('+++\npermalink = "/assets/feed.xml"\n+++\n<feed/>')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("output collision", result.stderr)
 
     def test_drafts_are_excluded_until_preview_build(self):
         draft = self.site / "src/draft.md"
