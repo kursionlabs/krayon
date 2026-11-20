@@ -450,6 +450,50 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(f"{sheet}: broken local link: /assets/image.png", result.stderr)
 
+    def test_broken_link_locations_in_html_srcset_and_css(self):
+        page = self.site / "src/located-links.html"
+        page.write_text('é <a href="/missing/">Missing</a>')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{page}: broken local link: /missing/ "
+                      "(generated HTML line 1, column 12)", result.stderr)
+
+        (self.site / "src/assets/existing.png").write_bytes(b"image")
+        page.write_text('<img srcset="/assets/existing.png 1x,\n'
+                        '  /assets/missing.png 2x">')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("broken local link: /assets/missing.png "
+                      "(generated HTML line 2, column 3)", result.stderr)
+
+        page.write_text('<div style="url(/assets/missing.png)"></div>')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("broken local link: /assets/missing.png "
+                      "(generated HTML line 1, column 17)", result.stderr)
+
+        page.write_text('<style>\nurl(/assets/missing.png)\n</style>')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("broken local link: /assets/missing.png "
+                      "(generated HTML line 2, column 5)", result.stderr)
+
+        page.unlink()
+        sheet = self.site / "src/assets/location.css"
+        sheet.write_text('/* CSS */\n.a { background: url(\n  ../missing.png\n) }')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{sheet}: broken local link: ../missing.png (line 3, column 3)",
+                      result.stderr)
+
+    def test_markdown_link_location_is_labeled_as_generated_html(self):
+        page = self.site / "src/located.md"
+        page.write_text('# Title\n\n[Missing](/missing/)\n')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{page}: broken local link: /missing/ "
+                      "(generated HTML line 2, column 13)", result.stderr)
+
     def test_link_scanner_ignores_comments_and_script_text(self):
         layout = self.site / "src/_includes/base.html"
         layout.write_text(layout.read_text() +

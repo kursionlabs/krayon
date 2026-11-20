@@ -27,8 +27,16 @@ struct Parsed {
     source: Span['k],
     output: Span['k],
     url: Span['k],
+    text: Span['k],
+    generated: bool,
     ids: ArenaMap[Span['k], bool, 'k],
-    targets: ArenaVec[Span['k], 'k],
+    targets: ArenaVec[LinkTarget['k], 'k],
+}
+
+forall 'k.
+struct LinkTarget {
+    value: Span['k],
+    offset: usize,
 }
 
 forall 'k.
@@ -69,7 +77,8 @@ fn starts_ci(&cx: Domain!['k], text: Span['k], at_pos: usize, expected: Slice[u8
 }
 
 forall 'k.
-fn scan_srcset(&cx: Domain!['k], value: Span['k], targets: ArenaVec[Span['k], 'k]) -> () {
+fn scan_srcset(&cx: Domain!['k], value: Span['k], base: usize,
+    targets: ArenaVec[LinkTarget['k], 'k]) -> () {
     var pos = 0usize;
     while pos < value.len() {
         while pos < value.len() && (space(at(&cx, value, pos)) || at(&cx, value, pos) == b',') {
@@ -79,7 +88,7 @@ fn scan_srcset(&cx: Domain!['k], value: Span['k], targets: ArenaVec[Span['k], 'k
         while pos < value.len() && !space(at(&cx, value, pos)) { pos = pos + 1usize; }
         var end = pos;
         while end > start && at(&cx, value, end - 1usize) == b',' { end = end - 1usize; }
-        if end > start { targets.push(&cx, value.slice(start, end)); }
+        if end > start { targets.push(&cx, LinkTarget.{ value: html_value(&cx, value.slice(start, end)), offset: base + start }); }
         if end == pos {
             while pos < value.len() && at(&cx, value, pos) != b',' { pos = pos + 1usize; }
             if pos < value.len() { pos = pos + 1usize; }
@@ -117,7 +126,21 @@ fn css_value(&cx: Domain!['k], source: Span['k]) -> Span['k] {
 }
 
 forall 'k.
-fn scan_css(&cx: Domain!['k], css: Span['k], targets: ArenaVec[Span['k], 'k]) -> () {
+fn push_css_target(&cx: Domain!['k], raw: Span['k], offset: usize, entities: bool,
+    targets: ArenaVec[LinkTarget['k], 'k]) -> () {
+    let decoded = if entities { html_value(&cx, raw) } else { raw };
+    let decoded = css_value(&cx, decoded);
+    let value = if decoded.len() >= 2usize &&
+        ((at(&cx, decoded, 0usize) == b'"' && at(&cx, decoded, decoded.len() - 1usize) == b'"') ||
+         (at(&cx, decoded, 0usize) == b'\'' && at(&cx, decoded, decoded.len() - 1usize) == b'\'')) {
+        decoded.slice(1usize, decoded.len() - 1usize)
+    } else { decoded };
+    targets.push(&cx, LinkTarget.{ value, offset });
+}
+
+forall 'k.
+fn scan_css(&cx: Domain!['k], css: Span['k], base: usize, entities: bool,
+    targets: ArenaVec[LinkTarget['k], 'k]) -> () {
     var pos = 0usize;
     while pos < css.len() {
         let c = at(&cx, css, pos);
@@ -151,7 +174,7 @@ fn scan_css(&cx: Domain!['k], css: Span['k], targets: ArenaVec[Span['k], 'k]) ->
                 if pos < css.len() { pos = pos + 1usize; }
                 while space(at(&cx, css, pos)) { pos = pos + 1usize; }
                 if at(&cx, css, pos) == b')' {
-                    targets.push(&cx, css_value(&cx, css.slice(start, end)));
+                    push_css_target(&cx, css.slice(start, end), base + start, entities, targets);
                     pos = pos + 1usize;
                 }
             } else {
@@ -162,7 +185,7 @@ fn scan_css(&cx: Domain!['k], css: Span['k], targets: ArenaVec[Span['k], 'k]) ->
                 }
                 if pos < css.len() {
                     let value = css.slice(start, pos).trim(&cx);
-                    if !value.is_empty() { targets.push(&cx, css_value(&cx, value)); }
+                    if !value.is_empty() { push_css_target(&cx, value, base + start, entities, targets); }
                     pos = pos + 1usize;
                 }
             }
@@ -173,8 +196,9 @@ fn scan_css(&cx: Domain!['k], css: Span['k], targets: ArenaVec[Span['k], 'k]) ->
 forall 'k.
 fn scan_stylesheet(&cx: Domain!['k], sheet: Stylesheet['k]) -> Parsed['k] {
     let targets = ArenaVec::new(&cx);
-    scan_css(&cx, sheet.css, targets);
+    scan_css(&cx, sheet.css, 0usize, false, targets);
     Parsed.{ source: sheet.source, output: sheet.output, url: sheet.url,
+        text: sheet.css, generated: false,
         ids: ArenaMap::new(&cx), targets }
 }
 
@@ -193,7 +217,7 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
                     !name_byte(at(&cx, html, pos + 8usize))) ||
                  (raw == 2usize && starts_ci(&cx, html, pos + 2usize, "style") &&
                     !name_byte(at(&cx, html, pos + 7usize)))) {
-                if raw == 2usize { scan_css(&cx, html.slice(raw_start, pos), targets); }
+                if raw == 2usize { scan_css(&cx, html.slice(raw_start, pos), raw_start, false, targets); }
                 raw = 0usize;
             } else { pos = pos + 1usize; }
         } else if at(&cx, html, pos) != b'<' {
@@ -248,12 +272,13 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
                                 }
                                 value_end = pos;
                             }
-                            let value = html_value(&cx, html.slice(value_start, value_end));
+                            let raw_value = html.slice(value_start, value_end);
+                            let value = html_value(&cx, raw_value);
                             if equal_ci(&cx, name, "id") { ids.insert(&cx, value, true); }
                             else if equal_ci(&cx, name, "href") || equal_ci(&cx, name, "src") {
-                                targets.push(&cx, value);
-                            } else if equal_ci(&cx, name, "srcset") { scan_srcset(&cx, value, targets); }
-                            else if equal_ci(&cx, name, "style") { scan_css(&cx, value, targets); }
+                                targets.push(&cx, LinkTarget.{ value, offset: value_start });
+                            } else if equal_ci(&cx, name, "srcset") { scan_srcset(&cx, raw_value, value_start, targets); }
+                            else if equal_ci(&cx, name, "style") { scan_css(&cx, raw_value, value_start, true, targets); }
                         }
                     }
                 }
@@ -262,8 +287,9 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
             }
         }
     }
-    if raw == 2usize { scan_css(&cx, html.slice(raw_start, html.len()), targets); }
-    Parsed.{ source: document.source, output: document.output, url: document.url, ids, targets }
+    if raw == 2usize { scan_css(&cx, html.slice(raw_start, html.len()), raw_start, false, targets); }
+    Parsed.{ source: document.source, output: document.output, url: document.url,
+        text: html, generated: true, ids, targets }
 }
 
 fn hex(c: u8) -> u8 {
@@ -414,9 +440,26 @@ fn output_path(&cx: Domain!['k], root: Span['k], path: Span['k]) -> Span['k] {
 }
 
 forall 'k.
-fn broken(&cx: Domain!['k], source: Span['k], target: Span['k]) -> Buffer! {
-    Buffer!::new().push_static("krayon: ").push_bytes(&cx, source)
-        .push_static(": broken local link: ").push_bytes(&cx, target).push_byte(b'\n')
+fn location(&cx: Domain!['k], source: Span['k], offset: usize) -> (usize, usize) {
+    var line = 1usize;
+    var column = 1usize;
+    var i = 0usize;
+    while i < offset {
+        let c = at(&cx, source, i);
+        if c == b'\n' { line = line + 1usize; column = 1usize; }
+        else if c < 128u8 || c >= 192u8 { column = column + 1usize; }
+        i = i + 1usize;
+    }
+    (line, column)
+}
+
+forall 'k.
+fn broken(&cx: Domain!['k], page: Parsed['k], target: LinkTarget['k]) -> Buffer! {
+    let (line, column) = location(&cx, page.text, target.offset);
+    Buffer!::new().push_static("krayon: ").push_bytes(&cx, page.source)
+        .push_static(": broken local link: ").push_bytes(&cx, target.value)
+        .push_static(if page.generated { " (generated HTML line " } else { " (line " })
+        .push_usize(line).push_static(", column ").push_usize(column).push_static(")\n")
 }
 
 forall 'k.
@@ -438,7 +481,8 @@ fn validate(&cx: Domain!['k], documents: ArenaVec[Document['k], 'k], stylesheets
         let page = pages.at(&cx, i);
         var j = 0usize;
         while j < page.targets.len(&cx) {
-            let target = page.targets.at(&cx, j);
+            let link = page.targets.at(&cx, j);
+            let target = link.value;
             if !external(&cx, target) {
                 let hash = match target.find_byte(&cx, b'#', 0usize) {
                     Option::Some(at_pos) => at_pos,
@@ -458,17 +502,17 @@ fn validate(&cx: Domain!['k], documents: ArenaVec[Document['k], 'k], stylesheets
                         if path.eq(&cx, base_path) { path = lit(&cx, "/"); }
                         else if path.starts_with(&cx, base_path) && at(&cx, path, base_path.len()) == b'/' {
                             path = path.slice(base_path.len(), path.len());
-                        } else { return Result::Err.(broken(&cx, page.source, target)); }
+                        } else { return Result::Err.(broken(&cx, page, link)); }
                     }
                 } else {
                     path = Buffer!::new().push_bytes(&cx, parent(&cx, page.url)).push_bytes(&cx, path).save(&cx);
                 }
                 let path = match normalized(&cx, decoded(&cx, path)) {
                     Option::Some(found) => found,
-                    Option::None => return Result::Err.(broken(&cx, page.source, target)),
+                    Option::None => return Result::Err.(broken(&cx, page, link)),
                 };
                 let output = output_path(&cx, root, path);
-                if !outputs.contains(&cx, output) { return Result::Err.(broken(&cx, page.source, target)); }
+                if !outputs.contains(&cx, output) { return Result::Err.(broken(&cx, page, link)); }
                 if !fragment.is_empty() && output.ends_with(&cx, lit(&cx, ".html")) {
                     var found = false;
                     var generated_page = false;
@@ -481,7 +525,7 @@ fn validate(&cx: Domain!['k], documents: ArenaVec[Document['k], 'k], stylesheets
                             k = pages.len(&cx);
                         } else { k = k + 1usize; }
                     }
-                    if generated_page && !found { return Result::Err.(broken(&cx, page.source, target)); }
+                    if generated_page && !found { return Result::Err.(broken(&cx, page, link)); }
                 }
             }
             j = j + 1usize;
