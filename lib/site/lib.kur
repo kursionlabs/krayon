@@ -222,6 +222,60 @@ fn save(&cx: Domain!['k], file: Span['k], contents: Buffer!) -> Result[(), Buffe
     }
 }
 
+forall 'k.
+fn init(&cx: Domain!['k], root: Span['k]) -> Result[(), Buffer!] {
+    match metadata(&cx, root) {
+        Result::Ok(info) => {
+            match info.kind {
+                FileKind::Directory => (),
+                _ => return Result::Err.(report(&cx, "expected directory", root)),
+            }
+            let opened = match read_dir(&cx, root) {
+                Result::Ok(directory) => directory,
+                Result::Err(e) => return Result::Err.(report(&cx, "cannot list", root)),
+            };
+            var opened = opened;
+            let first = &opened.next();
+            match first {
+                Result::Err(e) => {
+                    let closed = opened.close();
+                    return Result::Err.(report(&cx, "cannot list", root));
+                },
+                Result::Ok(next) => match next {
+                    Option::Some(entry) => {
+                        let { name, is_directory } = entry;
+                        name.destroy();
+                        let closed = opened.close();
+                        return Result::Err.(report(&cx, "directory is not empty", root));
+                    },
+                    Option::None => (),
+                },
+            }
+            match opened.close() {
+                Result::Ok(nothing) => (),
+                Result::Err(e) => return Result::Err.(report(&cx, "cannot list", root)),
+            }
+        },
+        Result::Err(e) => {
+            if e.errno != 2i32 { return Result::Err.(report(&cx, "cannot stat", root)); }
+            ensure_dir(&cx, root)?;
+        },
+    }
+    save(&cx, join(&cx, root, lit(&cx, "krayon.toml")),
+        Buffer!::new().push_static("input = \"src\"\noutput = \"dist\"\n"))?;
+    save(&cx, join(&cx, root, lit(&cx, ".gitignore")),
+        Buffer!::new().push_static("/dist/\n"))?;
+    save(&cx, join(&cx, root, lit(&cx, "src/_includes/base.html")),
+        Buffer!::new().push_static("<!doctype html>\n<html lang=\"en\">\n<head>\n")
+            .push_static("  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+            .push_static("  <title>{{ page.title }}</title>\n</head>\n<body>\n  <main>{{ content | safe }}</main>\n")
+            .push_static("</body>\n</html>\n"))?;
+    save(&cx, join(&cx, root, lit(&cx, "src/index.md")),
+        Buffer!::new().push_static("+++\ntitle = \"Home\"\nlayout = \"base.html\"\n+++\n\n")
+            .push_static("# Welcome to Krayon\n\nEdit `src/index.md` to get started.\n"))?;
+    Result::Ok.(())
+}
+
 // Relative config paths and URL path components cannot escape their root.
 forall 'k.
 fn safe_path(&cx: Domain!['k], path: Span['k], absolute: bool) -> bool {

@@ -48,6 +48,45 @@ class BuildTests(unittest.TestCase):
             capture_output=True,
         )
 
+    def test_init_creates_buildable_site_and_refuses_existing_content(self):
+        target = Path(self.temp.name) / "nested/new-site"
+        result = subprocess.run(
+            [str(KRAYON), "init", str(target)], text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "Krayon site created\n")
+        self.assertEqual((target / ".gitignore").read_text(), "/dist/\n")
+        self.assertTrue((target / "krayon.toml").is_file())
+        self.assertTrue((target / "src/index.md").is_file())
+        self.assertTrue((target / "src/_includes/base.html").is_file())
+        self.assertFalse((target / "dist").exists())
+
+        result = subprocess.run(
+            [str(KRAYON), "build", str(target)], text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Welcome to Krayon", (target / "dist/index.html").read_text())
+
+        original = (target / "src/index.md").read_bytes()
+        result = subprocess.run(
+            [str(KRAYON), "init", str(target)], text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("directory is not empty", result.stderr)
+        self.assertEqual((target / "src/index.md").read_bytes(), original)
+
+    def test_init_accepts_empty_directory_and_rejects_invalid_arguments(self):
+        target = Path(self.temp.name) / "empty"
+        target.mkdir()
+        result = subprocess.run(
+            [str(KRAYON), "init"], cwd=target, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((target / "src/index.md").exists())
+
+        for argument in ("--drafts", ""):
+            result = subprocess.run(
+                [str(KRAYON), "init", argument], cwd=self.temp.name,
+                text=True, capture_output=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("usage:", result.stderr)
+
     def test_routes_list_discovered_pages_and_aliases_without_writing(self):
         shutil.rmtree(self.site / "src")
         src = self.site / "src"

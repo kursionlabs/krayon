@@ -15,6 +15,17 @@ mkdir -p bin
 
 ## Build a site
 
+Start a site in a new or empty directory:
+
+```sh
+bin/krayon init my-site
+bin/krayon build my-site
+```
+
+`init` defaults to the current directory and refuses to overwrite a
+nonempty directory. It creates `krayon.toml`, a Markdown home page, a shared
+HTML layout, and a `.gitignore` for `dist`.
+
 ```sh
 bin/krayon build examples/hello-site
 ```
