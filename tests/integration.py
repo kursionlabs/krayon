@@ -432,6 +432,49 @@ class BuildTests(unittest.TestCase):
         self.assertIn('paginate must name a site data array or collections.pages', result.stderr)
         self.assertTrue((self.site / "dist/blog/page/2/index.html").exists())
 
+    def test_tag_array_membership_filters_queries_and_pagination(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        src.mkdir()
+        (src / "old.md").write_text('+++\ntitle = "Old"\n'
+                                    'tags = ["kursal", "language"]\n'
+                                    'date = 2026-01-01\n+++\n# Old')
+        (src / "new.md").write_text('+++\ntitle = "New"\n'
+                                    'tags = ["kursal"]\n'
+                                    'date = 2026-01-10\n+++\n# New')
+        (src / "other.md").write_text('+++\ntitle = "Other"\n'
+                                      'tags = ["static"]\n'
+                                      'date = 2026-01-15\n+++\n# Other')
+        (src / "scalar.md").write_text('+++\ntitle = "Scalar"\n'
+                                       'tags = "kursal"\n'
+                                       'date = 2026-01-20\n+++\n# Scalar')
+        (src / "untagged.md").write_text('# Untagged')
+        archive = src / "tags.html"
+        archive.write_text('+++\npaginate = "collections.pages"\npage_size = 1\n'
+                           'where = {field = "tags", contains = "kursal"}\n'
+                           'sort_by = "date"\nsort_order = "desc"\n+++\n'
+                           '<p>{{ page.pagination.total_items }}/{{ page.pagination.total_pages }}</p>'
+                           '{% for post in page.pagination.items %}'
+                           '<a href="{{ post.url }}">{{ post.title }}</a>{% endfor %}')
+        (src / "listing.html").write_text(
+            '{% for post in collections.pages | contains: "tags", "kursal" %}'
+            '{{ post.title }};{% endfor %}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/listing/index.html").read_text(), 'New;Old;')
+        self.assertIn('<p>2/2</p><a href="/new/">New</a>',
+                      (self.site / "dist/tags/index.html").read_text())
+        self.assertIn('<p>2/2</p><a href="/old/">Old</a>',
+                      (self.site / "dist/tags/page/2/index.html").read_text())
+
+        previous = (self.site / "dist/tags/index.html").read_bytes()
+        archive.write_text(archive.read_text().replace('contains = "kursal"',
+                                                     'contains = "kursal", equals = "kursal"'))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('where accepts either equals or contains', result.stderr)
+        self.assertEqual((self.site / "dist/tags/index.html").read_bytes(), previous)
+
     def test_paginate_data_array_and_navigation(self):
         data = self.site / "src/_data/site.toml"
         data.write_text('posts = [{title = "One"}, {title = "Two"}, '

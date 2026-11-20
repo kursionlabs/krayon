@@ -12,7 +12,7 @@ use html::{Page, TemplateFormat, parse_page, template};
 use markdown::markdown;
 use links::{Document, Stylesheet, validate};
 use json::validate as validate_json;
-use records::{filter_records, scalar, sort_records};
+use records::{filter_contains, filter_records, scalar, sort_records};
 
 extern "C" fn getpid() -> i32;
 
@@ -598,14 +598,25 @@ fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
                 },
                 Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where requires field"))),
             };
-            let target = match rule.get(&cx, lit(&cx, "equals")) {
+            let equals = rule.get(&cx, lit(&cx, "equals"));
+            let contains = rule.get(&cx, lit(&cx, "contains"));
+            if equals.is_some() && contains.is_some() {
+                return Result::Err.(report_detail(&cx, file,
+                    lit(&cx, "where accepts either equals or contains")));
+            }
+            let membership = contains.is_some();
+            let target_value = if membership { contains } else { equals };
+            let target = match target_value {
                 Option::Some(value) => match scalar(&cx, value) {
                     Option::Some(text) => text,
-                    Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where.equals must be a string, integer, boolean, or date"))),
+                    Option::None => return Result::Err.(report_detail(&cx, file,
+                        lit(&cx, "where value must be a string, integer, boolean, or date"))),
                 },
-                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where requires equals"))),
+                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where requires equals or contains"))),
             };
-            match filter_records(&cx, all, field, target) {
+            let filtered = if membership { filter_contains(&cx, all, field, target) }
+                else { filter_records(&cx, all, field, target) };
+            match filtered {
                 Result::Ok(selected) => selected,
                 Result::Err(message) => return Result::Err.(report_detail(&cx, file,
                     Buffer!::new().push_static("where: ").push_static(message).save(&cx))),

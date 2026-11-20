@@ -74,6 +74,41 @@ fn filter_records(&cx: Domain!['k], values: ArenaVec[TomlValue['k], 'k], key: Sp
 }
 
 forall 'k.
+fn filter_contains(&cx: Domain!['k], values: ArenaVec[TomlValue['k], 'k], key: Span['k], target: Span['k])
+    -> Result[ArenaVec[TomlValue['k], 'k], Slice[u8, 'static]] {
+    if key.is_empty() { return Result::Err.("filter field must not be empty"); }
+    let selected = ArenaVec::new(&cx);
+    var i = 0usize;
+    while i < values.len(&cx) {
+        let value = values.at(&cx, i);
+        match value.as_table() {
+            Option::Some(table) => (),
+            Option::None => return Result::Err.("filter item must be a table"),
+        }
+        match field(&cx, value, key) {
+            Option::Some(found) => match found.as_array() {
+                Option::Some(items) => {
+                    var j = 0usize;
+                    var matched = false;
+                    while j < items.len(&cx) && !matched {
+                        match scalar(&cx, items.at(&cx, j)) {
+                            Option::Some(text) => if text.eq(&cx, target) { matched = true; },
+                            Option::None => (),
+                        }
+                        j = j + 1usize;
+                    }
+                    if matched { selected.push(&cx, value); }
+                },
+                Option::None => (),
+            },
+            Option::None => (),
+        }
+        i = i + 1usize;
+    }
+    Result::Ok.(selected)
+}
+
+forall 'k.
 fn kind(value: TomlValue['k]) -> usize {
     match value {
         TomlValue::String(text) => 1usize,

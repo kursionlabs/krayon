@@ -126,9 +126,11 @@ values. Paginated pages appear in `collections.pages`; the template does not
 produce an additional file. `paginate` and `generate` cannot be combined.
 The template's `draft` flag applies to all its pages. An optional `where` table
 selects records before sorting and slicing. Its `field` can be a dotted path;
-`equals` accepts a string, integer, boolean, or TOML date. Like the template
-`where` filter, it compares scalar text, skips records without the field, and
-requires array items to be tables.
+use either `equals` to match a scalar field or `contains` to match an element
+of an array field. Both accept a string, integer, boolean, or TOML date. Like
+the template filters, comparisons use scalar text and skip records with a
+missing field or the wrong field shape; array items must be tables. For a tag
+archive, use `where = { field = "tags", contains = "kursal" }`.
 `sort_by` is optional and accepts a field path such as `author.name`;
 `sort_order` is `asc` by default or `desc`. Sorting happens before page
 slices are chosen.
@@ -222,12 +224,13 @@ protocol relative, relative, and fragment URLs alone. Markdown links with root
 relative targets are prefixed automatically; raw HTML in Markdown is passed
 through as written.
 
-Loop sources can be filtered with `children_of`, `where`, `group_by`, and
-`sort_by`:
+Loop sources can be filtered with `children_of`, `where`, `contains`,
+`group_by`, and `sort_by`:
 
 ```html
 {% for child in collections.pages | children_of: page.url %}{{ child.title }}{% endfor %}
 {% for item in page.nav_items | where: "kind", "function" %}{{ item.name }}{% endfor %}
+{% for post in collections.pages | contains: "tags", "kursal" %}{{ post.title }}{% endfor %}
 {% for group in page.nav_items | group_by: "kind" %}
   {{ group.key }}{% for item in group.items %}{{ item.name }}{% endfor %}
 {% endfor %}
@@ -236,8 +239,9 @@ Loop sources can be filtered with `children_of`, `where`, `group_by`, and
 
 `children_of` matches a record's `parent` URL or any URL in its `parents`
 array. These relationships are explicit front matter; URL nesting has no
-effect. `where` compares a scalar field to a quoted value or template field and
-accepts dotted field paths.
+effect. `where` compares a scalar field to a quoted value or template field;
+`contains` checks whether an array field has a matching scalar element. Both
+accept dotted field paths and skip missing or differently shaped fields.
 `group_by` preserves first-seen group order and produces records with `key`
 and `items`. `sort_by` accepts a field path and an optional `"asc"` or
 `"desc"` order; it preserves source order for equal keys. It compares

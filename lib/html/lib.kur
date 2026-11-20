@@ -10,7 +10,7 @@ use std::slice::Slice;
 use toml::parse;
 use toml::value::TomlValue;
 use url::prefix;
-use records::{filter_records, sort_records};
+use records::{filter_contains, filter_records, sort_records};
 
 forall 'k.
 exposed struct Page {
@@ -546,7 +546,8 @@ fn query_array(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                 i = i + 1usize;
             }
             values = result;
-        } else if operation.is(&cx, "where") || operation.is(&cx, "group_by") || operation.is(&cx, "sort_by") {
+        } else if operation.is(&cx, "where") || operation.is(&cx, "contains")
+            || operation.is(&cx, "group_by") || operation.is(&cx, "sort_by") {
             let comma = arguments.find_byte(&cx, b',', 0usize);
             if operation.is(&cx, "group_by") {
                 match comma { Option::Some(_) => return Result::Err.(filter), Option::None => (), }
@@ -575,7 +576,7 @@ fn query_array(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                     Result::Err(message) => return Result::Err.(Buffer!::new().push_bytes(&cx, filter)
                         .push_static(": ").push_static(message).save(&cx)),
                 };
-            } else if operation.is(&cx, "where") {
+            } else if operation.is(&cx, "where") || operation.is(&cx, "contains") {
                 let comma_at = match comma {
                     Option::Some(at) => at,
                     Option::None => return Result::Err.(filter),
@@ -584,7 +585,10 @@ fn query_array(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                     Option::Some(value) => value,
                     Option::None => return Result::Err.(filter),
                 };
-                values = match filter_records(&cx, values, field_name, target) {
+                let filtered = if operation.is(&cx, "contains") {
+                    filter_contains(&cx, values, field_name, target)
+                } else { filter_records(&cx, values, field_name, target) };
+                values = match filtered {
                     Result::Ok(selected) => selected,
                     Result::Err(message) => return Result::Err.(Buffer!::new().push_bytes(&cx, filter)
                         .push_static(": ").push_static(message).save(&cx)),
