@@ -12,7 +12,7 @@ use html::{Page, TemplateFormat, parse_page, template};
 use markdown::markdown;
 use links::{Document, Stylesheet, validate};
 use json::validate as validate_json;
-use ordering::sort_records;
+use records::{filter_records, scalar, sort_records};
 
 extern "C" fn getpid() -> i32;
 
@@ -527,6 +527,35 @@ fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
     let all = match value.as_array() {
         Option::Some(array) => array,
         Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate source must be an array"))),
+    };
+    let all = match template_page.data.get(&cx, lit(&cx, "where")) {
+        Option::None => all,
+        Option::Some(value) => {
+            let rule = match value.as_table() {
+                Option::Some(table) => table,
+                Option::None => return Result::Err.(report_detail(&cx, file,
+                    lit(&cx, "where must be a table with field and equals"))),
+            };
+            let field = match rule.get(&cx, lit(&cx, "field")) {
+                Option::Some(value) => match value.as_string() {
+                    Option::Some(text) => text,
+                    Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where.field must be a string"))),
+                },
+                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where requires field"))),
+            };
+            let target = match rule.get(&cx, lit(&cx, "equals")) {
+                Option::Some(value) => match scalar(&cx, value) {
+                    Option::Some(text) => text,
+                    Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where.equals must be a string, integer, boolean, or date"))),
+                },
+                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where requires equals"))),
+            };
+            match filter_records(&cx, all, field, target) {
+                Result::Ok(selected) => selected,
+                Result::Err(message) => return Result::Err.(report_detail(&cx, file,
+                    Buffer!::new().push_static("where: ").push_static(message).save(&cx))),
+            }
+        },
     };
     let all = match template_page.data.get(&cx, lit(&cx, "sort_by")) {
         Option::None => {

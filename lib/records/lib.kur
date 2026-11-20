@@ -1,4 +1,5 @@
 use std::arena::Domain!;
+use std::buffer::Buffer!;
 use std::cmp::Order;
 use std::collections::arena_vec::ArenaVec;
 use std::option::{Option, Result};
@@ -35,6 +36,41 @@ fn field(&cx: Domain!['k], record: TomlValue['k], path: Span['k]) -> Option[Toml
         }
     }
     Option::None
+}
+
+forall 'k.
+fn scalar(&cx: Domain!['k], value: TomlValue['k]) -> Option[Span['k]] {
+    match value {
+        TomlValue::String(text) => Option::Some.(text),
+        TomlValue::Integer(number) => Option::Some.(Buffer!::new().push_i64(number).save(&cx)),
+        TomlValue::Boolean(flag) => Option::Some.(Span::from_static(&cx, if flag { "true" } else { "false" })),
+        TomlValue::Datetime(date) => Option::Some.(date.text),
+        _ => Option::None,
+    }
+}
+
+forall 'k.
+fn filter_records(&cx: Domain!['k], values: ArenaVec[TomlValue['k], 'k], key: Span['k], target: Span['k])
+    -> Result[ArenaVec[TomlValue['k], 'k], Slice[u8, 'static]] {
+    if key.is_empty() { return Result::Err.("filter field must not be empty"); }
+    let selected = ArenaVec::new(&cx);
+    var i = 0usize;
+    while i < values.len(&cx) {
+        let value = values.at(&cx, i);
+        match value.as_table() {
+            Option::Some(table) => (),
+            Option::None => return Result::Err.("filter item must be a table"),
+        }
+        match field(&cx, value, key) {
+            Option::Some(found) => match scalar(&cx, found) {
+                Option::Some(text) => if text.eq(&cx, target) { selected.push(&cx, value); },
+                Option::None => (),
+            },
+            Option::None => (),
+        }
+        i = i + 1usize;
+    }
+    Result::Ok.(selected)
 }
 
 forall 'k.

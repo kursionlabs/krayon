@@ -101,6 +101,7 @@ An HTML template can split a site data array across list pages:
 +++
 paginate = "site.posts"
 page_size = 10
+where = { field = "published", equals = true }
 sort_by = "date"
 sort_order = "desc"
 permalink = "/blog/"
@@ -117,7 +118,11 @@ the base. The base must end in `/`. `page.pagination` also exposes the one-based
 with no items. Pagination preserves array order and accepts any TOML array
 values. Paginated pages appear in `collections.pages`; the template does not
 produce an additional file. `paginate` and `generate` cannot be combined.
-The template's `draft` flag applies to all its pages.
+The template's `draft` flag applies to all its pages. An optional `where` table
+selects records before sorting and slicing. Its `field` can be a dotted path;
+`equals` accepts a string, integer, boolean, or TOML date. Like the template
+`where` filter, it compares scalar text, skips records without the field, and
+requires array items to be tables.
 `sort_by` is optional and accepts a field path such as `author.name`;
 `sort_order` is `asc` by default or `desc`. Sorting happens before page
 slices are chosen.
@@ -218,7 +223,8 @@ Loop sources can be filtered with `children_of`, `where`, `group_by`, and
 
 `children_of` matches a record's `parent` URL or any URL in its `parents`
 array. These relationships are explicit front matter; URL nesting has no
-effect. `where` compares a scalar field to a quoted value or template field.
+effect. `where` compares a scalar field to a quoted value or template field and
+accepts dotted field paths.
 `group_by` preserves first-seen group order and produces records with `key`
 and `items`. `sort_by` accepts a field path and an optional `"asc"` or
 `"desc"` order; it preserves source order for equal keys. It compares
@@ -246,7 +252,7 @@ hyphens, underscores, and colons.
 - `lib/html/` — front matter and templates
 - `lib/markdown/` — Markdown rendering
 - `lib/links/` — local link validation
-- `lib/ordering/` — record sorting shared by queries and pagination
+- `lib/records/` — record filtering and sorting shared by queries and pagination
 - `lib/json/` — generated JSON validation
 - `lib/url/` — deployment path prefixes
 - `lib/highlight/` — fenced code highlighting

@@ -1,5 +1,5 @@
 [package]
-name="ordering"
+name="records"
 source_root="."
 
 [dependencies.std]

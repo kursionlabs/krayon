@@ -11,5 +11,5 @@ path="../../../kursal/lib/toml"
 [dependencies.url]
 path="../url"
 
-[dependencies.ordering]
-path="../ordering"
+[dependencies.records]
+path="../records"

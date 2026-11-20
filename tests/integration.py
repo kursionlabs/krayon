@@ -328,6 +328,60 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('sort fields must have the same type', result.stderr)
 
+    def test_paginate_filters_before_sorting_and_slicing(self):
+        data = self.site / "src/_data/site.toml"
+        data.write_text('posts = ['
+                        '{title = "Draft top", meta = {published = false, rank = 99}}, '
+                        '{title = "Older", meta = {published = true, rank = 1}}, '
+                        '{title = "Newest", meta = {published = true, rank = 10}}, '
+                        '{title = "Middle", meta = {published = true, rank = 5}}, '
+                        '{title = "Draft bottom", meta = {published = false, rank = 0}}]\n'
+                        + data.read_text())
+        template = self.site / "src/posts.html"
+        template.write_text('+++\npaginate = "site.posts"\npage_size = 2\n'
+                            'where = {field = "meta.published", equals = true}\n'
+                            'sort_by = "meta.rank"\nsort_order = "desc"\n+++\n'
+                            '<p>{{ page.pagination.number }}/{{ page.pagination.total_pages }}:'
+                            '{{ page.pagination.total_items }}</p>'
+                            '{% for post in page.pagination.items %}'
+                            '{{ post.title }};{% endfor %}')
+        (self.site / "src/selected.html").write_text(
+            '{% for post in site.posts | where: "meta.published", "true" %}'
+            '{{ post.title }};{% endfor %}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/selected/index.html").read_text(),
+                         'Older;Newest;Middle;')
+        self.assertEqual((self.site / "dist/posts/index.html").read_text(),
+                         '<p>1/2:3</p>Newest;Middle;')
+        self.assertEqual((self.site / "dist/posts/page/2/index.html").read_text(),
+                         '<p>2/2:3</p>Older;')
+        self.assertFalse((self.site / "dist/posts/page/3/index.html").exists())
+
+        template.write_text(template.read_text().replace('equals = true',
+                                                         'equals = "no match"'))
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/posts/index.html").read_text(),
+                         '<p>1/1:0</p>')
+        self.assertFalse((self.site / "dist/posts/page/2/index.html").exists())
+
+        template.write_text(template.read_text().replace('equals = "no match"',
+                                                         'equals = true')
+                            .replace('meta.published', 'missing'))
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/posts/index.html").read_text(),
+                         '<p>1/1:0</p>')
+
+        template.write_text(template.read_text().replace('where = {field = "missing", equals = true}',
+                                                         'where = {field = "meta.published"}'))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('where requires equals', result.stderr)
+        self.assertEqual((self.site / "dist/posts/index.html").read_text(),
+                         '<p>1/1:0</p>')
+
     def test_paginate_data_array_and_navigation(self):
         data = self.site / "src/_data/site.toml"
         data.write_text('posts = [{title = "One"}, {title = "Two"}, '

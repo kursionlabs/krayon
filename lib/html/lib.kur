@@ -10,7 +10,7 @@ use std::slice::Slice;
 use toml::parse;
 use toml::value::TomlValue;
 use url::prefix;
-use ordering::sort_records;
+use records::{filter_records, sort_records};
 
 forall 'k.
 exposed struct Page {
@@ -584,24 +584,11 @@ fn query_array(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                     Option::Some(value) => value,
                     Option::None => return Result::Err.(filter),
                 };
-                let result = ArenaVec::new(&cx);
-                var i = 0usize;
-                while i < values.len(&cx) {
-                    let value = values.at(&cx, i);
-                    let table = match value.as_table() {
-                        Option::Some(table) => table,
-                        Option::None => return Result::Err.(filter),
-                    };
-                    match table.get(&cx, field_name) {
-                        Option::Some(field) => match scalar(&cx, field) {
-                            Option::Some(text) => if text.eq(&cx, target) { result.push(&cx, value); },
-                            Option::None => (),
-                        },
-                        Option::None => (),
-                    }
-                    i = i + 1usize;
-                }
-                values = result;
+                values = match filter_records(&cx, values, field_name, target) {
+                    Result::Ok(selected) => selected,
+                    Result::Err(message) => return Result::Err.(Buffer!::new().push_bytes(&cx, filter)
+                        .push_static(": ").push_static(message).save(&cx)),
+                };
             } else {
                 let groups: ArenaVec[Group['k], 'k] = ArenaVec::new(&cx);
                 var i = 0usize;
