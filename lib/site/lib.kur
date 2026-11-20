@@ -10,7 +10,7 @@ use toml::parse;
 use toml::value::TomlValue;
 use html::{Page, parse_page, template};
 use markdown::markdown;
-use links::{Document, validate};
+use links::{Document, Stylesheet, validate};
 
 extern "C" fn getpid() -> i32;
 
@@ -36,6 +36,7 @@ struct Build {
     site_data: ArenaMap[Span['k], TomlValue['k], 'k],
     collections: ArenaMap[Span['k], TomlValue['k], 'k],
     pages: ArenaVec[SourcePage['k], 'k],
+    stylesheets: ArenaVec[Stylesheet['k], 'k],
     written: ArenaMap[Span['k], Span['k], 'k],
 }
 
@@ -417,6 +418,11 @@ fn copy_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: us
                             Result::Ok(nothing) => (),
                             Result::Err(message) => { directory.close(); return Result::Err.(message); },
                         }
+                        if child.ends_with(&cx, lit(&cx, ".css")) {
+                            let url = Buffer!::new().push_static("/").push_bytes(&cx, build.assets)
+                                .push_static("/").push_bytes(&cx, child).save(&cx);
+                            build.stylesheets.push(&cx, Stylesheet.{ source, output: destination, url, css: contents });
+                        }
                     }
                 },
             },
@@ -586,7 +592,7 @@ fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
         });
         i = i + 1usize;
     }
-    validate(&cx, documents, build.written, build.output, build.base_path)?;
+    validate(&cx, documents, build.stylesheets, build.written, build.output, build.base_path)?;
     Result::Ok.(())
 }
 
@@ -624,7 +630,8 @@ fn build(&cx: Domain!['k], root: Span['k]) -> Result[(), Buffer!] {
     let (stage, backup) = stage_paths(&cx, output)?;
     let build = Build.{ source, output: stage, layouts: join(&cx, source, config.layouts), layouts_rel: config.layouts,
         assets: config.assets, data_dir: parent(&cx, config.data), base_path: config.base_path,
-        site_data, collections: ArenaMap::new(&cx), pages: ArenaVec::new(&cx), written: ArenaMap::new(&cx) };
+        site_data, collections: ArenaMap::new(&cx), pages: ArenaVec::new(&cx),
+        stylesheets: ArenaVec::new(&cx), written: ArenaMap::new(&cx) };
     match render_site(&cx, build) {
         Result::Ok(nothing) => (),
         Result::Err(message) => return Result::Err.(clean_after_error(&cx, stage, message)),

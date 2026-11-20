@@ -382,6 +382,74 @@ class BuildTests(unittest.TestCase):
         result = self.build()
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_srcset_candidates_are_checked(self):
+        assets = self.site / "src/assets"
+        (assets / "small.png").write_bytes(b"small")
+        (assets / "large.png").write_bytes(b"large")
+        page = self.site / "src/responsive.html"
+        page.write_text('<img srcset="/assets/small.png?x=1&amp;y=2 1x, '
+                        '/assets/large.png 2x, data:image/gif;base64,abc 3x">')
+        self.assertEqual(self.build().returncode, 0)
+
+        page.write_text('<source SRCSET="/assets/small.png 1x, /assets/missing.png 2x">')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{page}: broken local link: /assets/missing.png", result.stderr)
+
+    def test_css_urls_in_stylesheets_and_html_are_checked(self):
+        assets = self.site / "src/assets"
+        (assets / "image.png").write_bytes(b"image")
+        (assets / "my image.png").write_bytes(b"image")
+        sheet = assets / "css/site.css"
+        sheet.write_text('/* url(../ignored.png) */\n'
+                         '.label { content: "url(../ignored.png)"; }\n'
+                         '.picture { background: URL("../image.png") }\n'
+                         '.escaped { background: url(../my\\ image.png) }\n')
+        page = self.site / "src/inline.html"
+        page.write_text('<div style="background:url(/assets/image.png)"></div>\n'
+                        '<style>.picture { background: url(../assets/image.png) }</style>')
+        self.assertEqual(self.build().returncode, 0)
+
+        sheet.write_text('.picture { background: url("../missing.png") }')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{sheet}: broken local link: ../missing.png", result.stderr)
+
+        sheet.write_text('.picture { background: url("../image.png") }')
+        page.write_text('<style>.picture { background: url(/assets/missing.png) }</style>')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{page}: broken local link: /assets/missing.png", result.stderr)
+
+        page.write_text('<div style="background: url(/assets/missing.png)"></div>')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{page}: broken local link: /assets/missing.png", result.stderr)
+
+    def test_base_path_applies_to_srcset_and_css_urls(self):
+        shutil.rmtree(self.site / "src")
+        assets = self.site / "src/assets"
+        assets.mkdir(parents=True)
+        (assets / "image.png").write_bytes(b"image")
+        sheet = assets / "site.css"
+        sheet.write_text('.picture { background: url(/docs/assets/image.png) }')
+        page = self.site / "src/index.html"
+        page.write_text('<img srcset="/docs/assets/image.png 1x">'
+                        '<style>.picture { background: url(/docs/assets/image.png) }</style>')
+        (self.site / "krayon.toml").write_text('base_path = "/docs"\n')
+        self.assertEqual(self.build().returncode, 0)
+
+        page.write_text('<img srcset="/assets/image.png 1x">')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("broken local link: /assets/image.png", result.stderr)
+
+        page.write_text('<img srcset="/docs/assets/image.png 1x">')
+        sheet.write_text('.picture { background: url(/assets/image.png) }')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{sheet}: broken local link: /assets/image.png", result.stderr)
+
     def test_link_scanner_ignores_comments_and_script_text(self):
         layout = self.site / "src/_includes/base.html"
         layout.write_text(layout.read_text() +

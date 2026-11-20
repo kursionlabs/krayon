@@ -50,13 +50,13 @@ only after a successful build. A failed render leaves the previous output
 intact. Krayon owns the output directory and removes its previous contents on
 a successful rebuild, including files placed there by hand.
 
-Before installing the output, Krayon checks local `href` and `src`
-values in generated HTML. Page links and copied assets must
+Before installing the output, Krayon checks local `href`, `src`, and `srcset`
+values in generated HTML, plus CSS `url()` references in inline styles and
+copied `.css` assets. Page links and copied assets must
 resolve; fragments targeting generated pages must match an HTML ID. Relative
 URLs, query strings, percent escapes, and `base_path` are handled;
 external URLs are ignored. A broken link fails the build and reports the
 source page and URL.
-CSS `url()` references and `srcset` are not checked.
 
 Pages and layouts may start with TOML front matter between `+++` lines:
 
@@ -153,3 +153,6 @@ message suitable for printing. The CLI is a small wrapper around that API.
 
 Run `python3 tests/integration.py` for the end-to-end checks. They build
 Krayon with the adjacent Kursal compiler and use temporary site copies.
+CI bootstraps Kursal from its `main` branch, builds Krayon, and runs these checks.
+If the Kursal repository is private, set the `KURSAL_REPO_TOKEN` Actions secret
+to a token with read access to that repository.

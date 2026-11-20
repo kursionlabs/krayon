@@ -15,6 +15,14 @@ exposed struct Document {
 }
 
 forall 'k.
+exposed struct Stylesheet {
+    source: Span['k],
+    output: Span['k],
+    url: Span['k],
+    css: Span['k],
+}
+
+forall 'k.
 struct Parsed {
     source: Span['k],
     output: Span['k],
@@ -61,12 +69,123 @@ fn starts_ci(&cx: Domain!['k], text: Span['k], at_pos: usize, expected: Slice[u8
 }
 
 forall 'k.
+fn scan_srcset(&cx: Domain!['k], value: Span['k], targets: ArenaVec[Span['k], 'k]) -> () {
+    var pos = 0usize;
+    while pos < value.len() {
+        while pos < value.len() && (space(at(&cx, value, pos)) || at(&cx, value, pos) == b',') {
+            pos = pos + 1usize;
+        }
+        let start = pos;
+        while pos < value.len() && !space(at(&cx, value, pos)) { pos = pos + 1usize; }
+        var end = pos;
+        while end > start && at(&cx, value, end - 1usize) == b',' { end = end - 1usize; }
+        if end > start { targets.push(&cx, value.slice(start, end)); }
+        if end == pos {
+            while pos < value.len() && at(&cx, value, pos) != b',' { pos = pos + 1usize; }
+            if pos < value.len() { pos = pos + 1usize; }
+        }
+    }
+}
+
+forall 'k.
+fn css_value(&cx: Domain!['k], source: Span['k]) -> Span['k] {
+    var out = Buffer!::new();
+    var pos = 0usize;
+    while pos < source.len() {
+        let c = at(&cx, source, pos);
+        if c == b'\\' && pos + 1usize < source.len() {
+            pos = pos + 1usize;
+            let first = hex(at(&cx, source, pos));
+            if first != 255u8 {
+                var code = 0usize;
+                var digits = 0usize;
+                while pos < source.len() && digits < 6usize && hex(at(&cx, source, pos)) != 255u8 {
+                    code = code * 16usize + hex(at(&cx, source, pos)) as usize;
+                    pos = pos + 1usize;
+                    digits = digits + 1usize;
+                }
+                if pos < source.len() && space(at(&cx, source, pos)) { pos = pos + 1usize; }
+                if code == 0usize || code > 1114111usize || (code >= 55296usize && code <= 57343usize) {
+                    code = 65533usize;
+                }
+                out = utf8(out, code);
+            } else if at(&cx, source, pos) == b'\n' { pos = pos + 1usize; }
+            else { out = out.push_byte(at(&cx, source, pos)); pos = pos + 1usize; }
+        } else { out = out.push_byte(c); pos = pos + 1usize; }
+    }
+    out.save(&cx)
+}
+
+forall 'k.
+fn scan_css(&cx: Domain!['k], css: Span['k], targets: ArenaVec[Span['k], 'k]) -> () {
+    var pos = 0usize;
+    while pos < css.len() {
+        let c = at(&cx, css, pos);
+        if c == b'/' && at(&cx, css, pos + 1usize) == b'*' {
+            pos = pos + 2usize;
+            while pos < css.len() && !(at(&cx, css, pos) == b'*' && at(&cx, css, pos + 1usize) == b'/') {
+                pos = pos + 1usize;
+            }
+            if pos < css.len() { pos = pos + 2usize; }
+        } else if c == b'"' || c == b'\'' {
+            let quote = c;
+            pos = pos + 1usize;
+            while pos < css.len() && at(&cx, css, pos) != quote {
+                if at(&cx, css, pos) == b'\\' && pos + 1usize < css.len() { pos = pos + 1usize; }
+                pos = pos + 1usize;
+            }
+            if pos < css.len() { pos = pos + 1usize; }
+        } else if (pos == 0usize || !name_byte(at(&cx, css, pos - 1usize))) &&
+            starts_ci(&cx, css, pos, "url(") {
+            pos = pos + 4usize;
+            while space(at(&cx, css, pos)) { pos = pos + 1usize; }
+            let quote = at(&cx, css, pos);
+            if quote == b'"' || quote == b'\'' {
+                pos = pos + 1usize;
+                let start = pos;
+                while pos < css.len() && at(&cx, css, pos) != quote {
+                    if at(&cx, css, pos) == b'\\' && pos + 1usize < css.len() { pos = pos + 1usize; }
+                    pos = pos + 1usize;
+                }
+                let end = pos;
+                if pos < css.len() { pos = pos + 1usize; }
+                while space(at(&cx, css, pos)) { pos = pos + 1usize; }
+                if at(&cx, css, pos) == b')' {
+                    targets.push(&cx, css_value(&cx, css.slice(start, end)));
+                    pos = pos + 1usize;
+                }
+            } else {
+                let start = pos;
+                while pos < css.len() && at(&cx, css, pos) != b')' {
+                    if at(&cx, css, pos) == b'\\' && pos + 1usize < css.len() { pos = pos + 1usize; }
+                    pos = pos + 1usize;
+                }
+                if pos < css.len() {
+                    let value = css.slice(start, pos).trim(&cx);
+                    if !value.is_empty() { targets.push(&cx, css_value(&cx, value)); }
+                    pos = pos + 1usize;
+                }
+            }
+        } else { pos = pos + 1usize; }
+    }
+}
+
+forall 'k.
+fn scan_stylesheet(&cx: Domain!['k], sheet: Stylesheet['k]) -> Parsed['k] {
+    let targets = ArenaVec::new(&cx);
+    scan_css(&cx, sheet.css, targets);
+    Parsed.{ source: sheet.source, output: sheet.output, url: sheet.url,
+        ids: ArenaMap::new(&cx), targets }
+}
+
+forall 'k.
 fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
     let ids = ArenaMap::new(&cx);
     let targets = ArenaVec::new(&cx);
     let html = document.html;
     var pos = 0usize;
     var raw = 0usize;
+    var raw_start = 0usize;
     while pos < html.len() {
         if raw != 0usize {
             if at(&cx, html, pos) == b'<' && at(&cx, html, pos + 1usize) == b'/' &&
@@ -74,6 +193,7 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
                     !name_byte(at(&cx, html, pos + 8usize))) ||
                  (raw == 2usize && starts_ci(&cx, html, pos + 2usize, "style") &&
                     !name_byte(at(&cx, html, pos + 7usize)))) {
+                if raw == 2usize { scan_css(&cx, html.slice(raw_start, pos), targets); }
                 raw = 0usize;
             } else { pos = pos + 1usize; }
         } else if at(&cx, html, pos) != b'<' {
@@ -132,15 +252,17 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
                             if equal_ci(&cx, name, "id") { ids.insert(&cx, value, true); }
                             else if equal_ci(&cx, name, "href") || equal_ci(&cx, name, "src") {
                                 targets.push(&cx, value);
-                            }
+                            } else if equal_ci(&cx, name, "srcset") { scan_srcset(&cx, value, targets); }
+                            else if equal_ci(&cx, name, "style") { scan_css(&cx, value, targets); }
                         }
                     }
                 }
-                if !self_closing && equal_ci(&cx, tag, "script") { raw = 1usize; }
-                if !self_closing && equal_ci(&cx, tag, "style") { raw = 2usize; }
+                if !self_closing && equal_ci(&cx, tag, "script") { raw = 1usize; raw_start = pos; }
+                if !self_closing && equal_ci(&cx, tag, "style") { raw = 2usize; raw_start = pos; }
             }
         }
     }
+    if raw == 2usize { scan_css(&cx, html.slice(raw_start, html.len()), targets); }
     Parsed.{ source: document.source, output: document.output, url: document.url, ids, targets }
 }
 
@@ -298,12 +420,17 @@ fn broken(&cx: Domain!['k], source: Span['k], target: Span['k]) -> Buffer! {
 }
 
 forall 'k.
-fn validate(&cx: Domain!['k], documents: ArenaVec[Document['k], 'k],
+fn validate(&cx: Domain!['k], documents: ArenaVec[Document['k], 'k], stylesheets: ArenaVec[Stylesheet['k], 'k],
     outputs: ArenaMap[Span['k], Span['k], 'k], root: Span['k], base_path: Span['k]) -> Result[(), Buffer!] {
     let pages: ArenaVec[Parsed['k], 'k] = ArenaVec::new(&cx);
     var i = 0usize;
     while i < documents.len(&cx) {
         pages.push(&cx, scan(&cx, documents.at(&cx, i)));
+        i = i + 1usize;
+    }
+    i = 0usize;
+    while i < stylesheets.len(&cx) {
+        pages.push(&cx, scan_stylesheet(&cx, stylesheets.at(&cx, i)));
         i = i + 1usize;
     }
     i = 0usize;
