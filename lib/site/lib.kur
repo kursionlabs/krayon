@@ -14,7 +14,7 @@ use links::{Document, Stylesheet, validate};
 use json::validate as validate_json;
 use xml::validate as validate_xml_document;
 use records::{filter_contains, filter_records, scalar, sort_records};
-use url::valid_origin;
+use url::{prefix, valid_origin};
 
 extern "C" fn getpid() -> i32;
 
@@ -47,6 +47,7 @@ struct Build {
     navigation: ArenaMap[Span['k], TomlValue['k], 'k],
     source_urls: ArenaMap[Span['k], Span['k], 'k],
     pages: ArenaVec[SourcePage['k], 'k],
+    redirects: ArenaVec[Redirect['k], 'k],
     pending_pagination: ArenaVec[PendingPagination['k], 'k],
     stylesheets: ArenaVec[Stylesheet['k], 'k],
     written: ArenaMap[Span['k], Span['k], 'k],
@@ -61,6 +62,12 @@ struct SourcePage {
     format: TemplateFormat,
     destination: Span['k],
     excerpt: Option[Span['k]],
+}
+
+forall 'k.
+struct Redirect {
+    destination: Span['k],
+    target: Span['k],
 }
 
 forall 'k.
@@ -394,6 +401,67 @@ fn output_for_url(&cx: Domain!['k], output: Span['k], url: Span['k], source: Spa
 }
 
 forall 'k.
+fn add_aliases(&cx: Domain!['k], build: Build['k], file: Span['k],
+    fields: ArenaMap[Span['k], TomlValue['k], 'k], canonical: Span['k]) -> Result[(), Buffer!] {
+    let aliases = match fields.get(&cx, lit(&cx, "aliases")) {
+        Option::None => return Result::Ok.(()),
+        Option::Some(value) => match value.as_array() {
+            Option::Some(items) => items,
+            Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "aliases must be an array of URLs"))),
+        },
+    };
+    var i = 0usize;
+    while i < aliases.len(&cx) {
+        let label = Buffer!::new().push_bytes(&cx, file).push_static(" [alias ")
+            .push_usize(i + 1usize).push_static("]").save(&cx);
+        let alias = match aliases.at(&cx, i).as_string() {
+            Option::Some(url) => url,
+            Option::None => return Result::Err.(report_detail(&cx, label, lit(&cx, "alias must be a string URL"))),
+        };
+        let destination = output_for_url(&cx, build.output, alias, label, TemplateFormat::Html)?;
+        claim(&cx, build, destination, label)?;
+        build.redirects.push(&cx, Redirect.{ destination, target: canonical });
+        i = i + 1usize;
+    }
+    Result::Ok.(())
+}
+
+forall 'k.
+fn escape_redirect(&cx: Domain!['k], out: Buffer!, value: Span['k]) -> Buffer! {
+    var out = out;
+    var i = 0usize;
+    while i < value.len() {
+        let c = byte(&cx, value, i);
+        out = if c == b'&' { out.push_static("&amp;") }
+            else if c == b'<' { out.push_static("&lt;") }
+            else if c == b'>' { out.push_static("&gt;") }
+            else if c == b'"' { out.push_static("&quot;") }
+            else if c == b'\'' { out.push_static("&#39;") }
+            else { out.push_byte(c) };
+        i = i + 1usize;
+    }
+    out
+}
+
+forall 'k.
+fn write_redirects(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
+    var i = 0usize;
+    while i < build.redirects.len(&cx) {
+        let redirect = build.redirects.at(&cx, i);
+        let target = prefix(&cx, build.base_path, redirect.target);
+        var html = Buffer!::new().push_static("<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">")
+            .push_static("<meta name=\"robots\" content=\"noindex\">")
+            .push_static("<meta http-equiv=\"refresh\" content=\"0; url=");
+        html = escape_redirect(&cx, html, target).push_static("\"></head><body><p>This page moved to ")
+            .push_static("<a href=\"");
+        html = escape_redirect(&cx, html, target).push_static("\">the new page</a>.</p></body></html>\n");
+        save(&cx, redirect.destination, html)?;
+        i = i + 1usize;
+    }
+    Result::Ok.(())
+}
+
+forall 'k.
 fn layout_name(&cx: Domain!['k], data: ArenaMap[Span['k], TomlValue['k], 'k]) -> Result[Option[Span['k]], Buffer!] {
     match data.get(&cx, lit(&cx, "layout")) {
         Option::None => Result::Ok.(Option::None),
@@ -567,7 +635,8 @@ fn directory_defaults(&cx: Domain!['k], build: Build['k], relative: Span['k],
                 || key.is(&cx, "page_permalink") || key.is(&cx, "where")
                 || key.is(&cx, "sort_by") || key.is(&cx, "sort_order")
                 || key.is(&cx, "pagination") || key.is(&cx, "headings")
-                || key.is(&cx, "collection_navigation") || key.is(&cx, "url") {
+                || key.is(&cx, "collection_navigation") || key.is(&cx, "url")
+                || key.is(&cx, "aliases") {
                 return Result::Err.(report_detail(&cx, file,
                     Buffer!::new().push_static("field cannot be a directory default: ").push_bytes(&cx, key).save(&cx)));
             },
@@ -621,6 +690,9 @@ fn generate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
             Option::None => return Result::Err.(report_detail(&cx, label, lit(&cx, "generate item must be a table"))),
         };
         let fields = generated_fields(&cx, template_page.data, record);
+        if fields.contains(&cx, lit(&cx, "aliases")) {
+            return Result::Err.(report_detail(&cx, label, lit(&cx, "aliases require an ordinary page")));
+        }
         let is_draft = draft(&cx, fields, label)?;
         if build.include_drafts || !is_draft {
             let url = match record.get(&cx, lit(&cx, "url")) {
@@ -891,6 +963,10 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k],
     };
     let parsed = Page.{ data: merge_defaults(&cx, defaults, parsed.data), source_urls: parsed.source_urls,
         url: parsed.url, body: parsed.body, body_line: parsed.body_line };
+    if parsed.data.contains(&cx, lit(&cx, "aliases"))
+        && (parsed.data.contains(&cx, lit(&cx, "generate")) || parsed.data.contains(&cx, lit(&cx, "paginate"))) {
+        return Result::Err.(report_detail(&cx, file, lit(&cx, "aliases require an ordinary page")));
+    }
     match parsed.data.get(&cx, lit(&cx, "paginate")) {
         Option::None => (),
         Option::Some(value) => {
@@ -925,6 +1001,10 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k],
     }
     let is_draft = draft(&cx, parsed.data, file)?;
     if is_draft && !build.include_drafts { return Result::Ok.(()); }
+    let html = match format { TemplateFormat::Html => true, _ => false };
+    if !html && parsed.data.contains(&cx, lit(&cx, "aliases")) {
+        return Result::Err.(report_detail(&cx, file, lit(&cx, "aliases require an HTML page")));
+    }
     let url = match parsed.data.get(&cx, lit(&cx, "permalink")) {
         Option::None => match parsed.data.get(&cx, lit(&cx, "permalink_pattern")) {
             Option::None => url,
@@ -958,6 +1038,7 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k],
         url, body: parsed.body, body_line: parsed.body_line };
     let destination = output_for_url(&cx, build.output, url, file, format)?;
     claim(&cx, build, destination, file)?;
+    add_aliases(&cx, build, file, page.data, url)?;
     let excerpt = if is_markdown { markdown_excerpt_source(&cx, page.body) } else { Option::None };
     build.pages.push(&cx, SourcePage.{ file, source_path: Option::Some.(relative), page, is_markdown, format, destination, excerpt });
     Result::Ok.(())
@@ -1438,6 +1519,7 @@ fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
         render_page(&cx, build, build.pages.at(&cx, i))?;
         i = i + 1usize;
     }
+    write_redirects(&cx, build)?;
     let assets = join(&cx, build.source, build.assets);
     if exists_path(&cx, assets)? { copy_assets(&cx, build, lit(&cx, ""), 0usize)?; }
     let documents = ArenaVec::new(&cx);
@@ -1497,7 +1579,7 @@ fn build_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> 
         assets: config.assets, data_dir: parent(&cx, config.data), base_path: config.base_path, include_drafts,
         site_data, definitions: config.definitions, config_file: join(&cx, root, lit(&cx, "krayon.toml")),
         collections: ArenaMap::new(&cx), navigation: ArenaMap::new(&cx),
-        source_urls: ArenaMap::new(&cx), pages: ArenaVec::new(&cx),
+        source_urls: ArenaMap::new(&cx), pages: ArenaVec::new(&cx), redirects: ArenaVec::new(&cx),
         pending_pagination: ArenaVec::new(&cx),
         stylesheets: ArenaVec::new(&cx), written: ArenaMap::new(&cx) };
     match render_site(&cx, build) {

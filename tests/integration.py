@@ -169,6 +169,87 @@ class BuildTests(unittest.TestCase):
         self.assertIn('href="/docs/journal/first/"',
                       (self.site / "dist/links/index.html").read_text())
 
+    def test_page_aliases_create_redirects_without_collection_entries(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        src.mkdir()
+        (self.site / "krayon.toml").write_text('base_path = "/docs"\n')
+        (src / "new.md").write_text(
+            '+++\npermalink = "/latest/"\n'
+            'aliases = ["/old/", "/legacy.html"]\n+++\n# New\n')
+        (src / "draft.md").write_text(
+            '+++\ndraft = true\naliases = ["/draft-old/"]\n+++\n# Draft\n')
+        (src / "index.html").write_text(
+            '<a href="/docs/old/">Old link</a>'
+            '{% for entry in collections.pages %}{{ entry.url }};{% endfor %}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/index.html").read_text(),
+                         '<a href="/docs/old/">Old link</a>/;/latest/;')
+        for path in ("old/index.html", "legacy.html"):
+            redirect = (self.site / "dist" / path).read_text()
+            self.assertIn('content="0; url=/docs/latest/"', redirect)
+            self.assertIn('href="/docs/latest/"', redirect)
+            self.assertIn('content="noindex"', redirect)
+        self.assertFalse((self.site / "dist/draft-old/index.html").exists())
+        result = self.build('--drafts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('href="/docs/draft/"',
+                      (self.site / "dist/draft-old/index.html").read_text())
+
+    def test_invalid_page_aliases_preserve_output(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        src.mkdir()
+        (src / "page.md").write_text('# Page\n')
+        (src / "other.md").write_text('# Other\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        original = (self.site / "dist/page/index.html").read_text()
+        for contents, message in [
+            ('+++\naliases = "/old/"\n+++\n# Page\n', 'aliases must be an array'),
+            ('+++\naliases = [42]\n+++\n# Page\n', 'alias must be a string'),
+            ('+++\naliases = ["/../old/"]\n+++\n# Page\n', 'unsafe URL'),
+            ('+++\naliases = ["/other/"]\n+++\n# Page\n', 'output collision'),
+            ('+++\naliases = ["/page/"]\n+++\n# Page\n', 'output collision'),
+        ]:
+            (src / "page.md").write_text(contents)
+            result = self.build()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(message, result.stderr)
+            self.assertEqual((self.site / "dist/page/index.html").read_text(), original)
+
+        (src / "page.md").write_text('# Page\n')
+        (src / "feed.xml").write_text('+++\naliases = ["/old/"]\n+++\n<feed/>')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('aliases require an HTML page', result.stderr)
+        self.assertEqual((self.site / "dist/page/index.html").read_text(), original)
+
+        (src / "feed.xml").unlink()
+        (src / "_defaults.toml").write_text('aliases = ["/old/"]\n')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('field cannot be a directory default: aliases', result.stderr)
+        (src / "_defaults.toml").unlink()
+
+        (src / "archive.html").write_text(
+            '+++\npaginate = "collections.pages"\npage_size = 1\n'
+            'aliases = ["/old/"]\n+++\nArchive')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('aliases require an ordinary page', result.stderr)
+        (src / "archive.html").unlink()
+        (src / "_data").mkdir()
+        (src / "_data/site.toml").write_text(
+            '[[items]]\nslug = "one"\naliases = ["/old/"]\n')
+        (src / "generate.html").write_text(
+            '+++\ngenerate = "site.items"\n'
+            'permalink = "/items/{{ item.slug }}/"\n+++\nItem')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('aliases require an ordinary page', result.stderr)
+
     def test_invalid_directory_permalink_patterns_preserve_output(self):
         shutil.rmtree(self.site / "src")
         src = self.site / "src"

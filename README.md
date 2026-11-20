@@ -101,6 +101,20 @@ Other routing and generation fields such as `permalink`, `generate`,
 `paginate`, and pagination options cannot appear in `_defaults.toml`; Krayon
 reports an error if they do. `_defaults.toml` itself is never published.
 
+An ordinary Markdown or HTML page can keep old URLs with `aliases`:
+
+```toml
+aliases = ["/old/", "/old.html"]
+```
+
+Each alias produces an HTML file with an immediate refresh and a visible link
+to the page's current URL. The target includes `base_path`. These are HTML
+redirect pages for static hosts, not HTTP 301 responses. Aliases may end in
+`/` or `.html` and pass the usual path and output collision checks. They are
+excluded from `collections.pages` and from `page_url` source lookups. Draft
+aliases appear only in `--drafts` builds. Generated and paginated templates,
+non-HTML outputs, and `_defaults.toml` cannot declare aliases.
+
 Set `draft = true` in a page's front matter to omit it from a normal build and
 from `collections.pages`. Run `krayon build [SITE_ROOT] --drafts` to include
 drafts in a preview build. This replaces the configured output with the preview;
