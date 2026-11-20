@@ -25,6 +25,8 @@ forall 'k.
 struct LinkContext {
     base: Span['k],
     urls: ArenaMap[Span['k], Span['k], 'k],
+    asset_urls: ArenaMap[Span['k], Span['k], 'k],
+    fingerprint_assets: bool,
     source: Span['k],
 }
 
@@ -51,21 +53,15 @@ fn next_line(&cx: Domain!['k], source: Span['k], start: usize) -> (Span['k], usi
 }
 
 forall 'k.
-fn source_link(&cx: Domain!['k], links: LinkContext['k], target: Span['k]) -> Span['k] {
-    var end = target.len();
-    match target.find_byte(&cx, b'?', 0usize) { Option::Some(at) => if at < end { end = at; }, Option::None => (), }
-    match target.find_byte(&cx, b'#', 0usize) { Option::Some(at) => if at < end { end = at; }, Option::None => (), }
-    let path = target.slice(0usize, end);
-    if !path.ends_with(&cx, lit(&cx, ".md")) || starts(&cx, path, "//")
-        || path.find(&cx, lit(&cx, "://"), 0usize).is_some() { return prefix(&cx, links.base, target); }
+fn source_path(&cx: Domain!['k], source: Span['k], path: Span['k]) -> Option[Span['k]] {
     let absolute = at(&cx, path, 0usize) == b'/';
     let parts: ArenaVec[Span['k], 'k] = ArenaVec::new(&cx);
     if !absolute {
         var i = 0usize;
         var start = 0usize;
-        while i < links.source.len() {
-            if at(&cx, links.source, i) == b'/' {
-                parts.push(&cx, links.source.slice(start, i));
+        while i < source.len() {
+            if at(&cx, source, i) == b'/' {
+                parts.push(&cx, source.slice(start, i));
                 start = i + 1usize;
             }
             i = i + 1usize;
@@ -77,7 +73,7 @@ fn source_link(&cx: Domain!['k], links: LinkContext['k], target: Span['k]) -> Sp
         if i == path.len() || at(&cx, path, i) == b'/' {
             let part = path.slice(start, i);
             if part.is(&cx, "..") {
-                if parts.len(&cx) == 0usize { return prefix(&cx, links.base, target); }
+                if parts.len(&cx) == 0usize { return Option::None; }
                 let removed = parts.pop(&cx);
             } else if !part.is_empty() && !part.is(&cx, ".") { parts.push(&cx, part); }
             start = i + 1usize;
@@ -91,8 +87,44 @@ fn source_link(&cx: Domain!['k], links: LinkContext['k], target: Span['k]) -> Sp
         key = key.push_bytes(&cx, parts.at(&cx, i));
         i = i + 1usize;
     }
-    let key = key.save(&cx);
+    Option::Some.(key.save(&cx))
+}
+
+forall 'k.
+fn source_link(&cx: Domain!['k], links: LinkContext['k], target: Span['k]) -> Span['k] {
+    var end = target.len();
+    match target.find_byte(&cx, b'?', 0usize) { Option::Some(at) => if at < end { end = at; }, Option::None => (), }
+    match target.find_byte(&cx, b'#', 0usize) { Option::Some(at) => if at < end { end = at; }, Option::None => (), }
+    let path = target.slice(0usize, end);
+    if !path.ends_with(&cx, lit(&cx, ".md")) || starts(&cx, path, "//")
+        || path.find(&cx, lit(&cx, "://"), 0usize).is_some() { return prefix(&cx, links.base, target); }
+    let key = match source_path(&cx, links.source, path) {
+        Option::Some(found) => found,
+        Option::None => return prefix(&cx, links.base, target),
+    };
     match links.urls.get(&cx, key) {
+        Option::Some(url) => prefix(&cx, links.base,
+            Buffer!::new().push_bytes(&cx, url).push_bytes(&cx, target.slice(end, target.len())).save(&cx)),
+        Option::None => prefix(&cx, links.base, target),
+    }
+}
+
+forall 'k.
+fn image_link(&cx: Domain!['k], links: LinkContext['k], target: Span['k]) -> Span['k] {
+    if !links.fingerprint_assets { return prefix(&cx, links.base, target); }
+    var end = target.len();
+    match target.find_byte(&cx, b'?', 0usize) { Option::Some(at) => if at < end { end = at; }, Option::None => (), }
+    match target.find_byte(&cx, b'#', 0usize) { Option::Some(at) => if at < end { end = at; }, Option::None => (), }
+    let path = target.slice(0usize, end);
+    if path.is_empty() || starts(&cx, path, "//") || path.find(&cx, lit(&cx, "://"), 0usize).is_some() {
+        return prefix(&cx, links.base, target);
+    }
+    let relative = match source_path(&cx, links.source, path) {
+        Option::Some(found) => found,
+        Option::None => return prefix(&cx, links.base, target),
+    };
+    let key = Buffer!::new().push_static("/").push_bytes(&cx, relative).save(&cx);
+    match links.asset_urls.get(&cx, key) {
         Option::Some(url) => prefix(&cx, links.base,
             Buffer!::new().push_bytes(&cx, url).push_bytes(&cx, target.slice(end, target.len())).save(&cx)),
         Option::None => prefix(&cx, links.base, target),
@@ -145,7 +177,7 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
                                     },
                                     Option::None => (),
                                 }
-                                out = html_escape(&cx, out.push_static("<img src=\""), prefix(&cx, links.base, target))
+                                out = html_escape(&cx, out.push_static("<img src=\""), image_link(&cx, links, target))
                                     .push_static("\" alt=\"");
                                 out = html_escape(&cx, out, s.slice(i + 2usize, end)).push_static("\"");
                                 if !title.is_empty() {
@@ -552,10 +584,11 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
 
 forall 'k.
 fn markdown(&cx: Domain!['k], source: Span['k], base: Span['k],
-    urls: ArenaMap[Span['k], Span['k], 'k], current: Span['k])
+    urls: ArenaMap[Span['k], Span['k], 'k], asset_urls: ArenaMap[Span['k], Span['k], 'k],
+    fingerprint_assets: bool, current: Span['k])
     -> Result[(Buffer!, ArenaVec[Heading['k], 'k]), Span['k]] {
     let headings = ArenaVec::new(&cx);
-    let links = LinkContext.{ base, urls, source: current };
+    let links = LinkContext.{ base, urls, asset_urls, fingerprint_assets, source: current };
     let html = render_blocks(&cx, source, links, ArenaMap::new(&cx), headings, 0usize)?;
     Result::Ok.((html, headings))
 }

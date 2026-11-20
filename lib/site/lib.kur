@@ -1159,7 +1159,8 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
         Option::None => original,
     };
     let relative = source.file.slice(build.source.len() + 1usize, source.file.len());
-    let body = if source.is_markdown { match markdown(&cx, page.body, build.base_path, build.source_urls, relative) {
+    let body = if source.is_markdown { match markdown(&cx, page.body, build.base_path, build.source_urls,
+        build.asset_urls, build.fingerprint_assets, relative) {
             Result::Ok(result) => {
                 let (html, found) = result;
                 if page.data.contains(&cx, lit(&cx, "headings")) {
@@ -1665,7 +1666,8 @@ fn prepare_sources(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
             Option::None => (),
             Option::Some(source) => {
                 let relative = entry.file.slice(build.source.len() + 1usize, entry.file.len());
-                let html = match markdown(&cx, source, build.base_path, build.source_urls, relative) {
+                let html = match markdown(&cx, source, build.base_path, build.source_urls,
+                    build.asset_urls, build.fingerprint_assets, relative) {
                     Result::Ok(result) => { let (html, headings) = result; html.save(&cx) },
                     Result::Err(message) => return Result::Err.(report_detail(&cx, entry.file, message)),
                 };

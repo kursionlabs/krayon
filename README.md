@@ -104,6 +104,12 @@ an unknown asset. Original asset paths remain available so existing links
 and relative URLs inside CSS continue to work. Asset content changes update
 the fingerprinted filename on the next build. The `asset_urls` site data key
 is reserved for this map.
+When fingerprinting is enabled, Markdown images pointing to copied assets
+also use fingerprinted URLs. Root-relative paths such as
+`![Logo](/assets/img/logo.png)` resolve from the site root; relative paths
+such as `![Logo](../assets/img/logo.png)` resolve from the Markdown source
+file. Query strings, fragments, and `base_path` are preserved. Markdown
+links and images outside the asset directory keep their usual behavior.
 `index.md` becomes `/index.html`, `guide/setup.md` becomes
 `/guide/setup/index.html`, and `guide/index.md` becomes
 `/guide/index.html`. HTML pages can set a `permalink` ending in `/` or

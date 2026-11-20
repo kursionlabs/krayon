@@ -106,6 +106,7 @@ class BuildTests(unittest.TestCase):
         (src / "assets/css").mkdir(parents=True)
         (src / "assets/js").mkdir()
         (src / "assets/img").mkdir()
+        (src / "posts").mkdir()
         config = self.site / "krayon.toml"
         config.write_text('base_path = "/docs"\n')
         (src / "assets/css/site.css").write_text(
@@ -118,14 +119,29 @@ class BuildTests(unittest.TestCase):
             '<img src="{{ "/assets/img/logo.png" | asset_url }}" alt="Logo">')
         (src / "manifest.json").write_text(
             '{{ "/assets/js/app.js?mode=1#run" | asset_url | json }}')
+        (src / "posts/article.md").write_text(
+            '# Article\n\n'
+            '![Root](/assets/img/logo.png?size=1#view)\n\n'
+            '<!-- more -->\n\n'
+            '![External](https://example.org/image.png)\n\n'
+            '[CSS](/assets/css/site.css)\n')
+        (src / "excerpts.html").write_text(
+            '{% for entry in collections.pages %}'
+            '{% if entry.url == "/posts/article/" %}{{ entry.excerpt | safe }}{% endif %}'
+            '{% endfor %}')
 
         result = self.build()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('href="/docs/assets/css/site.css"',
                       (self.site / "dist/index.html").read_text())
         self.assertEqual(list((self.site / "dist/assets/css").glob("site.*.css")), [])
+        self.assertIn('<img src="/docs/assets/img/logo.png?size=1#view" alt="Root">',
+                      (self.site / "dist/posts/article/index.html").read_text())
 
         config.write_text('base_path = "/docs"\nfingerprint_assets = true\n')
+        article_source = src / "posts/article.md"
+        article_source.write_text(article_source.read_text().replace(
+            '![Root]', '![Relative](../assets/img/logo.png)\n\n![Root]'))
         result = self.build()
         self.assertEqual(result.returncode, 0, result.stderr)
         output = self.site / "dist"
@@ -137,6 +153,13 @@ class BuildTests(unittest.TestCase):
         self.assertIn(f'href="/docs/assets/css/{css[0].name}"', html)
         self.assertIn(f'src="/docs/assets/js/{js[0].name}"', html)
         self.assertIn(f'src="/docs/assets/img/{image[0].name}"', html)
+        article = (output / "posts/article/index.html").read_text()
+        self.assertIn(f'<img src="/docs/assets/img/{image[0].name}" alt="Relative">', article)
+        self.assertIn(f'<img src="/docs/assets/img/{image[0].name}?size=1#view" alt="Root">', article)
+        self.assertIn('<img src="https://example.org/image.png" alt="External">', article)
+        self.assertIn('<a href="/docs/assets/css/site.css">CSS</a>', article)
+        self.assertIn(f'<img src="/docs/assets/img/{image[0].name}" alt="Relative">',
+                      (output / "excerpts/index.html").read_text())
         self.assertEqual(json.loads((output / "manifest.json").read_text()),
                          f'/docs/assets/js/{js[0].name}?mode=1#run')
         self.assertEqual(css[0].read_bytes(), (output / "assets/css/site.css").read_bytes())
