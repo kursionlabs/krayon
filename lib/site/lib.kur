@@ -25,6 +25,7 @@ struct Config {
     layouts: Span['k],
     data: Span['k],
     assets: Span['k],
+    fingerprint_assets: bool,
     base_path: Span['k],
     origin: Span['k],
     exclude: ArenaVec[Span['k], 'k],
@@ -38,6 +39,8 @@ struct Build {
     layouts: Span['k],
     layouts_rel: Span['k],
     assets: Span['k],
+    fingerprint_assets: bool,
+    asset_urls: ArenaMap[Span['k], Span['k], 'k],
     data_dir: Span['k],
     base_path: Span['k],
     include_drafts: bool,
@@ -311,7 +314,7 @@ forall 'k.
 fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] {
     let file = join(&cx, root, lit(&cx, "krayon.toml"));
     let defaults = Config.{ input: lit(&cx, "src"), output: lit(&cx, "dist"), layouts: lit(&cx, "_includes"),
-        data: lit(&cx, "_data/site.toml"), assets: lit(&cx, "assets"), base_path: lit(&cx, ""),
+        data: lit(&cx, "_data/site.toml"), assets: lit(&cx, "assets"), fingerprint_assets: false, base_path: lit(&cx, ""),
         origin: lit(&cx, ""), exclude: ArenaVec::new(&cx), definitions: ArenaMap::new(&cx) };
     if !exists_path(&cx, file)? { return Result::Ok.(defaults); }
     let text = load(&cx, file)?;
@@ -325,7 +328,7 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                     Option::Some(key) => {
                         if !key.is(&cx, "input") && !key.is(&cx, "output") && !key.is(&cx, "layouts")
                             && !key.is(&cx, "data") && !key.is(&cx, "assets") && !key.is(&cx, "base_path")
-                            && !key.is(&cx, "origin") && !key.is(&cx, "exclude")
+                            && !key.is(&cx, "origin") && !key.is(&cx, "exclude") && !key.is(&cx, "fingerprint_assets")
                             && !key.is(&cx, "collections") {
                             return Result::Err.(report(&cx, "unknown config key", key));
                         }
@@ -380,6 +383,13 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                     Option::None => return Result::Err.(report(&cx, "collections must be a table", file)),
                 },
             };
+            let fingerprint_assets = match values.get(&cx, lit(&cx, "fingerprint_assets")) {
+                Option::None => false,
+                Option::Some(value) => match value {
+                    TomlValue::Boolean(enabled) => enabled,
+                    _ => return Result::Err.(report(&cx, "fingerprint_assets must be a boolean", file)),
+                },
+            };
             let exclude = ArenaVec::new(&cx);
             match values.get(&cx, lit(&cx, "exclude")) {
                 Option::None => (),
@@ -415,6 +425,7 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                 layouts: config_string(&cx, values, "layouts", "_includes")?,
                 data: config_string(&cx, values, "data", "_data/site.toml")?,
                 assets: config_string(&cx, values, "assets", "assets")?,
+                fingerprint_assets,
                 base_path,
                 origin,
                 exclude,
@@ -1350,6 +1361,81 @@ fn scan_pages(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usi
 }
 
 forall 'k.
+fn fingerprint_name(&cx: Domain!['k], relative: Span['k], contents: Span['k]) -> Span['k] {
+    var hash = 14695981039346656037u64;
+    var i = 0usize;
+    while i < contents.len() {
+        hash = (hash ^ (byte(&cx, contents, i) as u64)) * 1099511628211u64;
+        i = i + 1usize;
+    }
+    var dot = relative.len();
+    i = relative.len();
+    var found = false;
+    while i > 0usize && !found {
+        i = i - 1usize;
+        if byte(&cx, relative, i) == b'/' { found = true; }
+        if byte(&cx, relative, i) == b'.' { dot = i; found = true; }
+    }
+    var name = Buffer!::new().push_bytes(&cx, relative.slice(0usize, dot)).push_byte(b'.');
+    i = 16usize;
+    while i > 0usize {
+        i = i - 1usize;
+        let digit = ((hash >> ((i as u64) * 4u64)) & 15u64) as u8;
+        name = name.push_byte(if digit < 10u8 { b'0' + digit } else { b'a' + digit - 10u8 });
+    }
+    name.push_bytes(&cx, relative.slice(dot, relative.len())).save(&cx)
+}
+
+forall 'k.
+fn asset_url(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Span['k] {
+    Buffer!::new().push_static("/").push_bytes(&cx, build.assets)
+        .push_byte(b'/').push_bytes(&cx, relative).save(&cx)
+}
+
+forall 'k.
+fn scan_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usize) -> Result[(), Buffer!] {
+    if depth >= 64usize { return Result::Err.(report(&cx, "asset tree too deep", relative)); }
+    let path = join(&cx, join(&cx, build.source, build.assets), relative);
+    let opened = match read_dir(&cx, path) {
+        Result::Ok(directory) => directory,
+        Result::Err(e) => return Result::Err.(report(&cx, "cannot list", path)),
+    };
+    var opened = opened;
+    var going = true;
+    while going {
+        match &opened.next() {
+            Result::Err(e) => { opened.close(); return Result::Err.(report(&cx, "cannot list", relative)); },
+            Result::Ok(next) => match next {
+                Option::None => { going = false; },
+                Option::Some(entry) => {
+                    let { name, is_directory } = entry;
+                    let child = join(&cx, relative, name.save(&cx));
+                    if is_directory {
+                        match scan_assets(&cx, build, child, depth + 1usize) {
+                            Result::Ok(nothing) => (),
+                            Result::Err(message) => { opened.close(); return Result::Err.(message); },
+                        }
+                    } else {
+                        let output_name = if build.fingerprint_assets {
+                            let source = join(&cx, join(&cx, build.source, build.assets), child);
+                            let contents = match load(&cx, source) {
+                                Result::Ok(value) => value,
+                                Result::Err(message) => { opened.close(); return Result::Err.(message); },
+                            };
+                            fingerprint_name(&cx, child, contents)
+                        } else { child };
+                        let replaced = build.asset_urls.insert(&cx, asset_url(&cx, build, child),
+                            asset_url(&cx, build, output_name));
+                    }
+                },
+            },
+        }
+    }
+    if !opened.close().is_ok() { return Result::Err.(report(&cx, "cannot close directory", relative)); }
+    Result::Ok.(())
+}
+
+forall 'k.
 fn copy_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usize) -> Result[(), Buffer!] {
     if depth >= 64usize { return Result::Err.(report(&cx, "asset tree too deep", relative)); }
     let directory = join(&cx, join(&cx, build.source, build.assets), relative);
@@ -1387,9 +1473,32 @@ fn copy_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: us
                             Result::Ok(nothing) => (),
                             Result::Err(message) => { directory.close(); return Result::Err.(message); },
                         }
+                        let url = asset_url(&cx, build, child);
+                        let hashed_url = match build.asset_urls.get(&cx, url) {
+                            Option::Some(found) => found,
+                            Option::None => { directory.close(); return Result::Err.(report(&cx, "asset was not scanned", source)); },
+                        };
+                        if build.fingerprint_assets {
+                            let current_url = asset_url(&cx, build, fingerprint_name(&cx, child, contents));
+                            if !current_url.eq(&cx, hashed_url) {
+                                directory.close();
+                                return Result::Err.(report(&cx, "asset changed during build", source));
+                            }
+                            let hashed_destination = join(&cx, build.output, hashed_url.slice(1usize, hashed_url.len()));
+                            match claim(&cx, build, hashed_destination, source) {
+                                Result::Ok(nothing) => (),
+                                Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                            }
+                            match save(&cx, hashed_destination, Buffer!::new().push_bytes(&cx, contents)) {
+                                Result::Ok(nothing) => (),
+                                Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                            }
+                            if child.ends_with(&cx, lit(&cx, ".css")) {
+                                build.stylesheets.push(&cx, Stylesheet.{ source, output: hashed_destination,
+                                    url: hashed_url, css: contents });
+                            }
+                        }
                         if child.ends_with(&cx, lit(&cx, ".css")) {
-                            let url = Buffer!::new().push_static("/").push_bytes(&cx, build.assets)
-                                .push_static("/").push_bytes(&cx, child).save(&cx);
                             build.stylesheets.push(&cx, Stylesheet.{ source, output: destination, url, css: contents });
                         }
                     }
@@ -1700,6 +1809,23 @@ fn publish_collection_navigation(&cx: Domain!['k], build: Build['k]) -> () {
 
 forall 'k.
 fn discover_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
+    let assets = join(&cx, build.source, build.assets);
+    if exists_path(&cx, assets)? { scan_assets(&cx, build, lit(&cx, ""), 0usize)?; }
+    let asset_values = ArenaMap::new(&cx);
+    var j = 0usize;
+    while j < build.asset_urls.positions(&cx) {
+        match build.asset_urls.key_at(&cx, j) {
+            Option::None => (),
+            Option::Some(url) => match build.asset_urls.get(&cx, url) {
+                Option::None => (),
+                Option::Some(fingerprinted) => {
+                    let replaced = asset_values.insert(&cx, url, TomlValue::String.(fingerprinted));
+                },
+            },
+        }
+        j = j + 1usize;
+    }
+    let replaced = build.site_data.insert(&cx, lit(&cx, "asset_urls"), TomlValue::Table.(asset_values));
     scan_pages(&cx, build, lit(&cx, ""), 0usize, ArenaMap::new(&cx))?;
     prepare_sources(&cx, build)?;
     publish_pages(&cx, build);
@@ -1777,6 +1903,9 @@ fn read_site_data(&cx: Domain!['k], source: Span['k], config: Config['k])
     if site_data.contains(&cx, lit(&cx, "origin")) {
         return Result::Err.(report(&cx, "site data key is reserved", lit(&cx, "origin")));
     }
+    if site_data.contains(&cx, lit(&cx, "asset_urls")) {
+        return Result::Err.(report(&cx, "site data key is reserved", lit(&cx, "asset_urls")));
+    }
     let replaced = site_data.insert(&cx, lit(&cx, "base_path"), TomlValue::String.(config.base_path));
     let replaced = site_data.insert(&cx, lit(&cx, "origin"), TomlValue::String.(config.origin));
     Result::Ok.(site_data)
@@ -1786,7 +1915,8 @@ forall 'k.
 fn new_build(&cx: Domain!['k], root: Span['k], config: Config['k], source: Span['k],
     output: Span['k], include_drafts: bool, site_data: ArenaMap[Span['k], TomlValue['k], 'k]) -> Build['k] {
     Build.{ source, output, layouts: join(&cx, source, config.layouts), layouts_rel: config.layouts,
-        assets: config.assets, data_dir: parent(&cx, config.data), base_path: config.base_path,
+        assets: config.assets, fingerprint_assets: config.fingerprint_assets, asset_urls: ArenaMap::new(&cx),
+        data_dir: parent(&cx, config.data), base_path: config.base_path,
         include_drafts, exclude: config.exclude,
         site_data, definitions: config.definitions, config_file: join(&cx, root, lit(&cx, "krayon.toml")),
         collections: ArenaMap::new(&cx), navigation: ArenaMap::new(&cx),

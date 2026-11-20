@@ -100,6 +100,69 @@ class BuildTests(unittest.TestCase):
         self.assertFalse((self.site / "dist").exists())
         self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
 
+    def test_optional_asset_fingerprinting_and_asset_url_filter(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "assets/css").mkdir(parents=True)
+        (src / "assets/js").mkdir()
+        (src / "assets/img").mkdir()
+        config = self.site / "krayon.toml"
+        config.write_text('base_path = "/docs"\n')
+        (src / "assets/css/site.css").write_text(
+            'body { background: url("../img/logo.png"); }\n')
+        (src / "assets/js/app.js").write_text('console.log("one");\n')
+        (src / "assets/img/logo.png").write_bytes(b"image one\n")
+        (src / "index.html").write_text(
+            '<link rel="stylesheet" href="{{ "/assets/css/site.css" | asset_url }}">'
+            '<script src="{{ "/assets/js/app.js" | asset_url }}"></script>'
+            '<img src="{{ "/assets/img/logo.png" | asset_url }}" alt="Logo">')
+        (src / "manifest.json").write_text(
+            '{{ "/assets/js/app.js?mode=1#run" | asset_url | json }}')
+
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('href="/docs/assets/css/site.css"',
+                      (self.site / "dist/index.html").read_text())
+        self.assertEqual(list((self.site / "dist/assets/css").glob("site.*.css")), [])
+
+        config.write_text('base_path = "/docs"\nfingerprint_assets = true\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = self.site / "dist"
+        css = list((output / "assets/css").glob("site.*.css"))
+        js = list((output / "assets/js").glob("app.*.js"))
+        image = list((output / "assets/img").glob("logo.*.png"))
+        self.assertEqual([len(paths) for paths in (css, js, image)], [1, 1, 1])
+        html = (output / "index.html").read_text()
+        self.assertIn(f'href="/docs/assets/css/{css[0].name}"', html)
+        self.assertIn(f'src="/docs/assets/js/{js[0].name}"', html)
+        self.assertIn(f'src="/docs/assets/img/{image[0].name}"', html)
+        self.assertEqual(json.loads((output / "manifest.json").read_text()),
+                         f'/docs/assets/js/{js[0].name}?mode=1#run')
+        self.assertEqual(css[0].read_bytes(), (output / "assets/css/site.css").read_bytes())
+        self.assertEqual(js[0].read_bytes(), (output / "assets/js/app.js").read_bytes())
+        self.assertEqual(image[0].read_bytes(), (output / "assets/img/logo.png").read_bytes())
+
+        (src / "assets/js/app.js").write_text('console.log("two");\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        changed_js = list((output / "assets/js").glob("app.*.js"))
+        self.assertEqual(len(changed_js), 1)
+        self.assertNotEqual(changed_js[0].name, js[0].name)
+        self.assertEqual(list((output / "assets/css").glob("site.*.css"))[0].name, css[0].name)
+
+        (src / "index.html").write_text('{{ "/assets/missing.css" | asset_url }}')
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('asset_url', result.stderr)
+        self.assertEqual(changed_js[0].read_text(), 'console.log("two");\n')
+
+        config.write_text('fingerprint_assets = "yes"\n')
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('fingerprint_assets must be a boolean', result.stderr)
+        self.assertEqual(changed_js[0].read_text(), 'console.log("two");\n')
+
     def test_init_creates_buildable_site_and_refuses_existing_content(self):
         target = Path(self.temp.name) / "nested/new-site"
         result = subprocess.run(

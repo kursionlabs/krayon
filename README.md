@@ -53,6 +53,7 @@ output = "dist"
 layouts = "_includes"
 data = "_data/site.toml"
 assets = "assets"
+fingerprint_assets = false
 base_path = ""
 origin = ""
 exclude = []
@@ -93,6 +94,16 @@ slash, and exposes it as `site.origin`. The default empty origin disables
 A site can contain Markdown (`.md`), HTML (`.html`), XML (`.xml`), JSON
 (`.json`), and text (`.txt`) templates anywhere under `input`. Krayon copies
 `assets` recursively and omits layouts and data from page discovery.
+Set `fingerprint_assets = true` to also copy each asset with a content-based
+suffix before its extension, such as `site.0123456789abcdef.css`. Use
+`{{ "/assets/css/site.css" | asset_url }}` in templates to link to the
+fingerprinted copy. The filter accepts a root-relative asset path, preserves
+query strings and fragments, and applies `base_path`. It resolves to the
+ordinary asset path when fingerprinting is disabled and reports an error for
+an unknown asset. Original asset paths remain available so existing links
+and relative URLs inside CSS continue to work. Asset content changes update
+the fingerprinted filename on the next build. The `asset_urls` site data key
+is reserved for this map.
 `index.md` becomes `/index.html`, `guide/setup.md` becomes
 `/guide/setup/index.html`, and `guide/index.md` becomes
 `/guide/index.html`. HTML pages can set a `permalink` ending in `/` or

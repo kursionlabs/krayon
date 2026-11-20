@@ -243,6 +243,42 @@ fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
         return Option::Some.(prefix(&cx, base,
             Buffer!::new().push_bytes(&cx, url).push_bytes(&cx, target.slice(end, target.len())).save(&cx)));
     }
+    if expr.ends_with(&cx, lit(&cx, " | asset_url")) {
+        let source = expr.slice(0usize, expr.len() - 12usize).trim(&cx);
+        let target = match literal(&cx, source) {
+            Option::Some(value) => value,
+            Option::None => match lookup(&cx, site, collections, page, bindings, source) {
+                Option::Some(value) => match scalar(&cx, value) {
+                    Option::Some(text) => text,
+                    Option::None => return Option::None,
+                },
+                Option::None => return Option::None,
+            },
+        };
+        var end = target.len();
+        match target.find_byte(&cx, b'?', 0usize) { Option::Some(at) => if at < end { end = at; }, Option::None => (), }
+        match target.find_byte(&cx, b'#', 0usize) { Option::Some(at) => if at < end { end = at; }, Option::None => (), }
+        let paths = match site.get(&cx, lit(&cx, "asset_urls")) {
+            Option::Some(value) => match value.as_table() {
+                Option::Some(table) => table,
+                Option::None => return Option::None,
+            },
+            Option::None => return Option::None,
+        };
+        let url = match paths.get(&cx, target.slice(0usize, end)) {
+            Option::Some(value) => match value.as_string() {
+                Option::Some(found) => found,
+                Option::None => return Option::None,
+            },
+            Option::None => return Option::None,
+        };
+        let base = match string_field(&cx, site, "base_path") {
+            Option::Some(path) => path,
+            Option::None => lit(&cx, ""),
+        };
+        return Option::Some.(prefix(&cx, base,
+            Buffer!::new().push_bytes(&cx, url).push_bytes(&cx, target.slice(end, target.len())).save(&cx)));
+    }
     if expr.ends_with(&cx, lit(&cx, " | absolute_url")) {
         let source = expr.slice(0usize, expr.len() - 15usize).trim(&cx);
         let target = match literal(&cx, source) {
@@ -784,6 +820,7 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                                 Option::Some(text) => Option::Some.(TomlValue::String.(text)),
                                 Option::None => if field.ends_with(&cx, lit(&cx, " | url"))
                                     || field.ends_with(&cx, lit(&cx, " | page_url"))
+                                    || field.ends_with(&cx, lit(&cx, " | asset_url"))
                                     || field.ends_with(&cx, lit(&cx, " | absolute_url")) {
                                     match resolve(&cx, site, collections, page, bindings, field, content) {
                                         Option::Some(text) => Option::Some.(TomlValue::String.(text)),
