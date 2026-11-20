@@ -475,16 +475,16 @@ class BuildTests(unittest.TestCase):
             'sort_by = "date"\n')
         (src / "_includes").mkdir()
         (src / "_includes/nav.html").write_text(
-            '{% if page.collection_navigation.posts.previous.url %}'
+            '{% if page.collection_navigation.posts.previous %}'
             '<a href="{{ page.collection_navigation.posts.previous.url }}">'
             '{{ page.collection_navigation.posts.previous.title }}</a>{% endif %}'
             '<b>{{ content | safe }}</b>'
-            '{% if page.collection_navigation.posts.next.url %}'
+            '{% if page.collection_navigation.posts.next %}'
             '<a href="{{ page.collection_navigation.posts.next.url }}">'
             '{{ page.collection_navigation.posts.next.title }}</a>{% endif %}'
-            '{% if page.collection_navigation.chronological.previous.url %}'
+            '{% if page.collection_navigation.chronological.previous %}'
             '<i>{{ page.collection_navigation.chronological.previous.title }}</i>{% endif %}'
-            '{% if page.collection_navigation.chronological.next.url %}'
+            '{% if page.collection_navigation.chronological.next %}'
             '<i>{{ page.collection_navigation.chronological.next.title }}</i>{% endif %}')
         for name, date, draft in [
             ("old", "2024-01-01", False),
@@ -1632,6 +1632,29 @@ class BuildTests(unittest.TestCase):
         result = self.build()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("A site", (self.site / "dist/index.html").read_text())
+
+    def test_if_checks_nonempty_arrays_and_tables(self):
+        page = self.site / "src/conditions.html"
+        page.write_text(
+            '+++\n'
+            'empty_array = []\nitems = [1]\n'
+            'empty_table = {}\nperson = { name = "Ada" }\n'
+            'disabled = false\ncount = 0\n+++\n'
+            '{% if page.empty_array %}bad{% else %}empty-array;{% endif %}'
+            '{% if page.items %}items;{% else %}bad{% endif %}'
+            '{% if page.empty_table %}bad{% else %}empty-table;{% endif %}'
+            '{% if page.person %}person;{% else %}bad{% endif %}'
+            '{% if page.disabled %}bad{% else %}disabled;{% endif %}'
+            '{% if page.count %}bad{% else %}zero;{% endif %}'
+            '{% if page.missing %}bad{% else %}missing;{% endif %}'
+            '{% if page.person.name == "Ada" %}equals;{% else %}bad{% endif %}'
+            '{% for entry in collections.pages %}'
+            '{% if entry %}{% if entry.url == "/conditions/" %}record;{% endif %}{% endif %}'
+            '{% endfor %}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/conditions/index.html").read_text(),
+                         'empty-array;items;empty-table;person;disabled;zero;missing;equals;record;')
 
     def test_rebuild_replaces_output_and_removes_stale_pages(self):
         self.assertEqual(self.build().returncode, 0)

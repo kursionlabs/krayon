@@ -170,12 +170,12 @@ setting.
 A page in a named collection can link to its neighbors in that collection's
 configured order. `page.collection_navigation.posts.previous` and `.next`
 contain the neighboring page records, including their `url` and front matter.
-At either end of the collection, the missing neighbor has no fields. Check its
-URL in a condition before rendering a link:
+At either end of the collection, the missing neighbor has no fields. Check for
+the neighbor before rendering a link:
 
 ```html
-{% if page.collection_navigation.posts.previous.url %}<a href="{{ page.collection_navigation.posts.previous.url | url }}">Previous: {{ page.collection_navigation.posts.previous.title }}</a>{% endif %}
-{% if page.collection_navigation.posts.next.url %}<a href="{{ page.collection_navigation.posts.next.url | url }}">Next: {{ page.collection_navigation.posts.next.title }}</a>{% endif %}
+{% if page.collection_navigation.posts.previous %}<a href="{{ page.collection_navigation.posts.previous.url | url }}">Previous: {{ page.collection_navigation.posts.previous.title }}</a>{% endif %}
+{% if page.collection_navigation.posts.next %}<a href="{{ page.collection_navigation.posts.next.url | url }}">Next: {{ page.collection_navigation.posts.next.title }}</a>{% endif %}
 ```
 
 Pages can belong to multiple named collections and get separate navigation
@@ -239,8 +239,10 @@ for rendered page or layout HTML. The `| safe` filter writes a scalar value
 unchanged, including rendered Markdown excerpts. Templates support `or` with
 a quoted fallback,
 `{% if ... %}`, `{% else %}`, and `{% endif %}`. Conditions can test a value
-or compare it to a quoted string with `==`. An HTML page can list all pages,
-ordered by URL, with `{% for entry in collections.pages %}` and
+or compare it to a quoted string with `==`. Empty arrays and tables are false;
+nonempty arrays and tables are true. Scalar conditions keep their existing
+behavior: empty strings, `false`, and `0` are false. An HTML page can list all
+pages, ordered by URL, with `{% for entry in collections.pages %}` and
 `{% endfor %}`. Each entry has its front matter fields and a resolved `url`.
 Loops also work over arrays in site data and can be nested. Unknown
 substitutions fail the build. Markdown page bodies are rendered as Markdown;

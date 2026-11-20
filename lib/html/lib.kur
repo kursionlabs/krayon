@@ -288,9 +288,19 @@ fn truth(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                 },
             }
         },
-        Option::None => match resolve(&cx, site, collections, page, bindings, expr, content) {
-            Option::None => false,
-            Option::Some(s) => !s.is_empty() && !s.is(&cx, "false") && !s.is(&cx, "0"),
+        Option::None => {
+            match lookup(&cx, site, collections, page, bindings, expr) {
+                Option::Some(value) => match value {
+                    TomlValue::Array(items) => return items.len(&cx) > 0usize,
+                    TomlValue::Table(fields) => return fields.len(&cx) > 0usize,
+                    _ => (),
+                },
+                Option::None => (),
+            }
+            match resolve(&cx, site, collections, page, bindings, expr, content) {
+                Option::None => false,
+                Option::Some(s) => !s.is_empty() && !s.is(&cx, "false") && !s.is(&cx, "0"),
+            }
         },
     }
 }
