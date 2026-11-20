@@ -368,6 +368,60 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("output collision", result.stderr)
 
+    def test_json_filter_serializes_toml_values_and_collections(self):
+        value = 'A "quote" \\ slash\nline\t\x01'
+        data = self.site / "src/_data/site.toml"
+        data.write_text(data.read_text() + '\n[json_payload]\n'
+                        f'z = {json.dumps(value)}\n'
+                        'when = 2026-11-20\n'
+                        'values = [1, "two", {z = false, a = "x"}]\n'
+                        'price = 1.25\n'
+                        'enabled = true\n'
+                        'a = -7\n')
+        template = self.site / "src/payload.json"
+        template.write_text('{"data":{{ site.json_payload | json }},'
+                            '"pages":{{ collections.pages | json }},'
+                            '"literal":{{ "hello" | json }}}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        raw = (self.site / "dist/payload.json").read_text()
+        parsed = json.loads(raw)
+        self.assertEqual(parsed["data"], {
+            "a": -7, "enabled": True, "price": 1.25,
+            "values": [1, "two", {"a": "x", "z": False}],
+            "when": "2026-11-20", "z": value,
+        })
+        self.assertLess(raw.index('"a":-7'), raw.index('"z":'))
+        self.assertEqual(parsed["literal"], "hello")
+        self.assertEqual([page["url"] for page in parsed["pages"]],
+                         ["/", "/archive/", "/guide/intro/"])
+
+        previous = (self.site / "dist/payload.json").read_bytes()
+        data.write_text('bad = inf\n' + data.read_text())
+        template.write_text('{"bad":{{ site.bad | json }}}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("JSON cannot represent NaN or infinity", result.stderr)
+        self.assertEqual((self.site / "dist/payload.json").read_bytes(), previous)
+
+    def test_json_filter_chains_url_and_requires_json_template(self):
+        shutil.rmtree(self.site / "src")
+        (self.site / "src").mkdir()
+        (self.site / "krayon.toml").write_text('base_path = "/docs"\n')
+        template = self.site / "src/links.json"
+        template.write_text('{"asset":{{ "/assets/app.css" | url | json }}}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads((self.site / "dist/links.json").read_text()),
+                         {"asset": "/docs/assets/app.css"})
+
+        template.unlink()
+        html = self.site / "src/index.html"
+        html.write_text('{{ "value" | json }}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("json filter requires a JSON template", result.stderr)
+
     def test_drafts_are_excluded_until_preview_build(self):
         draft = self.site / "src/draft.md"
         draft.write_text('+++\ntitle = "Draft"\ndraft = true\n+++\n# Draft\n')

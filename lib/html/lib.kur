@@ -3,6 +3,7 @@ use std::buffer::Buffer!;
 use std::collections::arena_map::ArenaMap;
 use std::collections::arena_vec::ArenaVec;
 use std::fs::{canonicalize, read_to_arena};
+use std::fmt::Writable;
 use std::option::{Option, Result};
 use std::raw::Span;
 use std::slice::Slice;
@@ -300,6 +301,68 @@ fn escape_json(&cx: Domain!['k], out: Buffer!, text: Span['k]) -> Buffer! {
         i = i + 1usize;
     }
     out
+}
+
+forall 'k.
+fn json_value(&cx: Domain!['k], out: Buffer!, value: TomlValue['k], depth: usize)
+    -> Result[Buffer!, Span['k]] {
+    if depth >= 64usize {
+        out.destroy(); return Result::Err.(lit(&cx, "JSON value nested too deeply"));
+    }
+    match value {
+        TomlValue::String(text) => Result::Ok.(escape_json(&cx, out.push_byte(b'"'), text).push_byte(b'"')),
+        TomlValue::Integer(number) => Result::Ok.(out.push_i64(number)),
+        TomlValue::Float(number) => {
+            if !number.is_finite() {
+                out.destroy(); return Result::Err.(lit(&cx, "JSON cannot represent NaN or infinity"));
+            }
+            Result::Ok.(f"{number}".write(out))
+        },
+        TomlValue::Boolean(flag) => Result::Ok.(out.push_static(if flag { "true" } else { "false" })),
+        TomlValue::Datetime(date) => Result::Ok.(escape_json(&cx, out.push_byte(b'"'), date.text).push_byte(b'"')),
+        TomlValue::Array(items) => {
+            var out = out.push_byte(b'[');
+            var i = 0usize;
+            while i < items.len(&cx) {
+                if i > 0usize { out = out.push_byte(b','); }
+                out = match json_value(&cx, out, items.at(&cx, i), depth + 1usize) {
+                    Result::Ok(next) => next,
+                    Result::Err(message) => return Result::Err.(message),
+                };
+                i = i + 1usize;
+            }
+            Result::Ok.(out.push_byte(b']'))
+        },
+        TomlValue::Table(table) => {
+            let keys = ArenaVec::new(&cx);
+            var i = 0usize;
+            while i < table.positions(&cx) {
+                match table.key_at(&cx, i) {
+                    Option::Some(key) => keys.push(&cx, key),
+                    Option::None => (),
+                }
+                i = i + 1usize;
+            }
+            keys.sort_by(&cx, |&cx, a, b| a.cmp(&cx, b));
+            var out = out.push_byte(b'{');
+            i = 0usize;
+            while i < keys.len(&cx) {
+                let key = keys.at(&cx, i);
+                if i > 0usize { out = out.push_byte(b','); }
+                out = escape_json(&cx, out.push_byte(b'"'), key).push_static("\":");
+                let field = match table.get(&cx, key) {
+                    Option::Some(found) => found,
+                    Option::None => { out.destroy(); return Result::Err.(lit(&cx, "JSON table key disappeared")); },
+                };
+                out = match json_value(&cx, out, field, depth + 1usize) {
+                    Result::Ok(next) => next,
+                    Result::Err(message) => return Result::Err.(message),
+                };
+                i = i + 1usize;
+            }
+            Result::Ok.(out.push_byte(b'}'))
+        },
+    }
 }
 
 forall 'k.
@@ -620,19 +683,47 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                 Option::Some(end) => {
                     if active {
                         let expr = source.slice(pos + 2usize, end).trim(&cx);
-                        match resolve(&cx, site, collections, page, bindings, expr, content) {
-                            Option::None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
-                                first_line, first_column, expr)); },
-                            Option::Some(value) => {
-                                if expr.is(&cx, "content | safe") { out = out.push_bytes(&cx, value); }
-                                else {
-                                    if xml && !valid_xml(&cx, value) {
-                                        out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
-                                            first_line, first_column, lit(&cx, "XML value contains an invalid control character")));
+                        if expr.ends_with(&cx, lit(&cx, " | json")) {
+                            let json = match format { TemplateFormat::Json => true, _ => false };
+                            if !json {
+                                out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                                    first_line, first_column, lit(&cx, "json filter requires a JSON template")));
+                            }
+                            let field = expr.slice(0usize, expr.len() - 7usize).trim(&cx);
+                            let value = match literal(&cx, field) {
+                                Option::Some(text) => Option::Some.(TomlValue::String.(text)),
+                                Option::None => if field.ends_with(&cx, lit(&cx, " | url")) {
+                                    match resolve(&cx, site, collections, page, bindings, field, content) {
+                                        Option::Some(text) => Option::Some.(TomlValue::String.(text)),
+                                        Option::None => Option::None,
                                     }
-                                    out = escape_value(&cx, out, value, format);
-                                }
-                            },
+                                } else { lookup(&cx, site, collections, page, bindings, field) },
+                            };
+                            let value = match value {
+                                Option::Some(found) => found,
+                                Option::None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                                    first_line, first_column, expr)); },
+                            };
+                            out = match json_value(&cx, out, value, 0usize) {
+                                Result::Ok(next) => next,
+                                Result::Err(message) => return Result::Err.(template_error(&cx, file, source, pos,
+                                    first_line, first_column, message)),
+                            };
+                        } else {
+                            match resolve(&cx, site, collections, page, bindings, expr, content) {
+                                Option::None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                                    first_line, first_column, expr)); },
+                                Option::Some(value) => {
+                                    if expr.is(&cx, "content | safe") { out = out.push_bytes(&cx, value); }
+                                    else {
+                                        if xml && !valid_xml(&cx, value) {
+                                            out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                                                first_line, first_column, lit(&cx, "XML value contains an invalid control character")));
+                                        }
+                                        out = escape_value(&cx, out, value, format);
+                                    }
+                                },
+                            }
                         }
                     }
                     pos = end + 2usize;

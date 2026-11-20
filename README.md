@@ -99,9 +99,13 @@ XML, JSON, and text templates use the same page fields, site data, collections,
 loops, layouts, and includes as HTML. Layouts and includes must use the same
 extension as their template. HTML and XML substitutions escape markup;
 JSON substitutions escape JSON string contents and must be placed inside JSON
-quotes; text substitutions are copied unchanged. Krayon does not parse the
-completed XML or JSON document. For JSON arrays, loops expose
-`loop.first`, `loop.last`, and the one-based `loop.index`:
+quotes. Use `{{ site.catalog | json }}` in a JSON template to write a complete
+JSON value without surrounding quotes. The filter supports strings, numbers,
+booleans, dates (as strings), arrays, and tables, including values from
+`collections.pages`; it rejects NaN and infinity. It can follow `| url`, as in
+`{{ "/assets/site.css" | url | json }}`. Text substitutions are copied unchanged.
+Krayon does not parse the completed XML or JSON document. For JSON arrays,
+loops expose `loop.first`, `loop.last`, and the one-based `loop.index`:
 
 ```text
 {"pages":[{% for entry in collections.pages %}{% if loop.first %}{% else %},{% endif %}"{{ entry.url }}"{% endfor %}]}
