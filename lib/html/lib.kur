@@ -15,6 +15,7 @@ use records::{filter_contains, filter_records, sort_records};
 forall 'k.
 exposed struct Page {
     data: ArenaMap[Span['k], TomlValue['k], 'k],
+    source_urls: ArenaMap[Span['k], Span['k], 'k],
     url: Span['k],
     body: Span['k],
     body_line: usize,
@@ -84,7 +85,8 @@ fn template_error(&cx: Domain!['k], file: Span['k], source: Span['k], offset: us
 forall 'k.
 fn parse_page(&cx: Domain!['k], source: Span['k], url: Span['k]) -> Result[Page['k], Span['k]] {
     if !starts(&cx, source, "+++\n") {
-        return Result::Ok.(Page.{ data: ArenaMap::new(&cx), url, body: source, body_line: 1usize });
+        return Result::Ok.(Page.{ data: ArenaMap::new(&cx), source_urls: ArenaMap::new(&cx),
+            url, body: source, body_line: 1usize });
     }
     match source.find(&cx, lit(&cx, "\n+++"), 4usize) {
         Option::None => Result::Err.(lit(&cx, "unclosed TOML front matter")),
@@ -98,7 +100,8 @@ fn parse_page(&cx: Domain!['k], source: Span['k], url: Span['k]) -> Result[Page[
                 Result::Ok(data) => {
                     let start = if after < source.len() { after + 1usize } else { after };
                     let (line, column) = position(&cx, source, start, 1usize, 1usize);
-                    Result::Ok.(Page.{ data, url, body: source.slice(start, source.len()), body_line: line })
+                    Result::Ok.(Page.{ data, source_urls: ArenaMap::new(&cx),
+                        url, body: source.slice(start, source.len()), body_line: line })
                 },
             }
         },
@@ -210,6 +213,35 @@ fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
             Option::Some(value) => scalar(&cx, value),
             Option::None => Option::None,
         };
+    }
+    if expr.ends_with(&cx, lit(&cx, " | page_url")) {
+        let source = expr.slice(0usize, expr.len() - 11usize).trim(&cx);
+        let target = match literal(&cx, source) {
+            Option::Some(value) => value,
+            Option::None => match lookup(&cx, site, collections, page, bindings, source) {
+                Option::Some(value) => match scalar(&cx, value) {
+                    Option::Some(text) => text,
+                    Option::None => return Option::None,
+                },
+                Option::None => return Option::None,
+            },
+        };
+        var end = target.len();
+        match target.find_byte(&cx, b'?', 0usize) { Option::Some(at) => if at < end { end = at; }, Option::None => (), }
+        match target.find_byte(&cx, b'#', 0usize) { Option::Some(at) => if at < end { end = at; }, Option::None => (), }
+        var path = target.slice(0usize, end);
+        if path.starts_with(&cx, lit(&cx, "/")) { path = path.slice(1usize, path.len()); }
+        else if path.starts_with(&cx, lit(&cx, "./")) { path = path.slice(2usize, path.len()); }
+        let url = match page.source_urls.get(&cx, path) {
+            Option::Some(found) => found,
+            Option::None => return Option::None,
+        };
+        let base = match string_field(&cx, site, "base_path") {
+            Option::Some(path) => path,
+            Option::None => lit(&cx, ""),
+        };
+        return Option::Some.(prefix(&cx, base,
+            Buffer!::new().push_bytes(&cx, url).push_bytes(&cx, target.slice(end, target.len())).save(&cx)));
     }
     if expr.ends_with(&cx, lit(&cx, " | absolute_url")) {
         let source = expr.slice(0usize, expr.len() - 15usize).trim(&cx);
@@ -751,6 +783,7 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                             let value = match literal(&cx, field) {
                                 Option::Some(text) => Option::Some.(TomlValue::String.(text)),
                                 Option::None => if field.ends_with(&cx, lit(&cx, " | url"))
+                                    || field.ends_with(&cx, lit(&cx, " | page_url"))
                                     || field.ends_with(&cx, lit(&cx, " | absolute_url")) {
                                     match resolve(&cx, site, collections, page, bindings, field, content) {
                                         Option::Some(text) => Option::Some.(TomlValue::String.(text)),

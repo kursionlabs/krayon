@@ -566,7 +566,8 @@ fn generate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
             let destination = output_for_url(&cx, build.output, url, label, format)?;
             claim(&cx, build, destination, label)?;
             let replaced = fields.insert(&cx, lit(&cx, "permalink"), TomlValue::String.(url));
-            let page = Page.{ data: fields, url, body: template_page.body, body_line: template_page.body_line };
+            let page = Page.{ data: fields, source_urls: build.markdown_urls,
+                url, body: template_page.body, body_line: template_page.body_line };
             build.pages.push(&cx, SourcePage.{ file: label, page, is_markdown: false, format,
                 destination, excerpt: Option::None });
         }
@@ -767,7 +768,8 @@ fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
         let fields = generated_fields(&cx, template_page.data, ArenaMap::new(&cx));
         let replaced = fields.insert(&cx, lit(&cx, "pagination"), TomlValue::Table.(pagination));
         let replaced = fields.insert(&cx, lit(&cx, "permalink"), TomlValue::String.(url));
-        let page = Page.{ data: fields, url, body: template_page.body, body_line: template_page.body_line };
+        let page = Page.{ data: fields, source_urls: build.markdown_urls,
+            url, body: template_page.body, body_line: template_page.body_line };
         build.pages.push(&cx, SourcePage.{ file: label, page, is_markdown: false,
             format: TemplateFormat::Html, destination, excerpt: Option::None });
         number = number + 1usize;
@@ -854,7 +856,8 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Resul
             Option::None => return Result::Err.(report(&cx, "permalink must be a string", file)),
         },
     };
-    let page = Page.{ data: parsed.data, url, body: parsed.body, body_line: parsed.body_line };
+    let page = Page.{ data: parsed.data, source_urls: build.markdown_urls,
+        url, body: parsed.body, body_line: parsed.body_line };
     let destination = output_for_url(&cx, build.output, url, file, format)?;
     claim(&cx, build, destination, file)?;
     let excerpt = if is_markdown { markdown_excerpt_source(&cx, page.body) } else { Option::None };
@@ -872,7 +875,8 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
         Option::Some(value) => {
             let fields = generated_fields(&cx, original.data, ArenaMap::new(&cx));
             let replaced = fields.insert(&cx, lit(&cx, "collection_navigation"), value);
-            Page.{ data: fields, url: original.url, body: original.body, body_line: original.body_line }
+            Page.{ data: fields, source_urls: original.source_urls,
+                url: original.url, body: original.body, body_line: original.body_line }
         },
         Option::None => original,
     };

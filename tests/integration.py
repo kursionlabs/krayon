@@ -1436,6 +1436,43 @@ class BuildTests(unittest.TestCase):
         self.assertIn('broken local link', result.stderr)
         self.assertEqual((self.site / "dist/posts/first/index.html").read_text(), html)
 
+    def test_page_url_filter_uses_markdown_source_paths(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "guide").mkdir(parents=True)
+        (src / "_includes").mkdir()
+        (self.site / "krayon.toml").write_text('base_path = "/docs"\n')
+        (src / "guide/index.md").write_text(
+            '+++\npermalink = "/manual/"\n+++\n# Manual\n## Setup\n')
+        (src / "_includes/nav.html").write_text(
+            '<nav><a href="{{ "guide/index.md#setup" | page_url }}">Guide</a></nav>'
+            '{{ content | safe }}')
+        links = src / "links.html"
+        links.write_text(
+            '+++\nlayout = "nav.html"\ntarget = "/guide/index.md?view=all#setup"\n+++\n'
+            '<a href="{{ page.target | page_url }}">Dynamic</a>'
+            '<a href="{{ "./guide/index.md" | page_url }}">Local</a>')
+        (src / "links.json").write_text(
+            '{"url":{{ "guide/index.md#setup" | page_url | json }}}')
+        (src / "links.xml").write_text(
+            '<root><loc>{{ "guide/index.md" | page_url }}</loc></root>')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/links/index.html").read_text()
+        self.assertIn('href="/docs/manual/#setup"', html)
+        self.assertIn('href="/docs/manual/?view=all#setup"', html)
+        self.assertIn('href="/docs/manual/"', html)
+        self.assertEqual(json.loads((self.site / "dist/links.json").read_text()),
+                         {"url": "/docs/manual/#setup"})
+        self.assertIn('<loc>/docs/manual/</loc>', (self.site / "dist/links.xml").read_text())
+
+        links.write_text('{{ "missing.md" | page_url }}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('links.html:1:1:', result.stderr)
+        self.assertIn('page_url', result.stderr)
+        self.assertEqual((self.site / "dist/links/index.html").read_text(), html)
+
     def test_nested_quote_can_contain_code_and_heading_ids_are_page_wide(self):
         fence = chr(96) * 3
         page = self.site / "src/quote.md"
