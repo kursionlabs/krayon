@@ -50,32 +50,45 @@ only after a successful build. A failed render leaves the previous output
 intact. Krayon owns the output directory and removes its previous contents on
 a successful rebuild, including files placed there by hand.
 
+Set `draft = true` in a page's front matter to omit it from a normal build and
+from `collections.pages`. Run `krayon build [SITE_ROOT] --drafts` to include
+drafts in a preview build. This replaces the configured output with the preview;
+run a normal build again to restore the published output. `draft` must be a
+boolean.
+
 An HTML template can generate a page for each table in a site data array:
 
 ```html
 +++
 generate = "site.products"
+permalink = "/products/{{ item.slug }}/"
 layout = "base.html"
 kind = "product"
 +++
 <h1>{{ page.title }}</h1>
 ```
 
-The site data file supplies records with explicit URLs:
+The site data file supplies records:
 
 ```toml
 [[products]]
-url = "/products/widget/"
+slug = "widget"
 title = "Widget"
 ```
 
-Each record must have a string `url` ending in `/` or `.html`. Record fields
-become `page.*` fields and override the template's front matter defaults.
+The template's `permalink` pattern substitutes `{{ item.<field> }}` from each
+record, including nested fields. Substituted fields must be strings or integers.
+A record can set an explicit string `url` to override the pattern. Each resolved
+URL must end in `/` or `.html` and pass the usual path and collision checks.
+Record fields become `page.*` fields and override the template's front matter
+defaults; `page.permalink` is the resolved URL. A template can omit `permalink`
+when every record supplies `url`.
 The template itself produces no page. Generated pages appear in
 `collections.pages`, support layouts and includes, and pass the same output
 collision and link checks as ordinary pages. `generate` accepts dotted site
 data paths such as `site.catalog.products`; it is available only in HTML
-templates and cannot be combined with `permalink`.
+templates. A template or record can set `draft = true`; a record's value
+overrides the template default.
 
 Before installing the output, Krayon checks local `href`, `src`, and `srcset`
 values in generated HTML, plus CSS `url()` references in inline styles and
@@ -179,6 +192,7 @@ hyphens, underscores, and colons.
 Kursal programs can call `site::build(&cx, root)` directly. It takes a site
 root as a byte span and returns `Result[(), Buffer!]`; the error buffer is a
 message suitable for printing. The CLI is a small wrapper around that API.
+`site::build_with_drafts(&cx, root, true)` includes drafts for previews.
 
 Run `python3 tests/integration.py` for the end-to-end checks. They build
 Krayon with the adjacent Kursal compiler and use temporary site copies.

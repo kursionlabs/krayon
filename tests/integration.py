@@ -32,9 +32,9 @@ class BuildTests(unittest.TestCase):
         self.site = Path(self.temp.name) / "site"
         shutil.copytree(EXAMPLE, self.site, ignore=shutil.ignore_patterns("dist"))
 
-    def build(self):
+    def build(self, *flags):
         return subprocess.run(
-            [str(KRAYON), "build", str(self.site)],
+            [str(KRAYON), "build", str(self.site), *flags],
             text=True,
             capture_output=True,
         )
@@ -181,10 +181,10 @@ class BuildTests(unittest.TestCase):
 
         page.unlink()
         page = self.site / "src/generated.html"
-        page.write_text('+++\ngenerate = "site.products"\npermalink = "/wrong/"\n+++\nGenerated')
+        page.write_text('+++\ngenerate = "site.products"\npermalink = 4\n+++\nGenerated')
         result = self.build()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("generated templates use item URLs", result.stderr)
+        self.assertIn("permalink must be a string", result.stderr)
 
         page.write_text('+++\ngenerate = "site.products"\n+++\nGenerated')
         data.write_text('products = 1\n' + data.read_text())
@@ -196,6 +196,144 @@ class BuildTests(unittest.TestCase):
         result = self.build()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.site / "dist/generated/index.html").exists())
+
+    def test_generated_permalink_pattern_and_explicit_url_override(self):
+        data = self.site / "src/_data/site.toml"
+        data.write_text(data.read_text() + '\n[[products]]\n'
+                        'route = {slug = "alpha"}\n'
+                        'title = "Alpha"\n'
+                        '\n[[products]]\n'
+                        'url = "/special/beta.html"\n'
+                        'title = "Beta"\n')
+        template = self.site / "src/product.html"
+        template.write_text('+++\n'
+                            'generate = "site.products"\n'
+                            'permalink = "/products/{{ item.route.slug }}/"\n'
+                            'kind = "product"\n'
+                            '+++\n'
+                            '<a href="{{ page.permalink }}">{{ page.title }}</a>')
+        listing = self.site / "src/catalog.html"
+        listing.write_text('{% for item in collections.pages | where: "kind", "product" %}'
+                           '<a href="{{ item.url }}">{{ item.title }}</a>{% endfor %}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('<a href="/products/alpha/">Alpha</a>',
+                      (self.site / "dist/products/alpha/index.html").read_text())
+        self.assertIn('<a href="/special/beta.html">Beta</a>',
+                      (self.site / "dist/special/beta.html").read_text())
+        self.assertFalse((self.site / "dist/products/beta/index.html").exists())
+        self.assertIn('<a href="/products/alpha/">Alpha</a>'
+                      '<a href="/special/beta.html">Beta</a>',
+                      (self.site / "dist/catalog/index.html").read_text())
+
+    def test_generated_permalink_pattern_errors(self):
+        data = self.site / "src/_data/site.toml"
+        original = data.read_text()
+        template = self.site / "src/product.html"
+        template.write_text('+++\ngenerate = "site.products"\n'
+                            'permalink = "/products/{{ item.slug }}/"\n+++\nProduct')
+        data.write_text('products = [{title = "Missing slug"}]\n' + original)
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing permalink field: item.slug", result.stderr)
+        self.assertIn("[item 1]", result.stderr)
+
+        data.write_text('products = [{slug = [1]}]\n' + original)
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("permalink field must be a string or integer", result.stderr)
+
+        data.write_text('products = [{slug = ".."}]\n' + original)
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsafe URL", result.stderr)
+
+        data.write_text('products = [{slug = "same"}, {slug = "same"}]\n' + original)
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("output collision", result.stderr)
+
+        data.write_text('products = [{slug = "good"}]\n' + original)
+        template.write_text('+++\ngenerate = "site.products"\n'
+                            'permalink = "/products/{{ item.slug/"\n+++\nProduct')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unclosed permalink placeholder", result.stderr)
+
+    def test_generated_permalink_pattern_accepts_integer_field(self):
+        data = self.site / "src/_data/site.toml"
+        data.write_text('products = [{id = 42}]\n' + data.read_text())
+        template = self.site / "src/product.html"
+        template.write_text('+++\ngenerate = "site.products"\n'
+                            'permalink = "/products/{{ item.id }}/"\n+++\nNumbered')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.site / "dist/products/42/index.html").read_text(), "Numbered")
+
+    def test_drafts_are_excluded_until_preview_build(self):
+        draft = self.site / "src/draft.md"
+        draft.write_text('+++\ntitle = "Draft"\ndraft = true\n+++\n# Draft\n')
+        listing = self.site / "src/listing.html"
+        listing.write_text('{% for item in collections.pages %}'
+                           '<span>{{ item.url }}</span>{% endfor %}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.site / "dist/draft/index.html").exists())
+        self.assertNotIn('<span>/draft/</span>',
+                         (self.site / "dist/listing/index.html").read_text())
+
+        result = self.build("--drafts")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.site / "dist/draft/index.html").exists())
+        self.assertIn('<span>/draft/</span>',
+                      (self.site / "dist/listing/index.html").read_text())
+
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.site / "dist/draft/index.html").exists())
+
+    def test_generated_drafts_and_invalid_draft_values(self):
+        data = self.site / "src/_data/site.toml"
+        original = data.read_text()
+        data.write_text('products = [{slug = "hidden"}, '
+                        '{slug = "visible", draft = false}]\n' + original)
+        template = self.site / "src/product.html"
+        template.write_text('+++\ngenerate = "site.products"\n'
+                            'permalink = "/products/{{ item.slug }}/"\n'
+                            'draft = true\n+++\n{{ page.url }}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.site / "dist/products/hidden/index.html").exists())
+        self.assertTrue((self.site / "dist/products/visible/index.html").exists())
+
+        result = self.build("--drafts")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.site / "dist/products/hidden/index.html").exists())
+
+        data.write_text('products = [{slug = "bad", draft = "yes"}]\n' + original)
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("draft must be a boolean", result.stderr)
+        self.assertIn("[item 1]", result.stderr)
+
+    def test_published_links_to_drafts_fail_and_preview_accepts_them(self):
+        draft = self.site / "src/draft.md"
+        draft.write_text('+++\ndraft = true\n+++\n# Draft\n')
+        public = self.site / "src/public.html"
+        public.write_text('<a href="/draft/">Draft</a>')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("broken local link: /draft/", result.stderr)
+
+        result = subprocess.run([str(KRAYON), "build", "--drafts", str(self.site)],
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.site / "dist/draft/index.html").exists())
+
+        draft.write_text('+++\ndraft = "true"\n+++\n# Draft\n')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("draft must be a boolean", result.stderr)
 
     def test_includes_share_page_site_and_loop_scope(self):
         components = self.site / "src/_includes/components"
