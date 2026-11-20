@@ -42,10 +42,13 @@ All paths are relative. `input` and `output` are relative to the site root;
 the other paths are relative to `input`. The scalar values above are the defaults.
 The site data file and assets directory are optional. The output directory
 must be outside the input directory.
-Use `exclude = ["internal/", "notes/private.md"]` to skip source discovery.
-Entries are paths relative to `input`: a file path matches exactly, and a
-trailing `/` excludes a directory and everything beneath it. Patterns and
-globs are not supported. Excluded pages do not appear in collections or
+Use `exclude = ["internal/", "notes/*.draft.md", "**/private/"]` to skip
+source discovery. Rules are relative to `input`. A rule without a trailing
+`/` matches files; a rule ending in `/` excludes matching directories and
+everything beneath them. Literal paths match exactly. `*` matches within one
+path segment; `**` must be a whole segment and matches zero or more segments.
+Other glob syntax, such as `?` or character classes, is unsupported.
+Excluded pages do not appear in collections or
 `page_url` lookups; links to them fail the usual local link check. Exclusions
 also apply to `--drafts` builds. They do not affect asset copying.
 The optional `[collections.posts]` table defines a named page collection;

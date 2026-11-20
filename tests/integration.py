@@ -143,6 +143,40 @@ class BuildTests(unittest.TestCase):
         self.assertEqual((self.site / "dist/index.html").read_text(),
                          '/;/notes/public/;')
 
+    def test_exclude_globs_match_segments_and_directory_subtrees(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "posts/deep").mkdir(parents=True)
+        (src / "notes/deep").mkdir(parents=True)
+        (src / "sections/private").mkdir(parents=True)
+        (src / "sections/deep/private").mkdir(parents=True)
+        (self.site / "krayon.toml").write_text(
+            'exclude = ["**/*.draft.md", "notes/*.md", "sections/**/private/"]\n')
+        for name in [
+            'root.draft.md', 'root.keep.md',
+            'posts/a.draft.md', 'posts/a.keep.md',
+            'posts/deep/b.draft.md', 'posts/deep/b.keep.md',
+            'notes/one.md', 'notes/deep/two.md',
+            'sections/deep/public.md',
+        ]:
+            (src / name).write_text('# Page\n')
+        (src / 'sections/private/_defaults.toml').write_text('layout = [\n')
+        (src / 'sections/deep/private/_defaults.toml').write_text('layout = [\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for path in [
+            'root.keep/index.html', 'posts/a.keep/index.html',
+            'posts/deep/b.keep/index.html', 'notes/deep/two/index.html',
+            'sections/deep/public/index.html',
+        ]:
+            self.assertTrue((self.site / 'dist' / path).exists(), path)
+        for path in [
+            'root.draft/index.html', 'posts/a.draft/index.html',
+            'posts/deep/b.draft/index.html', 'notes/one/index.html',
+            'sections/private', 'sections/deep/private',
+        ]:
+            self.assertFalse((self.site / 'dist' / path).exists(), path)
+
     def test_invalid_source_exclusions_preserve_output(self):
         result = self.build()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -153,7 +187,8 @@ class BuildTests(unittest.TestCase):
             ('exclude = [42]\n', 'exclude entry must be a string'),
             ('exclude = ["../outside"]\n', 'invalid exclude path'),
             ('exclude = ["/absolute"]\n', 'invalid exclude path'),
-            ('exclude = ["notes/*.md"]\n', 'invalid exclude path'),
+            ('exclude = ["notes/foo**bar.md"]\n', 'invalid exclude path'),
+            ('exclude = ["notes/what?.md"]\n', 'invalid exclude path'),
             ('exclude = ["notes//private.md"]\n', 'invalid exclude path'),
         ]:
             config.write_text(contents)

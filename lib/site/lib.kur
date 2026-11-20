@@ -342,7 +342,7 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                         let path = if rule.ends_with(&cx, lit(&cx, "/")) {
                             rule.slice(0usize, rule.len() - 1usize)
                         } else { rule };
-                        if !safe_path(&cx, path, false) || rule.find_byte(&cx, b'*', 0usize).is_some()
+                        if !safe_path(&cx, path, false) || !valid_glob(&cx, path)
                             || rule.find_byte(&cx, b'?', 0usize).is_some()
                             || rule.find_byte(&cx, b'[', 0usize).is_some()
                             || rule.find_byte(&cx, b']', 0usize).is_some() {
@@ -1142,14 +1142,108 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
 }
 
 forall 'k.
-fn excluded(&cx: Domain!['k], rules: ArenaVec[Span['k], 'k], relative: Span['k]) -> bool {
+fn valid_glob(&cx: Domain!['k], path: Span['k]) -> bool {
+    var start = 0usize;
+    var i = 0usize;
+    while i <= path.len() {
+        if i == path.len() || byte(&cx, path, i) == b'/' {
+            let segment = path.slice(start, i);
+            match segment.find(&cx, lit(&cx, "**"), 0usize) {
+                Option::Some(at) => if !segment.is(&cx, "**") { return false; },
+                Option::None => (),
+            }
+            start = i + 1usize;
+        }
+        i = i + 1usize;
+    }
+    true
+}
+
+forall 'k.
+fn segment_glob(&cx: Domain!['k], pattern: Span['k], name: Span['k]) -> bool {
+    var p = 0usize;
+    var n = 0usize;
+    var star: Option[usize] = Option::None;
+    var retry = 0usize;
+    while n < name.len() {
+        if p < pattern.len() && byte(&cx, pattern, p) == byte(&cx, name, n)
+            && byte(&cx, pattern, p) != b'*' { p = p + 1usize; n = n + 1usize; }
+        else if p < pattern.len() && byte(&cx, pattern, p) == b'*' {
+            star = Option::Some.(p);
+            retry = n;
+            p = p + 1usize;
+        } else {
+            match star {
+                Option::Some(at) => { retry = retry + 1usize; n = retry; p = at + 1usize; },
+                Option::None => return false,
+            }
+        }
+    }
+    while p < pattern.len() && byte(&cx, pattern, p) == b'*' { p = p + 1usize; }
+    p == pattern.len()
+}
+
+forall 'k.
+fn glob_parts(&cx: Domain!['k], value: Span['k]) -> ArenaVec[Span['k], 'k] {
+    let parts = ArenaVec::new(&cx);
+    var start = 0usize;
+    var i = 0usize;
+    while i <= value.len() {
+        if i == value.len() || byte(&cx, value, i) == b'/' {
+            parts.push(&cx, value.slice(start, i));
+            start = i + 1usize;
+        }
+        i = i + 1usize;
+    }
+    parts
+}
+
+forall 'k.
+fn path_glob(&cx: Domain!['k], pattern: Span['k], path: Span['k]) -> bool {
+    let pattern_parts = glob_parts(&cx, pattern);
+    let path_parts = glob_parts(&cx, path);
+    var previous = ArenaVec::new(&cx);
+    previous.push(&cx, true);
+    var j = 0usize;
+    while j < path_parts.len(&cx) { previous.push(&cx, false); j = j + 1usize; }
+    var i = 0usize;
+    while i < pattern_parts.len(&cx) {
+        let segment = pattern_parts.at(&cx, i);
+        let row = ArenaVec::new(&cx);
+        j = 0usize;
+        while j <= path_parts.len(&cx) {
+            let matched = if segment.is(&cx, "**") {
+                previous.at(&cx, j) || (j > 0usize && row.at(&cx, j - 1usize))
+            } else if j == 0usize { false }
+            else { previous.at(&cx, j - 1usize) && segment_glob(&cx, segment, path_parts.at(&cx, j - 1usize)) };
+            row.push(&cx, matched);
+            j = j + 1usize;
+        }
+        previous = row;
+        i = i + 1usize;
+    }
+    previous.at(&cx, path_parts.len(&cx))
+}
+
+forall 'k.
+fn excluded(&cx: Domain!['k], rules: ArenaVec[Span['k], 'k], relative: Span['k], is_directory: bool) -> bool {
     var i = 0usize;
     while i < rules.len(&cx) {
         let rule = rules.at(&cx, i);
         if rule.ends_with(&cx, lit(&cx, "/")) {
             let directory = rule.slice(0usize, rule.len() - 1usize);
-            if relative.eq(&cx, directory) || relative.starts_with(&cx, rule) { return true; }
-        } else if relative.eq(&cx, rule) { return true; }
+            if is_directory {
+                let matched = if directory.find_byte(&cx, b'*', 0usize).is_some() {
+                    path_glob(&cx, directory, relative)
+                } else { directory.eq(&cx, relative) };
+                if matched { return true; }
+            }
+        } else if !is_directory {
+            let matched = if rule.find_byte(&cx, b'*', 0usize).is_some() {
+                path_glob(&cx, rule, relative)
+            } else { rule.eq(&cx, relative) };
+            if matched { return true; }
+        }
         i = i + 1usize;
     }
     false
@@ -1175,7 +1269,7 @@ fn scan_pages(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usi
                 Option::Some(entry) => {
                     let { name, is_directory } = entry;
                     let child = join(&cx, relative, name.save(&cx));
-                    if excluded(&cx, build.exclude, child) {
+                    if excluded(&cx, build.exclude, child, is_directory) {
                         // excluded source path
                     } else if child.eq(&cx, build.assets) || child.eq(&cx, build.layouts_rel) || (!build.data_dir.is_empty() && child.eq(&cx, build.data_dir)) {
                         // reserved source directories
