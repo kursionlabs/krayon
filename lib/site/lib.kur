@@ -399,7 +399,8 @@ fn layout_name(&cx: Domain!['k], data: ArenaMap[Span['k], TomlValue['k], 'k]) ->
         Option::None => Result::Ok.(Option::None),
         Option::Some(value) => match value.as_string() {
             Option::None => Result::Err.(Buffer!::new().push_static("krayon: layout must be a string\n")),
-            Option::Some(name) => if safe_path(&cx, name, false) { Result::Ok.(Option::Some.(name)) }
+            Option::Some(name) => if name.is_empty() { Result::Ok.(Option::None) }
+                else if safe_path(&cx, name, false) { Result::Ok.(Option::Some.(name)) }
                 else { Result::Err.(report(&cx, "unsafe layout name", name)) },
         },
     }
@@ -513,6 +514,64 @@ fn generated_fields(&cx: Domain!['k], defaults: ArenaMap[Span['k], TomlValue['k]
         i = i + 1usize;
     }
     fields
+}
+
+forall 'k.
+fn merge_defaults(&cx: Domain!['k], inherited: ArenaMap[Span['k], TomlValue['k], 'k],
+    local: ArenaMap[Span['k], TomlValue['k], 'k]) -> ArenaMap[Span['k], TomlValue['k], 'k] {
+    let fields = ArenaMap::new(&cx);
+    var i = 0usize;
+    while i < inherited.positions(&cx) {
+        match inherited.key_at(&cx, i) {
+            Option::Some(key) => match inherited.get(&cx, key) {
+                Option::Some(value) => { let replaced = fields.insert(&cx, key, value); },
+                Option::None => (),
+            },
+            Option::None => (),
+        }
+        i = i + 1usize;
+    }
+    i = 0usize;
+    while i < local.positions(&cx) {
+        match local.key_at(&cx, i) {
+            Option::Some(key) => match local.get(&cx, key) {
+                Option::Some(value) => { let replaced = fields.insert(&cx, key, value); },
+                Option::None => (),
+            },
+            Option::None => (),
+        }
+        i = i + 1usize;
+    }
+    fields
+}
+
+forall 'k.
+fn directory_defaults(&cx: Domain!['k], build: Build['k], relative: Span['k],
+    inherited: ArenaMap[Span['k], TomlValue['k], 'k]) -> Result[ArenaMap[Span['k], TomlValue['k], 'k], Buffer!] {
+    let file = join(&cx, join(&cx, build.source, relative), lit(&cx, "_defaults.toml"));
+    if !exists_path(&cx, file)? { return Result::Ok.(inherited); }
+    let source = load(&cx, file)?;
+    let local = match parse(&cx, source) {
+        Result::Ok(fields) => fields,
+        Result::Err(error) => return Result::Err.(report_detail(&cx, file, lit(&cx, error.message))),
+    };
+    var i = 0usize;
+    while i < local.positions(&cx) {
+        match local.key_at(&cx, i) {
+            Option::Some(key) => if key.is(&cx, "permalink") || key.is(&cx, "generate")
+                || key.is(&cx, "paginate") || key.is(&cx, "page_size")
+                || key.is(&cx, "page_permalink") || key.is(&cx, "where")
+                || key.is(&cx, "sort_by") || key.is(&cx, "sort_order")
+                || key.is(&cx, "pagination") || key.is(&cx, "headings")
+                || key.is(&cx, "collection_navigation") || key.is(&cx, "url") {
+                return Result::Err.(report_detail(&cx, file,
+                    Buffer!::new().push_static("field cannot be a directory default: ").push_bytes(&cx, key).save(&cx)));
+            },
+            Option::None => (),
+        }
+        i = i + 1usize;
+    }
+    Result::Ok.(merge_defaults(&cx, inherited, local))
 }
 
 forall 'k.
@@ -803,7 +862,8 @@ fn render_layout(&cx: Domain!['k], build: Build['k], page: Page['k], content: Sp
 }
 
 forall 'k.
-fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Result[(), Buffer!] {
+fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k],
+    defaults: ArenaMap[Span['k], TomlValue['k], 'k]) -> Result[(), Buffer!] {
     let file = join(&cx, build.source, relative);
     let source = load(&cx, file)?;
     let is_markdown = relative.ends_with(&cx, lit(&cx, ".md"));
@@ -816,6 +876,8 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Resul
         Result::Ok(page) => page,
         Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
     };
+    let parsed = Page.{ data: merge_defaults(&cx, defaults, parsed.data), source_urls: parsed.source_urls,
+        url: parsed.url, body: parsed.body, body_line: parsed.body_line };
     match parsed.data.get(&cx, lit(&cx, "paginate")) {
         Option::None => (),
         Option::Some(value) => {
@@ -931,8 +993,10 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
 }
 
 forall 'k.
-fn scan_pages(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usize) -> Result[(), Buffer!] {
+fn scan_pages(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usize,
+    inherited: ArenaMap[Span['k], TomlValue['k], 'k]) -> Result[(), Buffer!] {
     if depth >= 64usize { return Result::Err.(report(&cx, "source tree too deep", relative)); }
+    let defaults = directory_defaults(&cx, build, relative, inherited)?;
     let directory = join(&cx, build.source, relative);
     let directory = match read_dir(&cx, directory) {
         Result::Ok(directory) => directory,
@@ -951,14 +1015,14 @@ fn scan_pages(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usi
                     if child.eq(&cx, build.assets) || child.eq(&cx, build.layouts_rel) || (!build.data_dir.is_empty() && child.eq(&cx, build.data_dir)) {
                         // reserved source directories
                     } else if is_directory {
-                        match scan_pages(&cx, build, child, depth + 1usize) {
+                        match scan_pages(&cx, build, child, depth + 1usize, defaults) {
                             Result::Ok(nothing) => (),
                             Result::Err(message) => { directory.close(); return Result::Err.(message); },
                         }
                     } else if child.ends_with(&cx, lit(&cx, ".md")) || child.ends_with(&cx, lit(&cx, ".html"))
                         || child.ends_with(&cx, lit(&cx, ".xml")) || child.ends_with(&cx, lit(&cx, ".json"))
                         || child.ends_with(&cx, lit(&cx, ".txt")) {
-                        match collect_page(&cx, build, child) {
+                        match collect_page(&cx, build, child, defaults) {
                             Result::Ok(nothing) => (),
                             Result::Err(message) => { directory.close(); return Result::Err.(message); },
                         }
@@ -1322,7 +1386,7 @@ fn publish_collection_navigation(&cx: Domain!['k], build: Build['k]) -> () {
 
 forall 'k.
 fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
-    scan_pages(&cx, build, lit(&cx, ""), 0usize)?;
+    scan_pages(&cx, build, lit(&cx, ""), 0usize, ArenaMap::new(&cx))?;
     prepare_sources(&cx, build)?;
     publish_pages(&cx, build);
     publish_named_collections(&cx, build)?;

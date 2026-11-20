@@ -60,6 +60,71 @@ class BuildTests(unittest.TestCase):
         self.assertEqual((self.site / "dist/assets/css/site.css").read_text(),
                          "body { font-family: sans-serif; }\n")
 
+    def test_directory_defaults_inherit_and_pages_override_them(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "posts/deep").mkdir(parents=True)
+        (src / "products").mkdir()
+        (src / "drafts").mkdir()
+        (src / "_includes").mkdir()
+        (src / "_data").mkdir()
+        (src / "_includes/base.html").write_text(
+            '<main>{{ page.kind }}:{{ page.title }}:{% if page.tags %}tagged{% endif %}'
+            '{{ content | safe }}</main>')
+        (src / "_defaults.toml").write_text(
+            'layout = "base.html"\nkind = "root"\ntitle = "Untitled"\n')
+        (src / "posts/_defaults.toml").write_text(
+            'kind = "post"\ntitle = "Post"\n')
+        (src / "posts/deep/_defaults.toml").write_text('tags = ["deep"]\n')
+        (src / "products/_defaults.toml").write_text('kind = "product"\n')
+        (src / "drafts/_defaults.toml").write_text('draft = true\n')
+        (src / "_data/site.toml").write_text('[[items]]\nslug = "widget"\ntitle = "Widget"\n')
+        (src / "root.md").write_text('# Root\n')
+        (src / "posts/one.md").write_text('# One\n')
+        (src / "posts/deep/two.md").write_text(
+            '+++\nkind = "special"\ntitle = "Two"\nlayout = ""\n+++\n# Two\n')
+        (src / "posts/deep/three.md").write_text('# Three\n')
+        (src / "drafts/hidden.md").write_text('# Hidden\n')
+        (src / "drafts/visible.md").write_text('+++\ndraft = false\n+++\n# Visible\n')
+        (src / "about.html").write_text('<p>About</p>')
+        (src / "products/product.html").write_text(
+            '+++\ngenerate = "site.items"\n'
+            'permalink = "/products/{{ item.slug }}/"\n+++\n<p>Generated</p>')
+
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('<main>root:Untitled:', (self.site / "dist/root/index.html").read_text())
+        self.assertIn('<main>post:Post:', (self.site / "dist/posts/one/index.html").read_text())
+        self.assertIn('<main>post:Post:tagged', (self.site / "dist/posts/deep/three/index.html").read_text())
+        self.assertEqual((self.site / "dist/posts/deep/two/index.html").read_text(),
+                         '<h1 id="two">Two</h1>\n')
+        self.assertIn('<main>root:Untitled:', (self.site / "dist/about/index.html").read_text())
+        self.assertIn('<main>product:Widget:',
+                      (self.site / "dist/products/widget/index.html").read_text())
+        self.assertFalse((self.site / "dist/drafts/hidden/index.html").exists())
+        self.assertTrue((self.site / "dist/drafts/visible/index.html").exists())
+        self.assertFalse((self.site / "dist/_defaults.toml").exists())
+
+        result = self.build('--drafts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.site / "dist/drafts/hidden/index.html").exists())
+
+    def test_invalid_directory_defaults_preserve_output(self):
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        original = (self.site / "dist/index.html").read_text()
+        defaults = self.site / "src/_defaults.toml"
+        for contents, message in [
+            ('layout = [\n', '_defaults.toml'),
+            ('permalink = "/same/"\n', 'field cannot be a directory default: permalink'),
+            ('paginate = "site.posts"\n', 'field cannot be a directory default: paginate'),
+        ]:
+            defaults.write_text(contents)
+            result = self.build()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(message, result.stderr)
+            self.assertEqual((self.site / "dist/index.html").read_text(), original)
+
     def test_collections_and_nested_loops(self):
         result = self.build()
         self.assertEqual(result.returncode, 0, result.stderr)

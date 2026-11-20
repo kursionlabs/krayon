@@ -69,6 +69,28 @@ only after a successful build. A failed render leaves the previous output
 intact. Krayon owns the output directory and removes its previous contents on
 a successful rebuild, including files placed there by hand.
 
+Put an optional `_defaults.toml` in `input` or any content subdirectory to
+provide front matter defaults for pages beneath it:
+
+```toml
+# src/posts/_defaults.toml
+layout = "article.html"
+kind = "post"
+draft = false
+```
+
+Defaults flow into child directories. A child's `_defaults.toml` overrides
+matching fields from its ancestors, and a page's own front matter takes final
+precedence. Values are replaced as a whole; nested tables are not merged.
+These defaults apply to Markdown, HTML, XML, JSON, and text pages, including
+pages generated from data. A generated record still overrides the template's
+defaults. Set `layout = ""` on a page to omit an inherited layout. Layouts
+must have the same extension as the output template, so use directory defaults
+or page overrides when a site mixes output formats.
+Routing and generation fields such as `permalink`, `generate`, `paginate`, and
+pagination options cannot appear in `_defaults.toml`; Krayon reports an error
+if they do. `_defaults.toml` itself is never published.
+
 Set `draft = true` in a page's front matter to omit it from a normal build and
 from `collections.pages`. Run `krayon build [SITE_ROOT] --drafts` to include
 drafts in a preview build. This replaces the configured output with the preview;
