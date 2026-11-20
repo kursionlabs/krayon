@@ -284,13 +284,15 @@ the resolved URL. For example, `[Guide](../guide/index.md#setup)` can link to
 `/guide/` or any permalink set by that source page. Links to omitted drafts
 fail the local link check in a normal build. External links and raw HTML links
 keep their existing behavior. Markdown excerpts use the same resolution.
-Templates and layouts can resolve a Markdown source path explicitly with
+Templates and layouts can resolve a page source path explicitly with
 `{{ "guide/index.md" | page_url }}`. The path is relative to `input`, with an
 optional leading `/` or `./`; the filter preserves a query or fragment and
 applies `base_path`. It also accepts a string field, such as
 `{{ page.guide_source | page_url }}`. A missing source fails the build at the
 template expression. Use `{{ "guide/index.md" | page_url | json }}` for a
-complete JSON string value.
+complete JSON string value. The filter works for ordinary Markdown, HTML,
+XML, JSON, and text page sources. Generated and paginated templates have no
+single URL, so their source paths cannot be resolved with `page_url`.
 With `origin` configured, `{{ page.url | absolute_url }}` produces a full URL
 including `base_path`. The filter leaves external, protocol relative,
 relative, and fragment URLs unchanged. It works in HTML, XML, and JSON

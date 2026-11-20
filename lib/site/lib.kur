@@ -45,7 +45,7 @@ struct Build {
     config_file: Span['k],
     collections: ArenaMap[Span['k], TomlValue['k], 'k],
     navigation: ArenaMap[Span['k], TomlValue['k], 'k],
-    markdown_urls: ArenaMap[Span['k], Span['k], 'k],
+    source_urls: ArenaMap[Span['k], Span['k], 'k],
     pages: ArenaVec[SourcePage['k], 'k],
     pending_pagination: ArenaVec[PendingPagination['k], 'k],
     stylesheets: ArenaVec[Stylesheet['k], 'k],
@@ -55,6 +55,7 @@ struct Build {
 forall 'k.
 struct SourcePage {
     file: Span['k],
+    source_path: Option[Span['k]],
     page: Page['k],
     is_markdown: bool,
     format: TemplateFormat,
@@ -566,9 +567,9 @@ fn generate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
             let destination = output_for_url(&cx, build.output, url, label, format)?;
             claim(&cx, build, destination, label)?;
             let replaced = fields.insert(&cx, lit(&cx, "permalink"), TomlValue::String.(url));
-            let page = Page.{ data: fields, source_urls: build.markdown_urls,
+            let page = Page.{ data: fields, source_urls: build.source_urls,
                 url, body: template_page.body, body_line: template_page.body_line };
-            build.pages.push(&cx, SourcePage.{ file: label, page, is_markdown: false, format,
+            build.pages.push(&cx, SourcePage.{ file: label, source_path: Option::None, page, is_markdown: false, format,
                 destination, excerpt: Option::None });
         }
         i = i + 1usize;
@@ -768,9 +769,9 @@ fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
         let fields = generated_fields(&cx, template_page.data, ArenaMap::new(&cx));
         let replaced = fields.insert(&cx, lit(&cx, "pagination"), TomlValue::Table.(pagination));
         let replaced = fields.insert(&cx, lit(&cx, "permalink"), TomlValue::String.(url));
-        let page = Page.{ data: fields, source_urls: build.markdown_urls,
+        let page = Page.{ data: fields, source_urls: build.source_urls,
             url, body: template_page.body, body_line: template_page.body_line };
-        build.pages.push(&cx, SourcePage.{ file: label, page, is_markdown: false,
+        build.pages.push(&cx, SourcePage.{ file: label, source_path: Option::None, page, is_markdown: false,
             format: TemplateFormat::Html, destination, excerpt: Option::None });
         number = number + 1usize;
     }
@@ -856,12 +857,12 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Resul
             Option::None => return Result::Err.(report(&cx, "permalink must be a string", file)),
         },
     };
-    let page = Page.{ data: parsed.data, source_urls: build.markdown_urls,
+    let page = Page.{ data: parsed.data, source_urls: build.source_urls,
         url, body: parsed.body, body_line: parsed.body_line };
     let destination = output_for_url(&cx, build.output, url, file, format)?;
     claim(&cx, build, destination, file)?;
     let excerpt = if is_markdown { markdown_excerpt_source(&cx, page.body) } else { Option::None };
-    build.pages.push(&cx, SourcePage.{ file, page, is_markdown, format, destination, excerpt });
+    build.pages.push(&cx, SourcePage.{ file, source_path: Option::Some.(relative), page, is_markdown, format, destination, excerpt });
     Result::Ok.(())
 }
 
@@ -881,7 +882,7 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
         Option::None => original,
     };
     let relative = source.file.slice(build.source.len() + 1usize, source.file.len());
-    let body = if source.is_markdown { match markdown(&cx, page.body, build.base_path, build.markdown_urls, relative) {
+    let body = if source.is_markdown { match markdown(&cx, page.body, build.base_path, build.source_urls, relative) {
             Result::Ok(result) => {
                 let (html, found) = result;
                 if page.data.contains(&cx, lit(&cx, "headings")) {
@@ -1160,13 +1161,13 @@ fn collection_item(&cx: Domain!['k], source: SourcePage['k]) -> TomlValue['k] {
 }
 
 forall 'k.
-fn prepare_markdown(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
+fn prepare_sources(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
     var i = 0usize;
     while i < build.pages.len(&cx) {
         let entry = build.pages.at(&cx, i);
-        if entry.is_markdown {
-            let relative = entry.file.slice(build.source.len() + 1usize, entry.file.len());
-            let replaced = build.markdown_urls.insert(&cx, relative, entry.page.url);
+        match entry.source_path {
+            Option::Some(relative) => { let replaced = build.source_urls.insert(&cx, relative, entry.page.url); },
+            Option::None => (),
         }
         i = i + 1usize;
     }
@@ -1177,11 +1178,11 @@ fn prepare_markdown(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
             Option::None => (),
             Option::Some(source) => {
                 let relative = entry.file.slice(build.source.len() + 1usize, entry.file.len());
-                let html = match markdown(&cx, source, build.base_path, build.markdown_urls, relative) {
+                let html = match markdown(&cx, source, build.base_path, build.source_urls, relative) {
                     Result::Ok(result) => { let (html, headings) = result; html.save(&cx) },
                     Result::Err(message) => return Result::Err.(report_detail(&cx, entry.file, message)),
                 };
-                let previous = build.pages.replace(&cx, i, SourcePage.{ file: entry.file, page: entry.page,
+                let previous = build.pages.replace(&cx, i, SourcePage.{ file: entry.file, source_path: entry.source_path, page: entry.page,
                     is_markdown: entry.is_markdown, format: entry.format, destination: entry.destination,
                     excerpt: Option::Some.(html) });
             },
@@ -1322,7 +1323,7 @@ fn publish_collection_navigation(&cx: Domain!['k], build: Build['k]) -> () {
 forall 'k.
 fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
     scan_pages(&cx, build, lit(&cx, ""), 0usize)?;
-    prepare_markdown(&cx, build)?;
+    prepare_sources(&cx, build)?;
     publish_pages(&cx, build);
     publish_named_collections(&cx, build)?;
     publish_collection_navigation(&cx, build);
@@ -1397,7 +1398,7 @@ fn build_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> 
         assets: config.assets, data_dir: parent(&cx, config.data), base_path: config.base_path, include_drafts,
         site_data, definitions: config.definitions, config_file: join(&cx, root, lit(&cx, "krayon.toml")),
         collections: ArenaMap::new(&cx), navigation: ArenaMap::new(&cx),
-        markdown_urls: ArenaMap::new(&cx), pages: ArenaVec::new(&cx),
+        source_urls: ArenaMap::new(&cx), pages: ArenaVec::new(&cx),
         pending_pagination: ArenaVec::new(&cx),
         stylesheets: ArenaVec::new(&cx), written: ArenaMap::new(&cx) };
     match render_site(&cx, build) {

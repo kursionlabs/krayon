@@ -1436,7 +1436,7 @@ class BuildTests(unittest.TestCase):
         self.assertIn('broken local link', result.stderr)
         self.assertEqual((self.site / "dist/posts/first/index.html").read_text(), html)
 
-    def test_page_url_filter_uses_markdown_source_paths(self):
+    def test_page_url_filter_uses_ordinary_source_paths(self):
         shutil.rmtree(self.site / "src")
         src = self.site / "src"
         (src / "guide").mkdir(parents=True)
@@ -1444,6 +1444,13 @@ class BuildTests(unittest.TestCase):
         (self.site / "krayon.toml").write_text('base_path = "/docs"\n')
         (src / "guide/index.md").write_text(
             '+++\npermalink = "/manual/"\n+++\n# Manual\n## Setup\n')
+        (src / "about.html").write_text(
+            '+++\npermalink = "/about-us/"\n+++\n<h1>About</h1>')
+        (src / "feed.xml").write_text(
+            '+++\npermalink = "/site-feed.xml"\n+++\n<feed/>')
+        (src / "data.json").write_text(
+            '+++\npermalink = "/catalog.json"\n+++\n{}')
+        (src / "robots.txt").write_text('User-agent: *\n')
         (src / "_includes/nav.html").write_text(
             '<nav><a href="{{ "guide/index.md#setup" | page_url }}">Guide</a></nav>'
             '{{ content | safe }}')
@@ -1451,7 +1458,11 @@ class BuildTests(unittest.TestCase):
         links.write_text(
             '+++\nlayout = "nav.html"\ntarget = "/guide/index.md?view=all#setup"\n+++\n'
             '<a href="{{ page.target | page_url }}">Dynamic</a>'
-            '<a href="{{ "./guide/index.md" | page_url }}">Local</a>')
+            '<a href="{{ "./guide/index.md" | page_url }}">Local</a>'
+            '<a href="{{ "about.html" | page_url }}">About</a>'
+            '<a href="{{ "/feed.xml" | page_url }}">Feed</a>'
+            '<a href="{{ "data.json" | page_url }}">Data</a>'
+            '<a href="{{ "robots.txt" | page_url }}">Robots</a>')
         (src / "links.json").write_text(
             '{"url":{{ "guide/index.md#setup" | page_url | json }}}')
         (src / "links.xml").write_text(
@@ -1462,9 +1473,24 @@ class BuildTests(unittest.TestCase):
         self.assertIn('href="/docs/manual/#setup"', html)
         self.assertIn('href="/docs/manual/?view=all#setup"', html)
         self.assertIn('href="/docs/manual/"', html)
+        self.assertIn('href="/docs/about-us/"', html)
+        self.assertIn('href="/docs/site-feed.xml"', html)
+        self.assertIn('href="/docs/catalog.json"', html)
+        self.assertIn('href="/docs/robots.txt"', html)
         self.assertEqual(json.loads((self.site / "dist/links.json").read_text()),
                          {"url": "/docs/manual/#setup"})
         self.assertIn('<loc>/docs/manual/</loc>', (self.site / "dist/links.xml").read_text())
+
+        (src / "_data").mkdir()
+        (src / "_data/site.toml").write_text('[[items]]\nslug = "one"\n')
+        (src / "generated.html").write_text(
+            '+++\ngenerate = "site.items"\n'
+            'permalink = "/items/{{ item.slug }}/"\n+++\nGenerated')
+        links.write_text('{{ "generated.html" | page_url }}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('page_url', result.stderr)
+        self.assertEqual((self.site / "dist/links/index.html").read_text(), html)
 
         links.write_text('{{ "missing.md" | page_url }}')
         result = self.build()
