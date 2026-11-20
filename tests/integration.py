@@ -92,6 +92,111 @@ class BuildTests(unittest.TestCase):
         self.assertIn('<b>Alpha</b><b>Gamma</b>', html)
         self.assertIn('<h2>fn</h2><i>Alpha</i><i>Gamma</i><h2>type</h2><i>Beta</i>', html)
 
+    def test_data_array_generates_pages_in_collections(self):
+        data = self.site / "src/_data/site.toml"
+        data.write_text(data.read_text() + '\n[[catalog.products]]\n'
+                        'url = "/products/alpha/"\n'
+                        'title = "Alpha"\n'
+                        'description = "First product"\n'
+                        'next = "/products/beta/"\n'
+                        '\n[[catalog.products]]\n'
+                        'url = "/products/beta/"\n'
+                        'description = "Second product"\n'
+                        'next = "/products/alpha/"\n')
+        template = self.site / "src/product.html"
+        template.write_text('+++\n'
+                            'generate = "site.catalog.products"\n'
+                            'layout = "base.html"\n'
+                            'title = "Default title"\n'
+                            'kind = "product"\n'
+                            '+++\n'
+                            '<h1>{{ page.title }}</h1><p>{{ page.description }}</p>'
+                            '<a href="{{ page.next }}">Next</a>')
+        listing = self.site / "src/catalog.html"
+        listing.write_text('{% for item in collections.pages | where: "kind", "product" %}'
+                           '<a href="{{ item.url }}">{{ item.title }}</a>{% endfor %}')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.site / "dist/product/index.html").exists())
+        alpha = (self.site / "dist/products/alpha/index.html").read_text()
+        beta = (self.site / "dist/products/beta/index.html").read_text()
+        self.assertIn('<h1>Alpha</h1><p>First product</p>', alpha)
+        self.assertIn('<h1>Default title</h1><p>Second product</p>', beta)
+        self.assertIn('href="/products/beta/"', alpha)
+        self.assertIn('href="/products/alpha/"', beta)
+        self.assertIn('<a href="/products/alpha/">Alpha</a>'
+                      '<a href="/products/beta/">Default title</a>',
+                      (self.site / "dist/catalog/index.html").read_text())
+
+    def test_generated_pages_validate_records_urls_and_collisions(self):
+        data = self.site / "src/_data/site.toml"
+        template = self.site / "src/product.html"
+        template.write_text('+++\ngenerate = "site.products"\n+++\n{{ page.title }}')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("generate source is missing", result.stderr)
+
+        data.write_text('products = [1]\n' + data.read_text())
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("generate item must be a table", result.stderr)
+        self.assertIn("[item 1]", result.stderr)
+
+        data.write_text(data.read_text().replace('products = [1]',
+                                                 'products = [{title = "No URL"}]'))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("generate item needs a url", result.stderr)
+
+        data.write_text(data.read_text().replace('products = [{title = "No URL"}]',
+                                                 'products = [{url = "/../escape/", title = "Bad"}]'))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsafe URL", result.stderr)
+        self.assertIn("product.html [item 1]", result.stderr)
+
+        data.write_text(data.read_text().replace('/../escape/', '/'))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("output collision", result.stderr)
+
+        data.write_text(data.read_text().replace('url = "/"', 'url = "/products/ok/"'))
+        self.assertEqual(self.build().returncode, 0)
+        previous = (self.site / "dist/products/ok/index.html").read_bytes()
+        data.write_text(data.read_text().replace('/products/ok/', '/products/gone/'))
+        template.write_text('+++\ngenerate = "site.products"\n+++\n'
+                            '<a href="/missing/">Broken</a>')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("broken local link", result.stderr)
+        self.assertEqual((self.site / "dist/products/ok/index.html").read_bytes(), previous)
+
+    def test_generate_requires_html_array_and_item_urls(self):
+        data = self.site / "src/_data/site.toml"
+        page = self.site / "src/generated.md"
+        page.write_text('+++\ngenerate = "site.products"\n+++\n# Generated')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("generate requires an HTML template", result.stderr)
+
+        page.unlink()
+        page = self.site / "src/generated.html"
+        page.write_text('+++\ngenerate = "site.products"\npermalink = "/wrong/"\n+++\nGenerated')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("generated templates use item URLs", result.stderr)
+
+        page.write_text('+++\ngenerate = "site.products"\n+++\nGenerated')
+        data.write_text('products = 1\n' + data.read_text())
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("generate source must be an array", result.stderr)
+
+        data.write_text(data.read_text().replace('products = 1', 'products = []'))
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.site / "dist/generated/index.html").exists())
+
     def test_includes_share_page_site_and_loop_scope(self):
         components = self.site / "src/_includes/components"
         components.mkdir()

@@ -254,8 +254,9 @@ fn source_url(&cx: Domain!['k], relative: Span['k], ext_len: usize) -> Span['k] 
 }
 
 forall 'k.
-fn output_for_url(&cx: Domain!['k], output: Span['k], url: Span['k]) -> Result[Span['k], Buffer!] {
-    if !safe_path(&cx, url, true) { return Result::Err.(report(&cx, "unsafe URL", url)); }
+fn output_for_url(&cx: Domain!['k], output: Span['k], url: Span['k], source: Span['k]) -> Result[Span['k], Buffer!] {
+    if !safe_path(&cx, url, true) { return Result::Err.(report_detail(&cx, source,
+        Buffer!::new().push_static("unsafe URL: ").push_bytes(&cx, url).save(&cx))); }
     let relative = url.slice(1usize, url.len());
     if url.ends_with(&cx, lit(&cx, "/")) {
         return Result::Ok.(join(&cx, output, join(&cx, relative, lit(&cx, "index.html"))));
@@ -263,7 +264,8 @@ fn output_for_url(&cx: Domain!['k], output: Span['k], url: Span['k]) -> Result[S
     if url.ends_with(&cx, lit(&cx, ".html")) {
         return Result::Ok.(join(&cx, output, relative));
     }
-    Result::Err.(report(&cx, "URL must end in / or .html", url))
+    Result::Err.(report_detail(&cx, source,
+        Buffer!::new().push_static("URL must end in / or .html: ").push_bytes(&cx, url).save(&cx)))
 }
 
 forall 'k.
@@ -276,6 +278,101 @@ fn layout_name(&cx: Domain!['k], data: ArenaMap[Span['k], TomlValue['k], 'k]) ->
                 else { Result::Err.(report(&cx, "unsafe layout name", name)) },
         },
     }
+}
+
+forall 'k.
+fn site_value(&cx: Domain!['k], data: ArenaMap[Span['k], TomlValue['k], 'k], path: Span['k]) -> Option[TomlValue['k]] {
+    var table = data;
+    var remaining = path;
+    while true {
+        match remaining.find_byte(&cx, b'.', 0usize) {
+            Option::Some(dot) => {
+                let name = remaining.slice(0usize, dot);
+                if name.is_empty() { return Option::None; }
+                table = match table.get(&cx, name) {
+                    Option::Some(value) => match value.as_table() {
+                        Option::Some(child) => child,
+                        Option::None => return Option::None,
+                    },
+                    Option::None => return Option::None,
+                };
+                remaining = remaining.slice(dot + 1usize, remaining.len());
+            },
+            Option::None => if remaining.is_empty() { return Option::None; }
+                else { return table.get(&cx, remaining); },
+        }
+    }
+    Option::None
+}
+
+forall 'k.
+fn generated_fields(&cx: Domain!['k], defaults: ArenaMap[Span['k], TomlValue['k], 'k],
+    record: ArenaMap[Span['k], TomlValue['k], 'k]) -> ArenaMap[Span['k], TomlValue['k], 'k] {
+    let fields = ArenaMap::new(&cx);
+    var i = 0usize;
+    while i < defaults.positions(&cx) {
+        match defaults.key_at(&cx, i) {
+            Option::None => (),
+            Option::Some(key) => if !key.is(&cx, "generate") {
+                match defaults.get(&cx, key) {
+                    Option::None => (),
+                    Option::Some(value) => { let replaced = fields.insert(&cx, key, value); },
+                }
+            },
+        }
+        i = i + 1usize;
+    }
+    i = 0usize;
+    while i < record.positions(&cx) {
+        match record.key_at(&cx, i) {
+            Option::None => (),
+            Option::Some(key) => match record.get(&cx, key) {
+                Option::None => (),
+                Option::Some(value) => { let replaced = fields.insert(&cx, key, value); },
+            },
+        }
+        i = i + 1usize;
+    }
+    fields
+}
+
+forall 'k.
+fn generate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_page: Page['k],
+    source: Span['k]) -> Result[(), Buffer!] {
+    if !source.starts_with(&cx, lit(&cx, "site.")) || source.len() <= 5usize {
+        return Result::Err.(report_detail(&cx, file, lit(&cx, "generate must name a site data array, such as site.products")));
+    }
+    let value = match site_value(&cx, build.site_data, source.slice(5usize, source.len())) {
+        Option::Some(found) => found,
+        Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "generate source is missing"))),
+    };
+    let items = match value.as_array() {
+        Option::Some(array) => array,
+        Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "generate source must be an array"))),
+    };
+    var i = 0usize;
+    while i < items.len(&cx) {
+        let label = Buffer!::new().push_bytes(&cx, file).push_static(" [item ")
+            .push_usize(i + 1usize).push_static("]").save(&cx);
+        let record = match items.at(&cx, i).as_table() {
+            Option::Some(table) => table,
+            Option::None => return Result::Err.(report_detail(&cx, label, lit(&cx, "generate item must be a table"))),
+        };
+        let url = match record.get(&cx, lit(&cx, "url")) {
+            Option::Some(value) => match value.as_string() {
+                Option::Some(text) => text,
+                Option::None => return Result::Err.(report_detail(&cx, label, lit(&cx, "generate item url must be a string"))),
+            },
+            Option::None => return Result::Err.(report_detail(&cx, label, lit(&cx, "generate item needs a url"))),
+        };
+        let destination = output_for_url(&cx, build.output, url, label)?;
+        claim(&cx, build, destination, label)?;
+        let page = Page.{ data: generated_fields(&cx, template_page.data, record), url,
+            body: template_page.body, body_line: template_page.body_line };
+        build.pages.push(&cx, SourcePage.{ file: label, page, is_markdown: false, destination });
+        i = i + 1usize;
+    }
+    Result::Ok.(())
 }
 
 forall 'k.
@@ -308,6 +405,20 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Resul
         Result::Ok(page) => page,
         Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
     };
+    match parsed.data.get(&cx, lit(&cx, "generate")) {
+        Option::None => (),
+        Option::Some(value) => {
+            if is_markdown { return Result::Err.(report_detail(&cx, file, lit(&cx, "generate requires an HTML template"))); }
+            if parsed.data.contains(&cx, lit(&cx, "permalink")) {
+                return Result::Err.(report_detail(&cx, file, lit(&cx, "generated templates use item URLs, not permalink")));
+            }
+            let source = match value.as_string() {
+                Option::Some(text) => text,
+                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "generate must be a string"))),
+            };
+            return generate_pages(&cx, build, file, parsed, source);
+        },
+    }
     let url = match parsed.data.get(&cx, lit(&cx, "permalink")) {
         Option::None => url,
         Option::Some(value) => match value.as_string() {
@@ -316,7 +427,7 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Resul
         },
     };
     let page = Page.{ data: parsed.data, url, body: parsed.body, body_line: parsed.body_line };
-    let destination = output_for_url(&cx, build.output, url)?;
+    let destination = output_for_url(&cx, build.output, url, file)?;
     claim(&cx, build, destination, file)?;
     build.pages.push(&cx, SourcePage.{ file, page, is_markdown, destination });
     Result::Ok.(())

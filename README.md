@@ -50,6 +50,33 @@ only after a successful build. A failed render leaves the previous output
 intact. Krayon owns the output directory and removes its previous contents on
 a successful rebuild, including files placed there by hand.
 
+An HTML template can generate a page for each table in a site data array:
+
+```html
++++
+generate = "site.products"
+layout = "base.html"
+kind = "product"
++++
+<h1>{{ page.title }}</h1>
+```
+
+The site data file supplies records with explicit URLs:
+
+```toml
+[[products]]
+url = "/products/widget/"
+title = "Widget"
+```
+
+Each record must have a string `url` ending in `/` or `.html`. Record fields
+become `page.*` fields and override the template's front matter defaults.
+The template itself produces no page. Generated pages appear in
+`collections.pages`, support layouts and includes, and pass the same output
+collision and link checks as ordinary pages. `generate` accepts dotted site
+data paths such as `site.catalog.products`; it is available only in HTML
+templates and cannot be combined with `permalink`.
+
 Before installing the output, Krayon checks local `href`, `src`, and `srcset`
 values in generated HTML, plus CSS `url()` references in inline styles and
 copied `.css` assets. Page links and copied assets must
