@@ -680,6 +680,68 @@ class BuildTests(unittest.TestCase):
         self.assertIn("XML value contains an invalid control character", result.stderr)
         self.assertEqual((self.site / "dist/sitemap.xml").read_bytes(), previous)
 
+        sitemap.write_text(sitemap.read_text().replace("{{ site.json_title }}",
+                                                      "{{ site.title }}"))
+        shell = self.site / "src/_includes/xml-shell.xml"
+        shell.write_text(shell.read_text().replace('</root>', '</wrong>'))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('generated XML /sitemap.xml', result.stderr)
+        self.assertIn('mismatched XML closing tag', result.stderr)
+        self.assertEqual((self.site / "dist/sitemap.xml").read_bytes(), previous)
+
+    def test_generated_xml_is_validated_before_output_install(self):
+        template = self.site / "src/feed.xml"
+        template.write_text('<?xml version="1.0" encoding="UTF-8"?>\n'
+                            '<?feed mode="test"?>\n'
+                            '<feed xmlns:x="urn:items" note="Café &amp; tea">'
+                            '<!-- entries --><x:item id="1">'
+                            '<![CDATA[<raw>&text]]>&#x1F680;'
+                            '</x:item></feed>')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        previous = (self.site / "dist/feed.xml").read_bytes()
+        root = ET.fromstring(previous)
+        self.assertEqual(root.attrib['note'], 'Café & tea')
+        self.assertIn('🚀', root[0].text)
+
+        template.write_text('<feed>é<item></feed>')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'{template}: generated XML /feed.xml:1:14: '
+                      'mismatched XML closing tag', result.stderr)
+        self.assertEqual((self.site / "dist/feed.xml").read_bytes(), previous)
+
+    def test_generated_xml_rejects_invalid_markup_and_entities(self):
+        template = self.site / "src/feed.xml"
+        cases = [
+            ('<root>a & b</root>', 'invalid XML reference'),
+            ('<root>&unknown;</root>', 'unknown XML entity'),
+            ('<root a="1" a="2"/>', 'duplicate XML attribute'),
+            ('<root a="<"/>', 'unescaped < in attribute value'),
+            ('<root><!-- bad -- comment --></root>', '-- is not allowed'),
+            ('<root/><other/>', 'multiple XML root elements'),
+            ('<root>&#0;</root>', 'invalid XML character reference'),
+            ('<root>]]></root>', ']]> is not allowed in XML text'),
+            ('<root><![CDATA[never closed</root>', 'unterminated CDATA section'),
+            ('<!DOCTYPE root><root/>', 'DTD declarations are not supported'),
+            ('<?xml version="1.1"?><root/>', 'only XML 1.0 is supported'),
+            ('<?XML version="1.0"?><root/>', 'XML declaration must be first'),
+            ('<?xml version="1.0" standalone="yes" encoding="UTF-8"?><root/>',
+             'invalid XML declaration field order'),
+        ]
+        for body, message in cases:
+            with self.subTest(body=body):
+                template.write_text(body)
+                result = self.build()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+
+        template.write_bytes(b'<root>\xff</root>')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('invalid UTF-8 in XML', result.stderr)
+
     def test_generated_json_templates_and_drafts(self):
         data = self.site / "src/_data/site.toml"
         data.write_text('products = [{slug = "alpha", title = "A & B"}, '

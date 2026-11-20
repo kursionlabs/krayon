@@ -1,0 +1,6 @@
+[package]
+name="xml"
+source_root="."
+
+[dependencies.std]
+path="../../../kursal/lib/std"

@@ -12,6 +12,7 @@ use html::{Page, TemplateFormat, parse_page, template};
 use markdown::markdown;
 use links::{Document, Stylesheet, validate};
 use json::validate as validate_json;
+use xml::validate as validate_xml_document;
 use records::{filter_contains, filter_records, scalar, sort_records};
 use url::valid_origin;
 
@@ -118,6 +119,25 @@ fn report_detail(&cx: Domain!['k], file: Span['k], detail: Span['k]) -> Buffer! 
 forall 'k.
 fn report_template(&cx: Domain!['k], detail: Span['k]) -> Buffer! {
     Buffer!::new().push_static("krayon: ").push_bytes(&cx, detail).push_byte(b'\n')
+}
+
+forall 'k.
+fn report_generated(&cx: Domain!['k], source: SourcePage['k], rendered: Span['k],
+    kind: Slice[u8, 'static], offset: usize, detail: Slice[u8, 'static]) -> Buffer! {
+    var line = 1usize;
+    var column = 1usize;
+    var i = 0usize;
+    while i < offset {
+        let c = rendered.byte_or_zero(&cx, i);
+        if c == b'\n' { line = line + 1usize; column = 1usize; }
+        else if c < 128u8 || c >= 192u8 { column = column + 1usize; }
+        i = i + 1usize;
+    }
+    Buffer!::new().push_static("krayon: ").push_bytes(&cx, source.file)
+        .push_static(": generated ").push_static(kind).push_byte(b' ')
+        .push_bytes(&cx, source.page.url).push_byte(b':')
+        .push_usize(line).push_byte(b':').push_usize(column).push_static(": ")
+        .push_static(detail).push_byte(b'\n')
 }
 
 forall 'k.
@@ -849,21 +869,13 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
     match source.format {
         TemplateFormat::Json => match validate_json(&cx, rendered) {
             Result::Ok(nothing) => (),
-            Result::Err(error) => {
-                var line = 1usize;
-                var column = 1usize;
-                var i = 0usize;
-                while i < error.offset {
-                    let c = rendered.byte_or_zero(&cx, i);
-                    if c == b'\n' { line = line + 1usize; column = 1usize; }
-                    else if c < 128u8 || c >= 192u8 { column = column + 1usize; }
-                    i = i + 1usize;
-                }
-                return Result::Err.(Buffer!::new().push_static("krayon: ").push_bytes(&cx, source.file)
-                    .push_static(": generated JSON ").push_bytes(&cx, page.url).push_byte(b':')
-                    .push_usize(line).push_byte(b':').push_usize(column).push_static(": ")
-                    .push_static(error.message).push_byte(b'\n'));
-            },
+            Result::Err(error) => return Result::Err.(report_generated(&cx, source, rendered,
+                "JSON", error.offset, error.message)),
+        },
+        TemplateFormat::Xml => match validate_xml_document(&cx, rendered) {
+            Result::Ok(nothing) => (),
+            Result::Err(error) => return Result::Err.(report_generated(&cx, source, rendered,
+                "XML", error.offset, error.message)),
         },
         _ => (),
     }

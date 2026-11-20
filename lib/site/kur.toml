@@ -23,5 +23,8 @@ path="../links"
 [dependencies.json]
 path="../json"
 
+[dependencies.xml]
+path="../xml"
+
 [dependencies.records]
 path="../records"

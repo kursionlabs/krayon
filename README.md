@@ -157,9 +157,11 @@ JSON value without surrounding quotes. The filter supports strings, numbers,
 booleans, dates (as strings), arrays, and tables, including values from
 `collections.pages`; it rejects NaN and infinity. It can follow `| url`, as in
 `{{ "/assets/site.css" | url | json }}`. Text substitutions are copied unchanged.
-Krayon validates each completed JSON document before installing the output;
-an invalid document reports its generated line and column and leaves the
-previous output intact. XML is not parsed. For JSON arrays, loops expose
+Krayon validates completed JSON and XML documents before installing the
+output; invalid output reports its generated line and column and leaves the
+previous output intact. XML validation accepts UTF-8 XML 1.0 with comments,
+processing instructions, CDATA, and predefined or numeric references. DTD
+declarations and other encodings are unsupported. For JSON arrays, loops expose
 `loop.first`, `loop.last`, and the one-based `loop.index`:
 
 ```text
@@ -291,6 +293,7 @@ hyphens, underscores, and colons.
 - `lib/links/` — local link validation
 - `lib/records/` — record filtering and sorting shared by queries and pagination
 - `lib/json/` — generated JSON validation
+- `lib/xml/` — generated XML validation
 - `lib/url/` — deployment path prefixes
 - `lib/highlight/` — fenced code highlighting
 - `examples/hello-site/` — independent site example

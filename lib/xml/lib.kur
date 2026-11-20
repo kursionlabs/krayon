@@ -1,0 +1,353 @@
+use std::arena::Domain!;
+use std::collections::arena_vec::ArenaVec;
+use std::option::{Option, Result};
+use std::raw::Span;
+use std::slice::Slice;
+use std::utf8::decode;
+
+exposed struct Error {
+    offset: usize,
+    message: Slice[u8, 'static],
+}
+
+fn fail(offset: usize, message: Slice[u8, 'static]) -> Error { Error.{ offset, message } }
+
+forall 'k.
+fn byte(&cx: Domain!['k], text: Span['k], i: usize) -> u8 { text.byte_or_zero(&cx, i) }
+
+fn space(c: u8) -> bool { c == b' ' || c == b'\t' || c == b'\r' || c == b'\n' }
+
+forall 'k.
+fn skip_space(&cx: Domain!['k], text: Span['k], start: usize) -> usize {
+    var i = start;
+    while i < text.len() && space(byte(&cx, text, i)) { i = i + 1usize; }
+    i
+}
+
+fn xml_char(code: u32) -> bool {
+    code == 9u32 || code == 10u32 || code == 13u32
+        || (code >= 32u32 && code <= 55295u32)
+        || (code >= 57344u32 && code <= 65533u32)
+        || (code >= 65536u32 && code <= 1114111u32)
+}
+
+forall 'k.
+fn scalar(&cx: Domain!['k], text: Span['k], i: usize) -> Result[(u32, usize), Error] {
+    match decode(&cx, text, i) {
+        Option::Some(pair) => {
+            let (code, next) = pair;
+            if !xml_char(code) { return Result::Err.(fail(i, "invalid XML character")); }
+            Result::Ok.((code, next))
+        },
+        Option::None => Result::Err.(fail(i, "invalid UTF-8 in XML")),
+    }
+}
+
+fn name_start(c: u32) -> bool {
+    c == 58u32 || c == 95u32 || (c >= 65u32 && c <= 90u32)
+        || (c >= 97u32 && c <= 122u32)
+        || (c >= 192u32 && c <= 214u32) || (c >= 216u32 && c <= 246u32)
+        || (c >= 248u32 && c <= 767u32) || (c >= 880u32 && c <= 893u32)
+        || (c >= 895u32 && c <= 8191u32) || (c >= 8204u32 && c <= 8205u32)
+        || (c >= 8304u32 && c <= 8591u32) || (c >= 11264u32 && c <= 12271u32)
+        || (c >= 12289u32 && c <= 55295u32) || (c >= 63744u32 && c <= 64975u32)
+        || (c >= 65008u32 && c <= 65533u32) || (c >= 65536u32 && c <= 983039u32)
+}
+
+fn name_char(c: u32) -> bool {
+    name_start(c) || c == 45u32 || c == 46u32 || (c >= 48u32 && c <= 57u32)
+        || c == 183u32 || (c >= 768u32 && c <= 879u32)
+        || (c >= 8255u32 && c <= 8256u32)
+}
+
+forall 'k.
+fn name(&cx: Domain!['k], text: Span['k], start: usize) -> Result[(Span['k], usize), Error] {
+    if start >= text.len() { return Result::Err.(fail(start, "expected XML name")); }
+    let (first, next) = scalar(&cx, text, start)?;
+    if !name_start(first) { return Result::Err.(fail(start, "expected XML name")); }
+    var i = next;
+    while i < text.len() {
+        let c = byte(&cx, text, i);
+        if c == b' ' || c == b'\n' || c == b'\r' || c == b'\t'
+            || c == b'/' || c == b'>' || c == b'=' || c == b'?' { return Result::Ok.((text.slice(start, i), i)); }
+        let (code, after) = scalar(&cx, text, i)?;
+        if !name_char(code) { return Result::Ok.((text.slice(start, i), i)); }
+        i = after;
+    }
+    Result::Ok.((text.slice(start, i), i))
+}
+
+fn digit(c: u8) -> bool { c >= b'0' && c <= b'9' }
+fn lower(c: u8) -> u8 { if c >= b'A' && c <= b'Z' { c + 32u8 } else { c } }
+
+forall 'k.
+fn equal_ci(&cx: Domain!['k], text: Span['k], expected: Slice[u8, 'static]) -> bool {
+    let expected = Span::from_static(&cx, expected);
+    if text.len() != expected.len() { return false; }
+    var i = 0usize;
+    while i < text.len() {
+        if lower(byte(&cx, text, i)) != lower(byte(&cx, expected, i)) { return false; }
+        i = i + 1usize;
+    }
+    true
+}
+fn hex_value(c: u8) -> usize {
+    if digit(c) { (c - b'0') as usize }
+    else if c >= b'a' && c <= b'f' { (c - b'a' + 10u8) as usize }
+    else if c >= b'A' && c <= b'F' { (c - b'A' + 10u8) as usize }
+    else { 16usize }
+}
+
+forall 'k.
+fn reference(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error] {
+    var i = start + 1usize;
+    if i >= text.len() { return Result::Err.(fail(start, "unterminated XML reference")); }
+    if byte(&cx, text, i) == b'#' {
+        i = i + 1usize;
+        let hexadecimal = byte(&cx, text, i) == b'x';
+        if hexadecimal { i = i + 1usize; }
+        let digits = i;
+        var code = 0usize;
+        while i < text.len() && byte(&cx, text, i) != b';' {
+            let c = byte(&cx, text, i);
+            let part = if hexadecimal { hex_value(c) }
+                else if digit(c) { (c - b'0') as usize } else { 16usize };
+            if part >= (if hexadecimal { 16usize } else { 10usize }) {
+                return Result::Err.(fail(i, "invalid XML character reference"));
+            }
+            code = code * (if hexadecimal { 16usize } else { 10usize }) + part;
+            if code > 1114111usize { return Result::Err.(fail(i, "invalid XML character reference")); }
+            i = i + 1usize;
+        }
+        if i == digits || i >= text.len() || !xml_char(code as u32) {
+            return Result::Err.(fail(start, "invalid XML character reference"));
+        }
+        return Result::Ok.(i + 1usize);
+    }
+    let (entity, end) = match name(&cx, text, i) {
+        Result::Ok(found) => found,
+        Result::Err(e) => return Result::Err.(fail(start, "invalid XML reference")),
+    };
+    if end >= text.len() || byte(&cx, text, end) != b';' {
+        return Result::Err.(fail(start, "unterminated XML reference"));
+    }
+    if !entity.is(&cx, "amp") && !entity.is(&cx, "lt") && !entity.is(&cx, "gt")
+        && !entity.is(&cx, "apos") && !entity.is(&cx, "quot") {
+        return Result::Err.(fail(start, "unknown XML entity"));
+    }
+    Result::Ok.(end + 1usize)
+}
+
+forall 'k.
+fn quoted(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error] {
+    let quote = byte(&cx, text, start);
+    if quote != b'\'' && quote != b'"' { return Result::Err.(fail(start, "expected quoted attribute value")); }
+    var i = start + 1usize;
+    while i < text.len() {
+        let c = byte(&cx, text, i);
+        if c == quote { return Result::Ok.(i + 1usize); }
+        if c == b'<' { return Result::Err.(fail(i, "unescaped < in attribute value")); }
+        if c == b'&' { i = reference(&cx, text, i)?; }
+        else { let (code, next) = scalar(&cx, text, i)?; i = next; }
+    }
+    Result::Err.(fail(start, "unterminated attribute value"))
+}
+
+forall 'k.
+fn comment(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error] {
+    var i = start + 4usize;
+    while i < text.len() {
+        if byte(&cx, text, i) == b'-' && byte(&cx, text, i + 1usize) == b'-' {
+            if byte(&cx, text, i + 2usize) == b'>' { return Result::Ok.(i + 3usize); }
+            return Result::Err.(fail(i, "-- is not allowed inside an XML comment"));
+        }
+        let (code, next) = scalar(&cx, text, i)?;
+        i = next;
+    }
+    Result::Err.(fail(start, "unterminated XML comment"))
+}
+
+forall 'k.
+fn cdata(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error] {
+    var i = start + 9usize;
+    while i < text.len() {
+        if byte(&cx, text, i) == b']' && byte(&cx, text, i + 1usize) == b']'
+            && byte(&cx, text, i + 2usize) == b'>' { return Result::Ok.(i + 3usize); }
+        let (code, next) = scalar(&cx, text, i)?;
+        i = next;
+    }
+    Result::Err.(fail(start, "unterminated CDATA section"))
+}
+
+forall 'k.
+fn processing_instruction(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error] {
+    let (target, after) = name(&cx, text, start + 2usize)?;
+    if equal_ci(&cx, target, "xml") { return Result::Err.(fail(start, "XML declaration must be first")); }
+    var i = after;
+    if byte(&cx, text, i) != b'?' && !space(byte(&cx, text, i)) {
+        return Result::Err.(fail(i, "expected space after processing instruction target"));
+    }
+    while i < text.len() {
+        if byte(&cx, text, i) == b'?' && byte(&cx, text, i + 1usize) == b'>' {
+            return Result::Ok.(i + 2usize);
+        }
+        let (code, next) = scalar(&cx, text, i)?;
+        i = next;
+    }
+    Result::Err.(fail(start, "unterminated processing instruction"))
+}
+
+forall 'k.
+fn declaration(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error] {
+    var i = start + 5usize;
+    if !space(byte(&cx, text, i)) { return Result::Err.(fail(i, "expected XML version")); }
+    i = skip_space(&cx, text, i);
+    if !text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "version")) {
+        return Result::Err.(fail(i, "expected XML version"));
+    }
+    i = skip_space(&cx, text, i + 7usize);
+    if byte(&cx, text, i) != b'=' { return Result::Err.(fail(i, "expected = after XML version")); }
+    i = skip_space(&cx, text, i + 1usize);
+    let version_start = i;
+    i = quoted(&cx, text, i)?;
+    if !text.slice(version_start + 1usize, i - 1usize).is(&cx, "1.0") {
+        return Result::Err.(fail(version_start, "only XML 1.0 is supported"));
+    }
+    var seen_encoding = false;
+    var seen_standalone = false;
+    while i < text.len() && !(byte(&cx, text, i) == b'?' && byte(&cx, text, i + 1usize) == b'>') {
+        if !space(byte(&cx, text, i)) { return Result::Err.(fail(i, "invalid XML declaration")); }
+        i = skip_space(&cx, text, i);
+        if byte(&cx, text, i) == b'?' && byte(&cx, text, i + 1usize) == b'>' { return Result::Ok.(i + 2usize); }
+        let (field, next) = name(&cx, text, i)?;
+        if !field.is(&cx, "encoding") && !field.is(&cx, "standalone") {
+            return Result::Err.(fail(i, "invalid XML declaration field"));
+        }
+        if field.is(&cx, "encoding") {
+            if seen_encoding || seen_standalone {
+                return Result::Err.(fail(i, "invalid XML declaration field order"));
+            }
+            seen_encoding = true;
+        } else {
+            if seen_standalone { return Result::Err.(fail(i, "duplicate XML declaration field")); }
+            seen_standalone = true;
+        }
+        i = skip_space(&cx, text, next);
+        if byte(&cx, text, i) != b'=' { return Result::Err.(fail(i, "expected = in XML declaration")); }
+        i = skip_space(&cx, text, i + 1usize);
+        let value_start = i;
+        i = quoted(&cx, text, i)?;
+        let value = text.slice(value_start + 1usize, i - 1usize);
+        if field.is(&cx, "encoding") {
+            if !equal_ci(&cx, value, "UTF-8") {
+                return Result::Err.(fail(value_start, "only UTF-8 XML is supported"));
+            }
+        } else if !value.is(&cx, "yes") && !value.is(&cx, "no") {
+            return Result::Err.(fail(value_start, "standalone must be yes or no"));
+        }
+    }
+    if i + 1usize >= text.len() { return Result::Err.(fail(start, "unterminated XML declaration")); }
+    Result::Ok.(i + 2usize)
+}
+
+forall 'k.
+fn start_tag(&cx: Domain!['k], text: Span['k], start: usize) -> Result[(Span['k], usize, bool), Error] {
+    let (tag, after) = name(&cx, text, start + 1usize)?;
+    var i = after;
+    let attributes = ArenaVec::new(&cx);
+    while i < text.len() {
+        let c = byte(&cx, text, i);
+        if c == b'>' { return Result::Ok.((tag, i + 1usize, false)); }
+        if c == b'/' && byte(&cx, text, i + 1usize) == b'>' {
+            return Result::Ok.((tag, i + 2usize, true));
+        }
+        if !space(c) { return Result::Err.(fail(i, "expected attribute or end of start tag")); }
+        i = skip_space(&cx, text, i);
+        if byte(&cx, text, i) == b'>' { return Result::Ok.((tag, i + 1usize, false)); }
+        if byte(&cx, text, i) == b'/' && byte(&cx, text, i + 1usize) == b'>' {
+            return Result::Ok.((tag, i + 2usize, true));
+        }
+        let (attribute, next) = name(&cx, text, i)?;
+        var j = 0usize;
+        while j < attributes.len(&cx) {
+            if attribute.eq(&cx, attributes.at(&cx, j)) {
+                return Result::Err.(fail(i, "duplicate XML attribute"));
+            }
+            j = j + 1usize;
+        }
+        attributes.push(&cx, attribute);
+        i = skip_space(&cx, text, next);
+        if byte(&cx, text, i) != b'=' { return Result::Err.(fail(i, "expected = after attribute name")); }
+        i = skip_space(&cx, text, i + 1usize);
+        i = quoted(&cx, text, i)?;
+    }
+    Result::Err.(fail(start, "unterminated XML start tag"))
+}
+
+forall 'k.
+fn end_tag(&cx: Domain!['k], text: Span['k], start: usize) -> Result[(Span['k], usize), Error] {
+    let (tag, after) = name(&cx, text, start + 2usize)?;
+    let i = skip_space(&cx, text, after);
+    if byte(&cx, text, i) != b'>' { return Result::Err.(fail(i, "expected > after closing tag")); }
+    Result::Ok.((tag, i + 1usize))
+}
+
+forall 'k.
+fn validate(&cx: Domain!['k], text: Span['k]) -> Result[(), Error] {
+    var i = 0usize;
+    if text.len() >= 3usize && byte(&cx, text, 0usize) == 239u8
+        && byte(&cx, text, 1usize) == 187u8 && byte(&cx, text, 2usize) == 191u8 {
+        i = 3usize;
+    }
+    if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<?xml"))
+        && space(byte(&cx, text, i + 5usize)) {
+        i = declaration(&cx, text, i)?;
+    }
+    let open = ArenaVec::new(&cx);
+    var root = false;
+    while i < text.len() {
+        if byte(&cx, text, i) != b'<' {
+            if open.len(&cx) == 0usize && !space(byte(&cx, text, i)) {
+                return Result::Err.(fail(i, "text outside XML root element"));
+            }
+            if byte(&cx, text, i) == b'&' { i = reference(&cx, text, i)?; }
+            else {
+                if byte(&cx, text, i) == b']' && byte(&cx, text, i + 1usize) == b']'
+                    && byte(&cx, text, i + 2usize) == b'>' {
+                    return Result::Err.(fail(i, "]]> is not allowed in XML text"));
+                }
+                let (code, next) = scalar(&cx, text, i)?;
+                i = next;
+            }
+        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<!--")) {
+            i = comment(&cx, text, i)?;
+        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<![CDATA[")) {
+            if open.len(&cx) == 0usize { return Result::Err.(fail(i, "CDATA outside XML root element")); }
+            i = cdata(&cx, text, i)?;
+        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<!")) {
+            return Result::Err.(fail(i, "DTD declarations are not supported"));
+        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<?")) {
+            i = processing_instruction(&cx, text, i)?;
+        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "</")) {
+            let (tag, next) = end_tag(&cx, text, i)?;
+            let expected = match open.pop(&cx) {
+                Option::Some(name) => name,
+                Option::None => return Result::Err.(fail(i, "closing tag without opening tag")),
+            };
+            if !tag.eq(&cx, expected) { return Result::Err.(fail(i, "mismatched XML closing tag")); }
+            i = next;
+        } else {
+            if root && open.len(&cx) == 0usize { return Result::Err.(fail(i, "multiple XML root elements")); }
+            let (tag, next, empty) = start_tag(&cx, text, i)?;
+            root = true;
+            if !empty {
+                if open.len(&cx) >= 128usize { return Result::Err.(fail(i, "XML nested too deeply")); }
+                open.push(&cx, tag);
+            }
+            i = next;
+        }
+    }
+    if !root { return Result::Err.(fail(i, "missing XML root element")); }
+    if open.len(&cx) != 0usize { return Result::Err.(fail(i, "unclosed XML element")); }
+    Result::Ok.(())
+}
