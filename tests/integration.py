@@ -362,6 +362,32 @@ class BuildTests(unittest.TestCase):
             digest = known.get(name, hashlib.sha256(payload).hexdigest())
             self.assertEqual((output / f"{stem}.{digest}.{suffix}").read_bytes(), payload)
 
+    def test_large_binary_asset_streams_with_matching_fingerprint(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "assets/media").mkdir(parents=True)
+        (self.site / "krayon.toml").write_text('fingerprint_assets = true\n')
+        (src / "index.html").write_text(
+            '<a href="{{ "/assets/media/video.bin" | asset_url }}">Video</a>')
+        payload = bytes(range(256)) * 4096 + b"end"
+        (src / "assets/media/video.bin").write_bytes(payload)
+
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        digest = hashlib.sha256(payload).hexdigest()
+        output = self.site / "dist/assets/media"
+        self.assertEqual((output / "video.bin").read_bytes(), payload)
+        self.assertEqual((output / f"video.{digest}.bin").read_bytes(), payload)
+        self.assertIn(f'/assets/media/video.{digest}.bin',
+                      (self.site / "dist/index.html").read_text())
+        self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
+
+        (self.site / "krayon.toml").write_text('fingerprint_assets = false\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((output / "video.bin").read_bytes(), payload)
+        self.assertFalse((output / f"video.{digest}.bin").exists())
+
     def test_init_creates_buildable_site_and_refuses_existing_content(self):
         target = Path(self.temp.name) / "nested/new-site"
         result = subprocess.run(

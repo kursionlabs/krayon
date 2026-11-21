@@ -1,7 +1,20 @@
 use std::arena::Domain!;
 use std::buffer::Buffer!;
 use std::collections::arena_vec::ArenaVec;
+use std::io::{Error, File!};
+use std::option::{Option, Result};
 use std::raw::Span;
+use std::slice::ReadBytes;
+
+forall 'k.
+exposed struct Hasher {
+    rounds: ArenaVec[u32, 'k],
+    state: ArenaVec[u32, 'k],
+    schedule: ArenaVec[u32, 'k],
+    pending: ArenaVec[u8, 'k],
+    used: usize,
+    total: u64,
+}
 
 fn rotate(value: u32, amount: u32) -> u32 {
     (value >> amount) | (value << (32u32 - amount))
@@ -27,17 +40,6 @@ fn push_hex_word(out: Buffer!, word: u32) -> Buffer! {
 }
 
 forall 'k.
-fn padded_byte(&cx: Domain!['k], contents: Span['k], position: usize, total: usize) -> u8 {
-    if position < contents.len() { return contents.byte_or_zero(&cx, position); }
-    if position == contents.len() { return 128u8; }
-    if position >= total - 8usize {
-        let bits = (contents.len() as u64) * 8u64;
-        return ((bits >> (((total - 1usize - position) as u64) * 8u64)) & 255u64) as u8;
-    }
-    0u8
-}
-
-forall 'k.
 fn constant(&cx: Domain!['k], digits: Span['k], index: usize) -> u32 {
     var value = 0u32;
     var i = index * 8usize;
@@ -48,9 +50,9 @@ fn constant(&cx: Domain!['k], digits: Span['k], index: usize) -> u32 {
     value
 }
 
-// SHA-256 (FIPS 180-4), returned as 64 lowercase hexadecimal digits.
+// SHA-256 (FIPS 180-4), with a reusable 64-byte message block.
 forall 'k.
-fn digest_hex(&cx: Domain!['k], contents: Span['k]) -> Span['k] {
+fn new_hash(&cx: Domain!['k]) -> Hasher['k] {
     let constants = Buffer!::new()
         .push_static("428a2f9871374491b5c0fbcfe9b5dba53956c25b59f111f1923f82a4ab1c5ed5")
         .push_static("d807aa9812835b01243185be550c7dc372be5d7480deb1fe9bdc06a7c19bf174")
@@ -62,10 +64,10 @@ fn digest_hex(&cx: Domain!['k], contents: Span['k]) -> Span['k] {
         .push_static("748f82ee78a5636f84c878148cc7020890befffaa4506cebbef9a3f7c67178f2")
         .save(&cx);
     let rounds = ArenaVec::new(&cx);
-    var index = 0usize;
-    while index < 64usize {
-        rounds.push(&cx, constant(&cx, constants, index));
-        index = index + 1usize;
+    var i = 0usize;
+    while i < 64usize {
+        rounds.push(&cx, constant(&cx, constants, i));
+        i = i + 1usize;
     }
     let state = ArenaVec::new(&cx);
     state.push(&cx, 0x6a09e667u32);
@@ -76,73 +78,172 @@ fn digest_hex(&cx: Domain!['k], contents: Span['k]) -> Span['k] {
     state.push(&cx, 0x9b05688cu32);
     state.push(&cx, 0x1f83d9abu32);
     state.push(&cx, 0x5be0cd19u32);
-    var blocks = contents.len() / 64usize + 1usize;
-    if contents.len() % 64usize >= 56usize { blocks = blocks + 1usize; }
-    let total = blocks * 64usize;
-    let words = ArenaVec::filled(&cx, 64usize, 0u32);
-    var block = 0usize;
-    while block < blocks {
-        var i = 0usize;
-        while i < 16usize {
-            var word = 0u32;
-            var j = 0usize;
-            while j < 4usize {
-                word = (word << 8u32) | (padded_byte(&cx, contents, block * 64usize + i * 4usize + j, total) as u32);
-                j = j + 1usize;
-            }
-            let previous = words.replace(&cx, i, word);
-            i = i + 1usize;
+    Hasher.{ rounds, state, schedule: ArenaVec::filled(&cx, 64usize, 0u32),
+        pending: ArenaVec::filled(&cx, 64usize, 0u8), used: 0usize, total: 0u64 }
+}
+
+forall 'k.
+fn compress(&cx: Domain!['k], hash: Hasher['k]) -> () {
+    var i = 0usize;
+    while i < 16usize {
+        var word = 0u32;
+        var j = 0usize;
+        while j < 4usize {
+            word = (word << 8u32) | (hash.pending.at(&cx, i * 4usize + j) as u32);
+            j = j + 1usize;
         }
-        while i < 64usize {
-            let x = words.at(&cx, i - 15usize);
-            let y = words.at(&cx, i - 2usize);
-            let s0 = rotate(x, 7u32) ^ rotate(x, 18u32) ^ (x >> 3u32);
-            let s1 = rotate(y, 17u32) ^ rotate(y, 19u32) ^ (y >> 10u32);
-            let word = words.at(&cx, i - 16usize) + s0 + words.at(&cx, i - 7usize) + s1;
-            let previous = words.replace(&cx, i, word);
-            i = i + 1usize;
-        }
-        var a = state.at(&cx, 0usize);
-        var b = state.at(&cx, 1usize);
-        var c = state.at(&cx, 2usize);
-        var d = state.at(&cx, 3usize);
-        var e = state.at(&cx, 4usize);
-        var f = state.at(&cx, 5usize);
-        var g = state.at(&cx, 6usize);
-        var h = state.at(&cx, 7usize);
-        i = 0usize;
-        while i < 64usize {
-            let s1 = rotate(e, 6u32) ^ rotate(e, 11u32) ^ rotate(e, 25u32);
-            let choice = (e & f) ^ ((e ^ 0xffff_ffffu32) & g);
-            let t1 = h + s1 + choice + rounds.at(&cx, i) + words.at(&cx, i);
-            let s0 = rotate(a, 2u32) ^ rotate(a, 13u32) ^ rotate(a, 22u32);
-            let majority = (a & b) ^ (a & c) ^ (b & c);
-            let t2 = s0 + majority;
-            h = g;
-            g = f;
-            f = e;
-            e = d + t1;
-            d = c;
-            c = b;
-            b = a;
-            a = t1 + t2;
-            i = i + 1usize;
-        }
-        let previous = state.replace(&cx, 0usize, state.at(&cx, 0usize) + a);
-        let previous = state.replace(&cx, 1usize, state.at(&cx, 1usize) + b);
-        let previous = state.replace(&cx, 2usize, state.at(&cx, 2usize) + c);
-        let previous = state.replace(&cx, 3usize, state.at(&cx, 3usize) + d);
-        let previous = state.replace(&cx, 4usize, state.at(&cx, 4usize) + e);
-        let previous = state.replace(&cx, 5usize, state.at(&cx, 5usize) + f);
-        let previous = state.replace(&cx, 6usize, state.at(&cx, 6usize) + g);
-        let previous = state.replace(&cx, 7usize, state.at(&cx, 7usize) + h);
-        block = block + 1usize;
+        let previous = hash.schedule.replace(&cx, i, word);
+        i = i + 1usize;
     }
-    var result = Buffer!::new();
+    while i < 64usize {
+        let x = hash.schedule.at(&cx, i - 15usize);
+        let y = hash.schedule.at(&cx, i - 2usize);
+        let s0 = rotate(x, 7u32) ^ rotate(x, 18u32) ^ (x >> 3u32);
+        let s1 = rotate(y, 17u32) ^ rotate(y, 19u32) ^ (y >> 10u32);
+        let word = hash.schedule.at(&cx, i - 16usize) + s0 + hash.schedule.at(&cx, i - 7usize) + s1;
+        let previous = hash.schedule.replace(&cx, i, word);
+        i = i + 1usize;
+    }
+    var a = hash.state.at(&cx, 0usize);
+    var b = hash.state.at(&cx, 1usize);
+    var c = hash.state.at(&cx, 2usize);
+    var d = hash.state.at(&cx, 3usize);
+    var e = hash.state.at(&cx, 4usize);
+    var f = hash.state.at(&cx, 5usize);
+    var g = hash.state.at(&cx, 6usize);
+    var h = hash.state.at(&cx, 7usize);
+    i = 0usize;
+    while i < 64usize {
+        let s1 = rotate(e, 6u32) ^ rotate(e, 11u32) ^ rotate(e, 25u32);
+        let choice = (e & f) ^ ((e ^ 0xffff_ffffu32) & g);
+        let t1 = h + s1 + choice + hash.rounds.at(&cx, i) + hash.schedule.at(&cx, i);
+        let s0 = rotate(a, 2u32) ^ rotate(a, 13u32) ^ rotate(a, 22u32);
+        let majority = (a & b) ^ (a & c) ^ (b & c);
+        let t2 = s0 + majority;
+        h = g;
+        g = f;
+        f = e;
+        e = d + t1;
+        d = c;
+        c = b;
+        b = a;
+        a = t1 + t2;
+        i = i + 1usize;
+    }
+    let previous = hash.state.replace(&cx, 0usize, hash.state.at(&cx, 0usize) + a);
+    let previous = hash.state.replace(&cx, 1usize, hash.state.at(&cx, 1usize) + b);
+    let previous = hash.state.replace(&cx, 2usize, hash.state.at(&cx, 2usize) + c);
+    let previous = hash.state.replace(&cx, 3usize, hash.state.at(&cx, 3usize) + d);
+    let previous = hash.state.replace(&cx, 4usize, hash.state.at(&cx, 4usize) + e);
+    let previous = hash.state.replace(&cx, 5usize, hash.state.at(&cx, 5usize) + f);
+    let previous = hash.state.replace(&cx, 6usize, hash.state.at(&cx, 6usize) + g);
+    let previous = hash.state.replace(&cx, 7usize, hash.state.at(&cx, 7usize) + h);
+}
+
+forall 'k, C, S where ReadBytes[C, S], Copy[S].
+fn hash_bytes(&cx: Domain!['k], hash: Hasher['k], &read: C, bytes: S) -> Hasher['k] {
+    var used = hash.used;
+    var total = hash.total;
+    var i = 0usize;
+    let count = ReadBytes[C, S]::len(&read, bytes);
+    while i < count {
+        let value = match ReadBytes[C, S]::get(&read, bytes, i) {
+            Option::Some(found) => found,
+            Option::None => 0u8,
+        };
+        used = absorb(&cx, hash, used, value);
+        total = total + 1u64;
+        i = i + 1usize;
+    }
+    Hasher.{ rounds: hash.rounds, state: hash.state, schedule: hash.schedule,
+        pending: hash.pending, used, total }
+}
+
+forall 'k.
+fn absorb(&cx: Domain!['k], hash: Hasher['k], used: usize, value: u8) -> usize {
+    let previous = hash.pending.replace(&cx, used, value);
+    if used + 1usize == 64usize {
+        compress(&cx, hash);
+        0usize
+    } else { used + 1usize }
+}
+
+forall 'k.
+fn finish_hash(&cx: Domain!['k], hash: Hasher['k]) -> Span['k] {
+    let bits = hash.total * 8u64;
+    var used = hash.used;
+    let previous = hash.pending.replace(&cx, used, 128u8);
+    used = used + 1usize;
+    if used > 56usize {
+        while used < 64usize {
+            let previous = hash.pending.replace(&cx, used, 0u8);
+            used = used + 1usize;
+        }
+        compress(&cx, hash);
+        used = 0usize;
+    }
+    while used < 56usize {
+        let previous = hash.pending.replace(&cx, used, 0u8);
+        used = used + 1usize;
+    }
     var i = 0usize;
     while i < 8usize {
-        result = push_hex_word(result, state.at(&cx, i));
+        let value = ((bits >> (((7usize - i) as u64) * 8u64)) & 255u64) as u8;
+        let previous = hash.pending.replace(&cx, 56usize + i, value);
+        i = i + 1usize;
+    }
+    compress(&cx, hash);
+    var result = Buffer!::new();
+    i = 0usize;
+    while i < 8usize {
+        result = push_hex_word(result, hash.state.at(&cx, i));
         i = i + 1usize;
     }
     result.save(&cx)
+}
+
+forall 'k.
+fn digest_hex(&cx: Domain!['k], contents: Span['k]) -> Span['k] {
+    var hash = new_hash(&cx);
+    var used = 0usize;
+    var i = 0usize;
+    while i < contents.len() {
+        used = absorb(&cx, hash, used, contents.byte_or_zero(&cx, i));
+        i = i + 1usize;
+    }
+    hash = Hasher.{ rounds: hash.rounds, state: hash.state, schedule: hash.schedule,
+        pending: hash.pending, used, total: contents.len() as u64 };
+    finish_hash(&cx, hash)
+}
+
+// Reads a regular file in bounded chunks and hashes exactly the bytes read.
+forall 'k.
+fn digest_file(&cx: Domain!['k], path: Span['k]) -> Result[Span['k], Error] {
+    let opened = File!::open_read(&cx, path)?;
+    var opened = opened;
+    var chunk = Buffer!::new_with_cap(65536usize);
+    var hash = new_hash(&cx);
+    var going = true;
+    while going {
+        let count = match &opened.read_exact(&chunk, 65536usize) {
+            Result::Ok(n) => n,
+            Result::Err(e) => {
+                chunk.destroy();
+                let closed = opened.close();
+                return Result::Err.(e);
+            },
+        };
+        if count == 0usize { going = false; }
+        else {
+            let exists 'b. (tag, bytes, restore) = chunk.open();
+            hash = hash_bytes(&cx, hash, &tag, bytes);
+            chunk = restore.restore(tag).clear();
+            if count < 65536usize { going = false; }
+        }
+    }
+    chunk.destroy();
+    match opened.close() {
+        Result::Ok(nothing) => Result::Ok.(finish_hash(&cx, hash)),
+        Result::Err(e) => Result::Err.(e),
+    }
 }
