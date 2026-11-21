@@ -9,7 +9,7 @@ use std::raw::Span;
 use std::slice::Slice;
 use toml::parse;
 use toml::value::TomlValue;
-use html::{Page, TemplateFormat, parse_page, template};
+use html::{Page, TemplateFormat, parse_page, template, escape_json};
 use markdown::markdown;
 use links::{Document, Stylesheet, validate, rewrite_css, css_dependencies};
 use json::validate as validate_json;
@@ -2127,6 +2127,21 @@ fn new_build(&cx: Domain!['k], root: Span['k], config: Config['k], source: Span[
 
 forall 'k.
 fn routes_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> Result[Buffer!, Buffer!] {
+    route_listing(&cx, root, include_drafts, false)
+}
+
+forall 'k.
+fn routes_json_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> Result[Buffer!, Buffer!] {
+    route_listing(&cx, root, include_drafts, true)
+}
+
+forall 'k.
+fn json_string(&cx: Domain!['k], out: Buffer!, value: Span['k]) -> Buffer! {
+    escape_json(&cx, out.push_byte(b'"'), value).push_byte(b'"')
+}
+
+forall 'k.
+fn route_listing(&cx: Domain!['k], root: Span['k], include_drafts: bool, json: bool) -> Result[Buffer!, Buffer!] {
     let config = read_config(&cx, root)?;
     check_config_output(&cx, config)?;
     let source = join(&cx, root, config.input);
@@ -2135,22 +2150,39 @@ fn routes_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) ->
     let build = new_build(&cx, root, config, source, output, include_drafts, site_data);
     discover_site(&cx, build)?;
     build.redirects.sort_by(&cx, |&cx, a, b| a.url.cmp(&cx, b.url));
-    var listing = Buffer!::new();
+    var listing = if json { Buffer!::new().push_static("{\"pages\":[") } else { Buffer!::new() };
     var i = 0usize;
     while i < build.pages.len(&cx) {
         let entry = build.pages.at(&cx, i);
         let relative = entry.file.slice(build.source.len() + 1usize, entry.file.len());
-        listing = listing.push_static("page\t").push_bytes(&cx, relative)
-            .push_byte(b'\t').push_bytes(&cx, prefix(&cx, build.base_path, entry.page.url)).push_byte(b'\n');
+        let url = prefix(&cx, build.base_path, entry.page.url);
+        listing = if json {
+            let out = if i > 0usize { listing.push_byte(b',') } else { listing };
+            json_string(&cx, json_string(&cx, out.push_static("{\"source\":"), relative)
+                .push_static(",\"url\":"), url).push_byte(b'}')
+        } else {
+            listing.push_static("page\t").push_bytes(&cx, relative)
+                .push_byte(b'\t').push_bytes(&cx, url).push_byte(b'\n')
+        };
         i = i + 1usize;
     }
+    if json { listing = listing.push_static("],\"aliases\":["); }
     i = 0usize;
     while i < build.redirects.len(&cx) {
         let redirect = build.redirects.at(&cx, i);
-        listing = listing.push_static("alias\t").push_bytes(&cx, prefix(&cx, build.base_path, redirect.url))
-            .push_byte(b'\t').push_bytes(&cx, prefix(&cx, build.base_path, redirect.target)).push_byte(b'\n');
+        let url = prefix(&cx, build.base_path, redirect.url);
+        let target = prefix(&cx, build.base_path, redirect.target);
+        listing = if json {
+            let out = if i > 0usize { listing.push_byte(b',') } else { listing };
+            json_string(&cx, json_string(&cx, out.push_static("{\"url\":"), url)
+                .push_static(",\"target\":"), target).push_byte(b'}')
+        } else {
+            listing.push_static("alias\t").push_bytes(&cx, url)
+                .push_byte(b'\t').push_bytes(&cx, target).push_byte(b'\n')
+        };
         i = i + 1usize;
     }
+    if json { listing = listing.push_static("],\"assets\":["); }
     let assets = ArenaVec::new(&cx);
     i = 0usize;
     while i < build.asset_urls.positions(&cx) {
@@ -2162,17 +2194,28 @@ fn routes_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) ->
     }
     assets.sort_by(&cx, |&cx, a, b| a.cmp(&cx, b));
     i = 0usize;
+    var asset_count = 0usize;
     while i < assets.len(&cx) {
         let original = assets.at(&cx, i);
         match build.asset_urls.get(&cx, original) {
             Option::Some(preferred) => {
-                listing = listing.push_static("asset\t").push_bytes(&cx, original.slice(1usize, original.len()))
-                    .push_byte(b'\t').push_bytes(&cx, prefix(&cx, build.base_path, preferred)).push_byte(b'\n');
+                let source = original.slice(1usize, original.len());
+                let url = prefix(&cx, build.base_path, preferred);
+                listing = if json {
+                    let out = if asset_count > 0usize { listing.push_byte(b',') } else { listing };
+                    json_string(&cx, json_string(&cx, out.push_static("{\"source\":"), source)
+                        .push_static(",\"url\":"), url).push_byte(b'}')
+                } else {
+                    listing.push_static("asset\t").push_bytes(&cx, source)
+                        .push_byte(b'\t').push_bytes(&cx, url).push_byte(b'\n')
+                };
+                asset_count = asset_count + 1usize;
             },
             Option::None => (),
         }
         i = i + 1usize;
     }
+    if json { listing = listing.push_static("]}\n"); }
     Result::Ok.(listing)
 }
 

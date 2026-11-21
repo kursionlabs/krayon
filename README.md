@@ -43,7 +43,10 @@ lists pages as `page<TAB>source<TAB>URL`, redirects as
 group is sorted by its URL or source path. URLs include `base_path`, and asset
 URLs use fingerprinted filenames when `fingerprint_assets` is enabled.
 Generated and paginated pages use their source template with an item or page
-number. Add `--drafts` to include drafts.
+number. Add `--drafts` to include drafts. Add `--json` for an object with
+`pages`, `aliases`, and `assets` arrays in the same order. Page and asset
+objects have `source` and `url` fields; alias objects have `url` and `target`.
+For example, `bin/krayon routes --json` can feed a deployment script.
 `routes` checks source discovery and route collisions, but does not render
 pages, validate links, or write to the output directory.
 

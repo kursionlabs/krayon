@@ -458,12 +458,35 @@ class BuildTests(unittest.TestCase):
         self.assertFalse((self.site / "dist").exists())
         self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
 
+        result = self.routes("--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {
+            "pages": [
+                {"source": "index.md", "url": "/docs/"},
+                {"source": "archive.html [page 1]", "url": "/docs/archive/"},
+                {"source": "archive.html [page 2]", "url": "/docs/archive/page/2/"},
+                {"source": "item.json [item 1]", "url": "/docs/data/a.json"},
+                {"source": "new.md", "url": "/docs/latest/"},
+            ],
+            "aliases": [{"url": "/docs/old/", "target": "/docs/latest/"}],
+            "assets": [],
+        })
+        self.assertTrue(result.stdout.endswith("\n"))
+        self.assertFalse((self.site / "dist").exists())
+
         result = self.routes("--drafts")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('page\tdraft.md\t/docs/draft/\n', result.stdout)
         self.assertIn('page\titem.json [item 2]\t/docs/data/b.json\n', result.stdout)
         self.assertNotIn('private.md', result.stdout)
         self.assertFalse((self.site / "dist").exists())
+
+        result = self.routes("--json", "--drafts")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        pages = json.loads(result.stdout)["pages"]
+        self.assertIn({"source": "draft.md", "url": "/docs/draft/"}, pages)
+        self.assertIn({"source": "item.json [item 2]", "url": "/docs/data/b.json"}, pages)
+        self.assertNotIn("private.md", [page["source"] for page in pages])
 
         (self.site / "dist").mkdir()
         (self.site / "dist/sentinel.txt").write_text("keep\n")
@@ -482,6 +505,33 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertIn('output collision', result.stderr)
         self.assertFalse((self.site / "dist").exists())
+
+        result = self.routes("--json")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn('output collision', result.stderr)
+
+    def test_routes_json_escapes_paths_and_rejects_invalid_flags(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "assets").mkdir(parents=True)
+        (src / "index.md").write_text("# Home\n")
+        name = 'say"hello\tworld.txt'
+        (src / "assets" / name).write_text("hello")
+        result = self.routes("--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["assets"],
+                         [{"source": f"assets/{name}", "url": f"/assets/{name}"}])
+        self.assertIn('say\\"hello\\tworld.txt', result.stdout)
+        self.assertFalse((self.site / "dist").exists())
+
+        for command in ("build", "check"):
+            result = subprocess.run([str(KRAYON), command, str(self.site), "--json"],
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("usage:", result.stderr)
+        result = self.routes("--json", "--json")
+        self.assertEqual(result.returncode, 2)
 
     def test_routes_include_sorted_asset_mappings_without_writing(self):
         shutil.rmtree(self.site / "src")
@@ -506,6 +556,13 @@ class BuildTests(unittest.TestCase):
                          f'asset\tassets/z.css\t/docs/assets/z.{css_hash}.css\n')
         self.assertFalse((self.site / "dist").exists())
         self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
+
+        result = self.routes("--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["assets"], [
+            {"source": "assets/a.bin", "url": f"/docs/assets/a.{data_hash}.bin"},
+            {"source": "assets/z.css", "url": f"/docs/assets/z.{css_hash}.css"},
+        ])
 
         (self.site / "krayon.toml").write_text('base_path = "/docs"\n')
         result = self.routes()
