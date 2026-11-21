@@ -2783,6 +2783,33 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(f"{page}: broken local link: /assets/missing.png", result.stderr)
 
+    def test_video_posters_and_object_data_are_checked(self):
+        assets = self.site / "src/assets"
+        (assets / "poster.jpg").write_bytes(b"poster")
+        (assets / "report.pdf").write_bytes(b"report")
+        page = self.site / "src/media.html"
+        page.write_text('<video POSTER="../assets/poster.jpg?x=1&amp;y=2"></video>\n'
+                        '<object DATA="/assets/report.pdf#page=1"></object>\n'
+                        '<object data="data:application/pdf;base64,QQ=="></object>\n'
+                        '<div poster="/missing-unrelated.jpg" '
+                        'data="/missing-unrelated.pdf"></div>\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        previous = (self.site / "dist/media/index.html").read_bytes()
+
+        page.write_text('<VIDEO POSTER="../assets/missing.jpg"></VIDEO>\n'
+                        '<OBJECT DATA="/assets/missing.pdf"></OBJECT>\n')
+        for command in (self.check, self.build):
+            result = command()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stderr.count("broken local link:"), 2)
+            self.assertIn(f"{page}: broken local link: ../assets/missing.jpg "
+                          "(generated HTML line 1, column 16)", result.stderr)
+            self.assertIn(f"{page}: broken local link: /assets/missing.pdf "
+                          "(generated HTML line 2, column 15)", result.stderr)
+            self.assertEqual((self.site / "dist/media/index.html").read_bytes(), previous)
+            self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
+
     def test_css_urls_in_stylesheets_and_html_are_checked(self):
         assets = self.site / "src/assets"
         (assets / "image.png").write_bytes(b"image")

@@ -354,7 +354,9 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
                                     Option::None => { base_href = Option::Some.(value.trim(&cx)); },
                                 }
                             }
-                            else if equal_ci(&cx, name, "href") || equal_ci(&cx, name, "src") {
+                            else if equal_ci(&cx, name, "href") || equal_ci(&cx, name, "src")
+                                || (equal_ci(&cx, tag, "video") && equal_ci(&cx, name, "poster"))
+                                || (equal_ci(&cx, tag, "object") && equal_ci(&cx, name, "data")) {
                                 targets.push(&cx, LinkTarget.{ value, offset: value_start, raw_len: 0usize,
                                     bases: Option::None });
                             } else if equal_ci(&cx, name, "srcset") { scan_srcset(&cx, raw_value, value_start, targets); }

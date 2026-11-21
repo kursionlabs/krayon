@@ -329,8 +329,9 @@ scanned. Relative Atom links honor `xml:base` on the feed, entry, or link;
 without it, they resolve from the feed URL.
 
 Before installing the output, Krayon checks local `href`, `src`, and `srcset`
-values in generated HTML, CSS `url()` references in inline styles and copied
-`.css` assets, quoted `@import` paths in `<style>` elements and copied CSS,
+values in generated HTML, plus `video poster` and `object data` URLs. It also
+checks CSS `url()` references in inline styles and copied `.css` assets,
+quoted `@import` paths in `<style>` elements and copied CSS,
 and the XML link fields above. Page links and copied assets must resolve;
 fragments targeting generated pages must match an HTML ID. Relative URLs,
 query strings, percent escapes, and `base_path` are handled. Absolute
