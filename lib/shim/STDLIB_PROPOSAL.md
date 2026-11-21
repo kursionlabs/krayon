@@ -57,7 +57,7 @@ by mapping the structured error at the call site.
 
 ## Adoption
 
-The shim forwards Kursal's existing `std::fs` API and adds this one
+The shim imports Kursal's existing `std::fs` API internally and adds this one
 function. If accepted, Kursal can move `path.kur` to `std/path.kur`, add
 `create_dir_all` and its error types to `std/fs.kur`, and migrate the shim
 checks into its standard library tests. Krayon can then import `std::path`

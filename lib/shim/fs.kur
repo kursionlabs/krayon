@@ -1,25 +1,10 @@
-//! Kursal filesystem operations plus recursive directory creation.
+//! Recursive directory creation proposed for `std::fs`.
 
 use std::arena::Domain!;
-use std::fs::{FileKind, Metadata, DirEntry!, read, read_to_arena, write, metadata,
-    path_exists, canonicalize, remove, rename, mkdir, read_dir};
+use std::fs::{FileKind, metadata, mkdir};
 use std::io::{Error, ErrorKind};
 use std::option::Result;
 use std::raw::Span;
-
-export FileKind;
-export Metadata;
-export DirEntry!;
-export read;
-export read_to_arena;
-export write;
-export metadata;
-export path_exists;
-export canonicalize;
-export remove;
-export rename;
-export mkdir;
-export read_dir;
 
 /// Why a component of `create_dir_all` failed.
 exposed enum CreateDirErrorKind {

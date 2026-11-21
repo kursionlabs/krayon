@@ -1,16 +1,14 @@
 # Kursal standard library candidates
 
-`shim` is an overlay on Kursal's standard library. Its root module forwards
-the current `std` modules, and its own modules hold additions proposed for
-the standard library. It is a staging area, not part of Krayon's template API.
-Consumers should keep an explicit `std` dependency alongside `shim`; Kursal
-currently requires that for the forwarded modules' type dependencies.
+`shim` is an overlay on Kursal's standard library. It contains only additions
+proposed for `std`; existing APIs remain in the adjacent Kursal `std` package.
+It is a staging area, not part of Krayon's template API. Consumers should
+import existing APIs from `std` and these additions from `shim`.
 
 `shim::path` contains lexical filesystem path operations used by Krayon while
-Kursal's `std` has no `path` module. `shim::fs` forwards the current
-`std::fs` API and adds `create_dir_all`. Call sites can switch from `shim`
-to `std` if these APIs are adopted. The forwarding lists in `lib.kur` and
-`fs.kur` should be kept in sync with Kursal when the dependency is updated.
+Kursal's `std` has no `path` module. `shim::fs` adds `create_dir_all` without
+re-exporting `std::fs`. Call sites can switch from `shim` to `std` if these
+APIs are adopted.
 
 Proposed `std::path` operations:
 

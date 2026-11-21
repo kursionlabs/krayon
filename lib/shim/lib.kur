@@ -1,41 +1,6 @@
-//! The Kursal standard library plus modules staged for later inclusion.
-//! Keep the forwarded modules in sync with std::lib.
+//! Additions proposed for Kursal's standard library.
+//! Import existing APIs from `std`; this package only provides the additions.
 
 use package::{fs, path};
 export fs;
 export path;
-
-use std::{env, float, io, process, thread, time};
-export env;
-export float;
-export io;
-export process;
-export thread;
-export time;
-
-use std::{array, ascii, atomic, borrow, cap, cmp, cstr, cursor, hash, iter, mem, option, parse, ptr, raw, slice, utf8};
-export array;
-export ascii;
-export atomic;
-export borrow;
-export cap;
-export cmp;
-export cstr;
-export cursor;
-export hash;
-export iter;
-export mem;
-export option;
-export parse;
-export ptr;
-export raw;
-export slice;
-export utf8;
-
-use std::{arena, buffer, collections, fmt, heap, owned};
-export arena;
-export buffer;
-export collections;
-export fmt;
-export heap;
-export owned;
