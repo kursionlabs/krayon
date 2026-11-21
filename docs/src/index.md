@@ -12,6 +12,9 @@ for any static host.
 Start with the [quickstart](start.md), then follow the [blog walkthrough](blog.md)
 for a complete example.
 
+The [API reference](api.md) is generated from Krayon's Kursal source when the
+documentation site is built.
+
 ## Guides and reference
 
 - [Command-line tools](cli.md) Initialize, build, check, and inspect routes.

@@ -1,0 +1,10 @@
++++
+layout = "page.html"
++++
+<div class="page-layout api-source-layout">
+  <aside class="sidebar"><nav aria-label="API documentation">
+    <p class="nav-heading">Source</p>
+    <a href="{{ page.parent | url }}">← {{ page.parent_title }}</a>
+  </nav></aside>
+  <main id="main-content" class="docs-content api-content source-page">{{ content | safe }}</main>
+</div>

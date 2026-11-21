@@ -6,7 +6,8 @@ assets for any static host.
 
 ## Build Krayon
 
-Bootstrap the adjacent `../kursal` repository first, then run:
+Bootstrap the adjacent `../kursal` repository first, and rerun its bootstrap
+after updating Kursal so `bin/kursal` matches its source. Then run:
 
 ```sh
 mkdir -p bin
@@ -34,17 +35,21 @@ planned URLs. See the [quickstart](docs/src/start.md) and
 
 ## Documentation
 
-The [documentation](docs/src/index.md) is itself a Krayon site. Build and
-validate it from the repository root:
+The [documentation](docs/src/index.md) is itself a Krayon site. Build it
+with the API reference generated from Krayon's library source:
 
 ```sh
 bin/krayon check docs
-bin/krayon build docs
+python3 scripts/build_docs.py
 ```
 
-Host `docs/dist` at `/` on a static host. To publish under a prefix such as
-`/krayon`, set `base_path = "/krayon"` in `docs/krayon.toml`, rebuild, and
-mount `docs/dist` at that prefix. The documentation uses Krayon's URL helpers
+The script runs `kursal doc` to generate API pages, supplies Krayon's own
+API theme from `docs/api-site`, builds both sites with Krayon, and places the
+library reference under `docs/dist/api`. Running `bin/krayon build docs` alone builds the guides
+with an API placeholder. Host `docs/dist` at `/` on a static host. To publish
+under a prefix such as `/krayon`, set `base_path = "/krayon"` in
+`docs/krayon.toml`, rerun the script, and mount `docs/dist` at that prefix.
+The documentation uses Krayon's URL helpers
 for navigation and assets.
 
 ## Development

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="doc-root" content="{{ "/" | url }}">
+  <title>{{ page.title }} · Krayon Docs</title>
+  <link rel="stylesheet" href="{{ "/assets/docs.css" | asset_url }}">
+  <link rel="stylesheet" href="{{ "/assets/site.css" | asset_url }}">
+  <script defer src="{{ "/assets/search.js" | asset_url }}"></script>
+  <script defer src="{{ "/assets/nav.js" | asset_url }}"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <div class="site-shell api-shell">
+    <header class="site-header api-header">
+      <a class="site-name" href="{{ "/" | url }}">Krayon <span>Docs</span></a>
+      <div class="search" role="search">
+        <label class="visually-hidden" for="doc-search">Search the API reference</label>
+        <input id="doc-search" class="search-input" type="search" placeholder="Search API (press /)" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" aria-controls="doc-search-results" aria-autocomplete="list">
+        <ul id="doc-search-results" class="search-results" role="listbox" aria-label="Search results" hidden></ul>
+        <p class="visually-hidden" id="doc-search-status" role="status" aria-live="polite"></p>
+      </div>
+      <div class="header-actions"><span class="api-label">API reference</span></div>
+    </header>
+    {{ content | safe }}
+    <footer class="site-footer">Krayon generates files for any static host.</footer>
+  </div>
+</body>
+</html>

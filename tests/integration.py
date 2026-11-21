@@ -1,14 +1,17 @@
 """End-to-end checks for a site built with Krayon's public CLI."""
 
 from pathlib import Path
+from html.parser import HTMLParser
 import hashlib
 import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+from urllib.parse import urljoin, urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -144,7 +147,13 @@ class BuildTests(unittest.TestCase):
             return subprocess.run([str(KRAYON), command, str(docs)],
                                   text=True, capture_output=True)
 
-        result = build_docs("build")
+        def build_full_docs():
+            return subprocess.run([sys.executable, str(ROOT / "scripts/build_docs.py"),
+                                   "--site", str(docs), "--krayon", str(KRAYON),
+                                   "--kursal", str(KURSAL)],
+                                  text=True, capture_output=True)
+
+        result = build_full_docs()
         self.assertEqual(result.returncode, 0, result.stderr)
         home = (docs / "dist/index.html").read_text()
         self.assertIn('href="/start/"', home)
@@ -152,18 +161,83 @@ class BuildTests(unittest.TestCase):
         self.assertIn('href="/assets/css/docs.css"', home)
         self.assertTrue((docs / "dist/templates/index.html").is_file())
         self.assertTrue((docs / "dist/validation/index.html").is_file())
+        self.assertIn('href="/api/"', home)
+        self.assertFalse((docs / "dist/api/krayon").exists())
+        self.assertTrue((docs / "dist/api/site/index.html").is_file())
+        self.assertTrue((docs / "dist/api/search-index.json").is_file())
+        owned = {path.parent.name for path in (ROOT / "lib").glob("*/kur.toml")}
+        api_root = docs / "dist/api"
+        self.assertEqual({path.name for path in api_root.iterdir() if path.is_dir()}
+                         - {"assets", "src"}, owned)
+        self.assertEqual({path.name for path in (api_root / "src").iterdir()
+                          if path.is_dir()}, owned)
+        search_entries = json.loads((api_root / "search-index.json").read_text())
+        self.assertTrue(search_entries)
+        self.assertTrue(all(entry["u"].lstrip("/").split("/")[0] in owned
+                            for entry in search_entries))
+        api = (docs / "dist/api/index.html").read_text()
+        self.assertIn('content="/api/"', api)
+        self.assertIn('href="/">Guides</a>', api)
+        self.assertIn("Packages · Krayon Docs", api)
+        self.assertIn('class="site-header api-header"', api)
+        self.assertIn('class="docs-content api-content docs-home"', api)
+        self.assertEqual((api_root / "assets/docs.css").read_text(),
+                         (docs / "src/assets/css/docs.css").read_text())
+        module = (api_root / "site/index.html").read_text()
+        self.assertIn('class="tree-current" aria-current="page" href="/api/site/"',
+                      module)
+        config_page = (api_root / "site/struct.Config.html").read_text()
+        self.assertIn('href="/api/site/struct.Config.html" aria-current="page"',
+                      config_page)
+        self.assertIn('class="tree-current" aria-current="location" href="/api/site/"',
+                      config_page)
+        self.assertIn('/api/assets/nav.', config_page)
+        for dependency in ("std", "core", "alloc", "libc", "toml"):
+            self.assertNotIn(f'href="{dependency}/"', api)
+            self.assertFalse((api_root / dependency).exists())
+
+        class LocalLinks(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.hrefs = []
+
+            def handle_starttag(self, tag, attrs):
+                self.hrefs.extend(value for key, value in attrs
+                                  if key in {"href", "src"} and value)
+
+        for page in api_root.rglob("*.html"):
+            links = LocalLinks()
+            links.feed(page.read_text())
+            page_url = "https://krayon.invalid/api/" + page.relative_to(api_root).as_posix()
+            for href in links.hrefs:
+                target = urlsplit(urljoin(page_url, href))
+                if target.netloc != "krayon.invalid" or not target.path.startswith("/api/"):
+                    continue
+                output = api_root / target.path.removeprefix("/api/")
+                if output.is_dir():
+                    output /= "index.html"
+                self.assertTrue(output.is_file(), f"{page}: broken API link {href}")
 
         config = docs / "krayon.toml"
         config.write_text('base_path = "/krayon"\n' + config.read_text())
         result = build_docs("check")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((docs / "dist/index.html").read_text(), home)
-        result = build_docs("build")
+        result = build_full_docs()
         self.assertEqual(result.returncode, 0, result.stderr)
         home = (docs / "dist/index.html").read_text()
         self.assertIn('href="/krayon/start/"', home)
         self.assertIn('href="/krayon/assets/css/docs.css"', home)
         self.assertIn('href="/krayon/templates/"', home)
+        self.assertIn('href="/krayon/api/"', home)
+        api = (docs / "dist/api/index.html").read_text()
+        self.assertIn('content="/krayon/api/"', api)
+        self.assertIn('href="/krayon/api/assets/docs.', api)
+        self.assertIn('href="/krayon/api/assets/site.', api)
+        self.assertIn('href="/krayon/">Guides</a>', api)
+        config_page = (docs / "dist/api/site/struct.Config.html").read_text()
+        self.assertIn('href="/krayon/api/site/struct.Config.html" aria-current="page"',
+                      config_page)
 
     def test_check_accepts_drafts_and_reports_template_errors(self):
         draft = self.site / "src/draft.md"
