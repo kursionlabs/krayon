@@ -15,6 +15,7 @@ forall 'k.
 exposed struct Location {
     value: Span['k],
     offset: usize,
+    bases: Option[ArenaVec[Span['k], 'k]],
 }
 
 fn fail(offset: usize, message: Slice[u8, 'static]) -> Error { Error.{ offset, message } }
@@ -452,7 +453,7 @@ fn named_attribute(&cx: Domain!['k], text: Span['k], tag_start: usize, wanted: S
             i = quoted(&cx, text, i)?;
             if attribute.eq(&cx, wanted) {
                 let value = attribute_text(&cx, text.slice(start, i - 1usize))?;
-                return Result::Ok.(Option::Some.(Location.{ value, offset: start }));
+                return Result::Ok.(Option::Some.(Location.{ value, offset: start, bases: Option::None }));
             }
         }
     }
@@ -486,6 +487,7 @@ fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 
     var rss = false;
     var namespace = Span::from_static(&cx, "");
     let open = ArenaVec::new(&cx);
+    let base_stack = ArenaVec::new(&cx);
     var active_tag = Span::from_static(&cx, "");
     var depth = 0usize;
     var parts = ArenaVec::new(&cx);
@@ -544,11 +546,12 @@ fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 
                     var end = raw.len();
                     while start < end && space(byte(&cx, raw, start)) { start = start + 1usize; }
                     while end > start && space(byte(&cx, raw, end - 1usize)) { end = end - 1usize; }
-                    if end > start { found.push(&cx, Location.{ value: raw.slice(start, end), offset }); }
+                    if end > start { found.push(&cx, Location.{ value: raw.slice(start, end), offset, bases: Option::None }); }
                     active = false;
                 } else if depth > 0usize { depth = depth - 1usize; }
             }
             let _ = open.pop(&cx);
+            if atom { let _ = base_stack.pop(&cx); }
             i = next;
         } else {
             let (tag, next, empty) = start_tag(&cx, text, i)?;
@@ -568,7 +571,23 @@ fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 
                 ((open.len(&cx) == 1usize && xml_name(&cx, open.at(&cx, 0usize), namespace, "feed")) ||
                  (open.len(&cx) == 2usize && xml_name(&cx, open.at(&cx, 1usize), namespace, "entry"))) {
                 match named_attribute(&cx, text, i, Span::from_static(&cx, "href"))? {
-                    Option::Some(location) => found.push(&cx, location),
+                    Option::Some(location) => {
+                        let bases = ArenaVec::new(&cx);
+                        var j = 0usize;
+                        while j < base_stack.len(&cx) {
+                            match base_stack.at(&cx, j) {
+                                Option::Some(base) => bases.push(&cx, base),
+                                Option::None => (),
+                            }
+                            j = j + 1usize;
+                        }
+                        match named_attribute(&cx, text, i, Span::from_static(&cx, "xml:base"))? {
+                            Option::Some(base) => bases.push(&cx, base.value),
+                            Option::None => (),
+                        }
+                        found.push(&cx, Location.{ value: location.value, offset: location.offset,
+                            bases: Option::Some.(bases) });
+                    },
                     Option::None => (),
                 }
             }
@@ -589,7 +608,16 @@ fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 
                 offset = next;
                 have_offset = false;
             }
-            if !empty { open.push(&cx, tag); }
+            if !empty {
+                open.push(&cx, tag);
+                if atom {
+                    let base = match named_attribute(&cx, text, i, Span::from_static(&cx, "xml:base"))? {
+                        Option::Some(found) => Option::Some.(found.value),
+                        Option::None => Option::None,
+                    };
+                    base_stack.push(&cx, base);
+                }
+            }
             i = next;
         }
     }

@@ -2074,7 +2074,8 @@ fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
                 var j = 0usize;
                 while j < locations.len(&cx) {
                     let location = locations.at(&cx, j);
-                    targets.push(&cx, LinkTarget.{ value: location.value, offset: location.offset, raw_len: 0usize });
+                    targets.push(&cx, LinkTarget.{ value: location.value, offset: location.offset,
+                        raw_len: 0usize, bases: location.bases });
                     j = j + 1usize;
                 }
                 xml_documents.push(&cx, XmlDocument.{

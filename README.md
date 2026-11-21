@@ -320,7 +320,8 @@ such as `sitemap.xml` are excluded. HTML link checks accept links to these
 files. In generated XML, Krayon also checks sitemap `loc` elements, `link`
 `href` attributes in feeds using the Atom namespace, and RSS channel and item
 `link` text. Other XML fields and references in JSON and text files are not
-scanned.
+scanned. Relative Atom links honor `xml:base` on the feed, entry, or link;
+without it, they resolve from the feed URL.
 
 Before installing the output, Krayon checks local `href`, `src`, and `srcset`
 values in generated HTML, plus CSS `url()` references in inline styles and

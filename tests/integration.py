@@ -1741,6 +1741,53 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(f'{prefixed}: broken local link: /docs/absent/', result.stderr)
 
+    def test_atom_xml_base_resolves_inherited_nested_and_link_scopes(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "articles").mkdir(parents=True)
+        (src / "archive").mkdir()
+        (self.site / "krayon.toml").write_text(
+            'base_path = "/docs"\norigin = "https://example.org"\n')
+        (src / "articles/one.md").write_text('# Intro {#intro}\n')
+        (src / "archive/two.md").write_text('# Two\n')
+        feed = src / "feed.xml"
+        feed.write_text(
+            '<feed xmlns="http://www.w3.org/2005/Atom" xml:base="/docs/articles/">\n'
+            '<link href="one/"/>\n'
+            '<entry xml:base="../archive/"><link href="two/"/>'
+            '<link xml:base="../articles/" href="one/#intro"/></entry>\n'
+            '<entry xml:base="https://example.org/docs/articles/">'
+            '<link href="one/"/></entry>\n'
+            '<entry xml:base=".."><link href="articles/one/"/></entry>\n'
+            '<entry xml:base="https://example.org/docs/articles/one/?q=1">'
+            '<link href="#intro"/></entry>\n'
+            '<entry xml:base="/docs/arti&#99;les/one/">'
+            '<link href="?q=2#intro"/></entry>\n'
+            '<entry xml:base="//example.org/docs/articles/">'
+            '<link href="one/"/></entry>\n'
+            '<entry xml:base="https://elsewhere.example/">'
+            '<link href="missing/"/></entry>\n'
+            '</feed>\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        previous = (self.site / "dist/feed.xml").read_bytes()
+
+        source = feed.read_text()
+        feed.write_text(source.replace('<link href="one/"/>',
+                                       '<link href="missing/"/>', 1))
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'{feed}: broken local link: missing/', result.stderr)
+        self.assertIn('generated XML line 2', result.stderr)
+        self.assertEqual((self.site / "dist/feed.xml").read_bytes(), previous)
+
+        feed.write_text(source.replace('xml:base="../archive/"',
+                                       'xml:base="../missing/"'))
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'{feed}: broken local link: two/', result.stderr)
+        self.assertEqual((self.site / "dist/feed.xml").read_bytes(), previous)
+
     def test_generated_xml_is_validated_before_output_install(self):
         template = self.site / "src/feed.xml"
         template.write_text('<?xml version="1.0" encoding="UTF-8"?>\n'
