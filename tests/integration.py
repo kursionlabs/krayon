@@ -159,6 +159,8 @@ class BuildTests(unittest.TestCase):
         self.assertIn('href="/start/"', home)
         self.assertIn('href="/blog/"', home)
         self.assertIn('href="/assets/css/docs.css"', home)
+        self.assertIn('src="/assets/js/theme.js"', home)
+        self.assertIn("krayon-docs-theme", home)
         self.assertTrue((docs / "dist/templates/index.html").is_file())
         self.assertTrue((docs / "dist/validation/index.html").is_file())
         self.assertIn('href="/api/"', home)
@@ -181,8 +183,12 @@ class BuildTests(unittest.TestCase):
         self.assertIn("Packages · Krayon Docs", api)
         self.assertIn('class="site-header api-header"', api)
         self.assertIn('class="docs-content api-content docs-home"', api)
+        self.assertIn('class="theme-toggle"', api)
+        self.assertIn("krayon-docs-theme", api)
         self.assertEqual((api_root / "assets/docs.css").read_text(),
                          (docs / "src/assets/css/docs.css").read_text())
+        self.assertEqual((api_root / "assets/theme.js").read_text(),
+                         (docs / "src/assets/js/theme.js").read_text())
         module = (api_root / "site/index.html").read_text()
         self.assertIn('class="tree-current" aria-current="page" href="/api/site/"',
                       module)
@@ -234,6 +240,7 @@ class BuildTests(unittest.TestCase):
         self.assertIn('content="/krayon/api/"', api)
         self.assertIn('href="/krayon/api/assets/docs.', api)
         self.assertIn('href="/krayon/api/assets/site.', api)
+        self.assertIn('src="/krayon/api/assets/theme.', api)
         self.assertIn('href="/krayon/">Guides</a>', api)
         config_page = (docs / "dist/api/site/struct.Config.html").read_text()
         self.assertIn('href="/krayon/api/site/struct.Config.html" aria-current="page"',

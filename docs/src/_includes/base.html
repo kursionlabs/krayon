@@ -5,14 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% if page.title %}{{ page.title }} · {% endif %}{{ site.title }}</title>
   <meta name="description" content="{{ site.description }}">
+  <script>try{const saved=localStorage.getItem('krayon-docs-theme');document.documentElement.dataset.theme=saved==='light'||saved==='dark'?saved:(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}catch(e){document.documentElement.dataset.theme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}</script>
   <link rel="stylesheet" href="{{ "/assets/css/docs.css" | url }}">
+  <script defer src="{{ "/assets/js/theme.js" | url }}"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to content</a>
   <div class="site-shell">
     <header class="site-header">
       <a class="site-name" href="{{ "/" | url }}">Krayon <span>Docs</span></a>
-      <p>Build static sites with Kursal.</p>
+      <div class="site-header-actions">
+        <p>Build static sites with Kursal.</p>
+        <button class="theme-toggle" type="button" hidden><span class="theme-toggle-icon" aria-hidden="true"></span><span class="theme-toggle-label">Theme</span></button>
+      </div>
     </header>
     <div class="page-layout">
       <aside class="sidebar">

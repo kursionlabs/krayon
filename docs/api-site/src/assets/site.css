@@ -26,7 +26,7 @@
 .api-content pre.source { font-size: .84rem; }
 .api-content blockquote { margin: 1.2rem 0; padding: .5rem 1rem; background: var(--accent-soft); border-left: 3px solid var(--accent); }
 .package-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; margin: 1.5rem 0 0; padding: 0; list-style: none; }
-.api-content .package-list li { margin: 0; padding: .8rem 1rem; border: 1px solid var(--border); border-radius: .45rem; background: #fbfdfc; }
+.api-content .package-list li { margin: 0; padding: .8rem 1rem; border: 1px solid var(--border); border-radius: .45rem; background: var(--card); }
 .package-list .package-link { display: block; font-weight: 700; text-decoration: none; }
 .package-list .package-link code { padding: 0; background: none; color: var(--accent); font-size: 1rem; }
 .package-list p { margin: .3rem 0 0; color: var(--muted); font-size: .9rem; }
@@ -34,7 +34,7 @@
 .item-header h1 { flex: 1 1 100%; order: 1; }
 .item-header h1 a { color: var(--ink); text-decoration-color: var(--border); }
 .item-kind, .item-heading > code, .search-kind { display: inline-block; margin: 0; padding: .12rem .45rem; border-radius: .25rem; background: var(--accent-soft); color: var(--accent); font: 700 .72rem/1.5 system-ui, sans-serif; letter-spacing: .04em; text-transform: uppercase; }
-.item-kind.kind-trait, .item-heading.doc-kind-trait > code, .item-heading.doc-kind-instance > code { background: #eeeafb; color: #6244a0; }
+.item-kind.kind-trait, .item-heading.doc-kind-trait > code, .item-heading.doc-kind-instance > code { background: var(--trait-bg); color: var(--trait-ink); }
 .item-header .src-link { order: 0; margin-left: auto; font-size: .85rem; }
 .item-heading { display: flex; align-items: center; flex-wrap: wrap; gap: .55rem; margin: 1.5rem 0 .5rem; font-size: 1.1rem; }
 .item-heading .item-name { color: var(--ink); text-decoration: none; }
@@ -47,18 +47,18 @@
 .item-entry:target > .item-heading { border-left: 3px solid var(--accent); padding-left: .65rem; }
 .sig-link { text-decoration: none; }
 .sig-link:hover { text-decoration: underline; }
-.tok-keyword { color: #8a4bb7; font-weight: 700; }
-.tok-type, .sig-struct, .sig-enum, .sig-tuple { color: #086a72; }
-.tok-string, .tok-number { color: #9a4d24; }
-.tok-comment { color: #657c7d; font-style: italic; }
-.sig-trait { color: #7653aa; }
+.tok-keyword { color: var(--tok-keyword); font-weight: 700; }
+.tok-type, .sig-struct, .sig-enum, .sig-tuple { color: var(--tok-type); }
+.tok-string, .tok-number { color: var(--tok-literal); }
+.tok-comment { color: var(--tok-comment); font-style: italic; }
+.sig-trait { color: var(--trait-ink); }
 pre.source { counter-reset: line; }
 pre.source .line::before { counter-increment: line; content: counter(line); display: inline-block; width: 3.2em; margin-right: 1.2em; color: var(--muted); text-align: right; user-select: none; }
 pre.source .line:target { background: var(--accent-soft); }
 .search { position: relative; flex: 1 1 20rem; max-width: 28rem; }
 .search-input { width: 100%; padding: .55rem .75rem; border: 1px solid var(--border); border-radius: .45rem; background: var(--surface); color: var(--ink); font: .9rem/1.35 system-ui, sans-serif; }
 .search-input::placeholder { color: var(--muted); }
-.search-results { position: absolute; z-index: 10; top: calc(100% + .35rem); left: 0; right: 0; max-height: min(70vh, 34rem); overflow: auto; margin: 0; padding: .3rem; list-style: none; background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: .5rem; box-shadow: 0 12px 32px rgb(30 60 55 / .16); }
+.search-results { position: absolute; z-index: 10; top: calc(100% + .35rem); left: 0; right: 0; max-height: min(70vh, 34rem); overflow: auto; margin: 0; padding: .3rem; list-style: none; background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: .5rem; box-shadow: 0 12px 32px var(--shadow); }
 .search-results a { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .1rem .6rem; padding: .45rem .55rem; border-radius: .35rem; color: var(--ink); text-decoration: none; }
 .search-results [aria-selected="true"] a, .search-results a:hover { background: var(--accent-soft); }
 .search-kind { grid-row: span 2; align-self: start; min-width: 4.6rem; text-align: center; font-size: .66rem; }

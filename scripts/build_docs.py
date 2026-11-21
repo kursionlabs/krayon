@@ -115,6 +115,8 @@ def main():
         shutil.copytree(ROOT / "docs/api-site", generated, dirs_exist_ok=True)
         shutil.copy2(site / "src/assets/css/docs.css",
                      generated / "src/assets/docs.css")
+        shutil.copy2(site / "src/assets/js/theme.js",
+                     generated / "src/assets/theme.js")
         generated_config = generated / "krayon.toml"
         generated_config.write_text(generated_config.read_text()
                                     + f'base_path = "{api_base_path}"\n')
