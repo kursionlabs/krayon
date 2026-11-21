@@ -37,10 +37,13 @@ The configured output remains untouched, whether or not the check succeeds.
 Add `--drafts` to check draft pages too.
 
 To inspect routes before building, run `bin/krayon routes [SITE_ROOT]`. It
-lists pages as `page<TAB>source<TAB>URL` and redirects as
-`alias<TAB>old URL<TAB>target URL`, sorted by page URL and then alias URL.
-URLs include `base_path`; generated and paginated pages use their source
-template with an item or page number. Add `--drafts` to include drafts.
+lists pages as `page<TAB>source<TAB>URL`, redirects as
+`alias<TAB>old URL<TAB>target URL`, and assets as
+`asset<TAB>source<TAB>preferred URL`. Rows are grouped in that order; each
+group is sorted by its URL or source path. URLs include `base_path`, and asset
+URLs use fingerprinted filenames when `fingerprint_assets` is enabled.
+Generated and paginated pages use their source template with an item or page
+number. Add `--drafts` to include drafts.
 `routes` checks source discovery and route collisions, but does not render
 pages, validate links, or write to the output directory.
 

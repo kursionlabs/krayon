@@ -2151,6 +2151,28 @@ fn routes_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) ->
             .push_byte(b'\t').push_bytes(&cx, prefix(&cx, build.base_path, redirect.target)).push_byte(b'\n');
         i = i + 1usize;
     }
+    let assets = ArenaVec::new(&cx);
+    i = 0usize;
+    while i < build.asset_urls.positions(&cx) {
+        match build.asset_urls.key_at(&cx, i) {
+            Option::Some(url) => assets.push(&cx, url),
+            Option::None => (),
+        }
+        i = i + 1usize;
+    }
+    assets.sort_by(&cx, |&cx, a, b| a.cmp(&cx, b));
+    i = 0usize;
+    while i < assets.len(&cx) {
+        let original = assets.at(&cx, i);
+        match build.asset_urls.get(&cx, original) {
+            Option::Some(preferred) => {
+                listing = listing.push_static("asset\t").push_bytes(&cx, original.slice(1usize, original.len()))
+                    .push_byte(b'\t').push_bytes(&cx, prefix(&cx, build.base_path, preferred)).push_byte(b'\n');
+            },
+            Option::None => (),
+        }
+        i = i + 1usize;
+    }
     Result::Ok.(listing)
 }
 

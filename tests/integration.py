@@ -483,6 +483,39 @@ class BuildTests(unittest.TestCase):
         self.assertIn('output collision', result.stderr)
         self.assertFalse((self.site / "dist").exists())
 
+    def test_routes_include_sorted_asset_mappings_without_writing(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "assets").mkdir(parents=True)
+        (self.site / "krayon.toml").write_text(
+            'base_path = "/docs"\nfingerprint_assets = true\n')
+        (src / "index.md").write_text("# Home\n")
+        data = b"binary asset\x00\xff"
+        (src / "assets/a.bin").write_bytes(data)
+        css_source = 'body { background: url(a.bin) }\n'
+        (src / "assets/z.css").write_text(css_source)
+        data_hash = hashlib.sha256(data).hexdigest()
+        css_rewritten = f'body {{ background: url(/docs/assets/a.{data_hash}.bin) }}\n'
+        css_hash = hashlib.sha256(css_rewritten.encode()).hexdigest()
+
+        result = self.routes()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout,
+                         'page\tindex.md\t/docs/\n'
+                         f'asset\tassets/a.bin\t/docs/assets/a.{data_hash}.bin\n'
+                         f'asset\tassets/z.css\t/docs/assets/z.{css_hash}.css\n')
+        self.assertFalse((self.site / "dist").exists())
+        self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
+
+        (self.site / "krayon.toml").write_text('base_path = "/docs"\n')
+        result = self.routes()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout,
+                         'page\tindex.md\t/docs/\n'
+                         'asset\tassets/a.bin\t/docs/assets/a.bin\n'
+                         'asset\tassets/z.css\t/docs/assets/z.css\n')
+        self.assertFalse((self.site / "dist").exists())
+
     def test_nested_pages_layouts_data_and_assets(self):
         result = self.build()
         self.assertEqual(result.returncode, 0, result.stderr)
