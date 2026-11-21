@@ -10,7 +10,7 @@ use toml::parse;
 use toml::value::TomlValue;
 use html::{Page, TemplateFormat, parse_page, template};
 use markdown::markdown;
-use links::{Document, Stylesheet, validate};
+use links::{Document, Stylesheet, validate, rewrite_css, css_dependencies};
 use json::validate as validate_json;
 use xml::validate as validate_xml_document;
 use records::{filter_contains, filter_records, scalar, sort_records};
@@ -1437,6 +1437,51 @@ fn scan_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: us
 }
 
 forall 'k.
+fn fingerprint_stylesheet(&cx: Domain!['k], build: Build['k], url: Span['k],
+    states: ArenaMap[Span['k], u8, 'k], depth: usize) -> Result[(), Buffer!] {
+    if depth >= 64usize { return Result::Err.(report(&cx, "CSS dependency tree too deep", url)); }
+    match states.get(&cx, url) {
+        Option::Some(state) => {
+            if state == 1u8 { return Result::Err.(report(&cx, "CSS dependency cycle", url)); }
+            if state == 2u8 { return Result::Ok.(()); }
+        },
+        Option::None => (),
+    }
+    let replaced = states.insert(&cx, url, 1u8);
+    let source = join(&cx, build.source, url.slice(1usize, url.len()));
+    let contents = load(&cx, source)?;
+    let dependencies = css_dependencies(&cx, contents, url, build.base_path, build.asset_urls);
+    var i = 0usize;
+    while i < dependencies.len(&cx) {
+        fingerprint_stylesheet(&cx, build, dependencies.at(&cx, i), states, depth + 1usize)?;
+        i = i + 1usize;
+    }
+    let rewritten = rewrite_css(&cx, contents, url, build.base_path, build.asset_urls);
+    let relative = url.slice(build.assets.len() + 2usize, url.len());
+    let name = fingerprint_name(&cx, relative, rewritten);
+    let replaced = build.asset_urls.insert(&cx, url, asset_url(&cx, build, name));
+    let replaced = states.insert(&cx, url, 2u8);
+    Result::Ok.(())
+}
+
+forall 'k.
+fn fingerprint_stylesheets(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
+    if !build.fingerprint_assets { return Result::Ok.(()); }
+    let states = ArenaMap::new(&cx);
+    var i = 0usize;
+    while i < build.asset_urls.positions(&cx) {
+        match build.asset_urls.key_at(&cx, i) {
+            Option::None => (),
+            Option::Some(url) => if url.ends_with(&cx, lit(&cx, ".css")) {
+                fingerprint_stylesheet(&cx, build, url, states, 0usize)?;
+            },
+        }
+        i = i + 1usize;
+    }
+    Result::Ok.(())
+}
+
+forall 'k.
 fn copy_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usize) -> Result[(), Buffer!] {
     if depth >= 64usize { return Result::Err.(report(&cx, "asset tree too deep", relative)); }
     let directory = join(&cx, join(&cx, build.source, build.assets), relative);
@@ -1480,7 +1525,10 @@ fn copy_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: us
                             Option::None => { directory.close(); return Result::Err.(report(&cx, "asset was not scanned", source)); },
                         };
                         if build.fingerprint_assets {
-                            let current_url = asset_url(&cx, build, fingerprint_name(&cx, child, contents));
+                            let rewritten = if child.ends_with(&cx, lit(&cx, ".css")) {
+                                rewrite_css(&cx, contents, url, build.base_path, build.asset_urls)
+                            } else { contents };
+                            let current_url = asset_url(&cx, build, fingerprint_name(&cx, child, rewritten));
                             if !current_url.eq(&cx, hashed_url) {
                                 directory.close();
                                 return Result::Err.(report(&cx, "asset changed during build", source));
@@ -1490,13 +1538,13 @@ fn copy_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: us
                                 Result::Ok(nothing) => (),
                                 Result::Err(message) => { directory.close(); return Result::Err.(message); },
                             }
-                            match save(&cx, hashed_destination, Buffer!::new().push_bytes(&cx, contents)) {
+                            match save(&cx, hashed_destination, Buffer!::new().push_bytes(&cx, rewritten)) {
                                 Result::Ok(nothing) => (),
                                 Result::Err(message) => { directory.close(); return Result::Err.(message); },
                             }
                             if child.ends_with(&cx, lit(&cx, ".css")) {
                                 build.stylesheets.push(&cx, Stylesheet.{ source, output: hashed_destination,
-                                    url: hashed_url, css: contents });
+                                    url: hashed_url, css: rewritten });
                             }
                         }
                         if child.ends_with(&cx, lit(&cx, ".css")) {
@@ -1813,6 +1861,7 @@ forall 'k.
 fn discover_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
     let assets = join(&cx, build.source, build.assets);
     if exists_path(&cx, assets)? { scan_assets(&cx, build, lit(&cx, ""), 0usize)?; }
+    fingerprint_stylesheets(&cx, build)?;
     let asset_values = ArenaMap::new(&cx);
     var j = 0usize;
     while j < build.asset_urls.positions(&cx) {

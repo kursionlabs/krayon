@@ -5,6 +5,7 @@ use std::collections::arena_vec::ArenaVec;
 use std::option::{Option, Result};
 use std::raw::Span;
 use std::slice::Slice;
+use url::prefix;
 
 forall 'k.
 exposed struct Document {
@@ -34,9 +35,10 @@ struct Parsed {
 }
 
 forall 'k.
-struct LinkTarget {
+exposed struct LinkTarget {
     value: Span['k],
     offset: usize,
+    raw_len: usize,
 }
 
 forall 'k.
@@ -88,7 +90,7 @@ fn scan_srcset(&cx: Domain!['k], value: Span['k], base: usize,
         while pos < value.len() && !space(at(&cx, value, pos)) { pos = pos + 1usize; }
         var end = pos;
         while end > start && at(&cx, value, end - 1usize) == b',' { end = end - 1usize; }
-        if end > start { targets.push(&cx, LinkTarget.{ value: html_value(&cx, value.slice(start, end)), offset: base + start }); }
+        if end > start { targets.push(&cx, LinkTarget.{ value: html_value(&cx, value.slice(start, end)), offset: base + start, raw_len: 0usize }); }
         if end == pos {
             while pos < value.len() && at(&cx, value, pos) != b',' { pos = pos + 1usize; }
             if pos < value.len() { pos = pos + 1usize; }
@@ -135,7 +137,7 @@ fn push_css_target(&cx: Domain!['k], raw: Span['k], offset: usize, entities: boo
          (at(&cx, decoded, 0usize) == b'\'' && at(&cx, decoded, decoded.len() - 1usize) == b'\'')) {
         decoded.slice(1usize, decoded.len() - 1usize)
     } else { decoded };
-    targets.push(&cx, LinkTarget.{ value, offset });
+    targets.push(&cx, LinkTarget.{ value, offset, raw_len: raw.len() });
 }
 
 forall 'k.
@@ -276,7 +278,7 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
                             let value = html_value(&cx, raw_value);
                             if equal_ci(&cx, name, "id") { ids.insert(&cx, value, true); }
                             else if equal_ci(&cx, name, "href") || equal_ci(&cx, name, "src") {
-                                targets.push(&cx, LinkTarget.{ value, offset: value_start });
+                                targets.push(&cx, LinkTarget.{ value, offset: value_start, raw_len: 0usize });
                             } else if equal_ci(&cx, name, "srcset") { scan_srcset(&cx, raw_value, value_start, targets); }
                             else if equal_ci(&cx, name, "style") { scan_css(&cx, raw_value, value_start, true, targets); }
                         }
@@ -429,6 +431,103 @@ fn normalized(&cx: Domain!['k], path: Span['k]) -> Option[Span['k]] {
     }
     if j > 0usize && path.ends_with(&cx, lit(&cx, "/")) { out = out.push_static("/"); }
     Option::Some.(out.save(&cx))
+}
+
+fn hex_digit(value: u8) -> u8 { if value < 10u8 { b'0' + value } else { b'A' + value - 10u8 } }
+
+forall 'k.
+fn css_asset_path(&cx: Domain!['k], path: Span['k]) -> Buffer! {
+    var out = Buffer!::new();
+    var i = 0usize;
+    while i < path.len() {
+        let c = at(&cx, path, i);
+        let plain = (c >= b'a' && c <= b'z') || (c >= b'A' && c <= b'Z')
+            || (c >= b'0' && c <= b'9') || c == b'/' || c == b'-'
+            || c == b'_' || c == b'.' || c == b'~';
+        out = if plain { out.push_byte(c) }
+            else { out.push_byte(b'%').push_byte(hex_digit(c >> 4u8)).push_byte(hex_digit(c & 15u8)) };
+        i = i + 1usize;
+    }
+    out
+}
+
+forall 'k.
+fn css_key(&cx: Domain!['k], value: Span['k], sheet_url: Span['k], base_path: Span['k])
+    -> Option[Span['k]] {
+    if external(&cx, value) { return Option::None; }
+    var end = value.len();
+    match value.find_byte(&cx, b'?', 0usize) { Option::Some(at_pos) => if at_pos < end { end = at_pos; }, Option::None => (), }
+    match value.find_byte(&cx, b'#', 0usize) { Option::Some(at_pos) => if at_pos < end { end = at_pos; }, Option::None => (), }
+    var path = value.slice(0usize, end);
+    if path.is_empty() { return Option::None; }
+    if at(&cx, path, 0usize) == b'/' {
+        if !base_path.is_empty() && path.starts_with(&cx, base_path)
+            && at(&cx, path, base_path.len()) == b'/' {
+            path = path.slice(base_path.len(), path.len());
+        }
+    } else { path = Buffer!::new().push_bytes(&cx, parent(&cx, sheet_url)).push_bytes(&cx, path).save(&cx); }
+    normalized(&cx, decoded(&cx, path))
+}
+
+forall 'k.
+fn css_replacement(&cx: Domain!['k], value: Span['k], sheet_url: Span['k], base_path: Span['k],
+    asset_urls: ArenaMap[Span['k], Span['k], 'k]) -> Option[Span['k]] {
+    let key = match css_key(&cx, value, sheet_url, base_path) {
+        Option::Some(found) => found,
+        Option::None => return Option::None,
+    };
+    let hashed = match asset_urls.get(&cx, key) {
+        Option::Some(found) => found,
+        Option::None => return Option::None,
+    };
+    var end = value.len();
+    match value.find_byte(&cx, b'?', 0usize) { Option::Some(at_pos) => if at_pos < end { end = at_pos; }, Option::None => (), }
+    match value.find_byte(&cx, b'#', 0usize) { Option::Some(at_pos) => if at_pos < end { end = at_pos; }, Option::None => (), }
+    Option::Some.(css_asset_path(&cx, prefix(&cx, base_path, hashed))
+        .push_bytes(&cx, value.slice(end, value.len())).save(&cx))
+}
+
+forall 'k.
+fn css_dependencies(&cx: Domain!['k], css: Span['k], sheet_url: Span['k], base_path: Span['k],
+    asset_urls: ArenaMap[Span['k], Span['k], 'k]) -> ArenaVec[Span['k], 'k] {
+    let targets = ArenaVec::new(&cx);
+    scan_css(&cx, css, 0usize, false, targets);
+    let dependencies = ArenaVec::new(&cx);
+    var i = 0usize;
+    while i < targets.len(&cx) {
+        let target = targets.at(&cx, i);
+        match css_key(&cx, target.value, sheet_url, base_path) {
+            Option::Some(path) => if path.ends_with(&cx, lit(&cx, ".css"))
+                && asset_urls.contains(&cx, path) { dependencies.push(&cx, path); },
+            Option::None => (),
+        }
+        i = i + 1usize;
+    }
+    dependencies
+}
+
+forall 'k.
+fn rewrite_css(&cx: Domain!['k], css: Span['k], sheet_url: Span['k], base_path: Span['k],
+    asset_urls: ArenaMap[Span['k], Span['k], 'k]) -> Span['k] {
+    let targets = ArenaVec::new(&cx);
+    scan_css(&cx, css, 0usize, false, targets);
+    var out = Buffer!::new();
+    var cursor = 0usize;
+    var i = 0usize;
+    while i < targets.len(&cx) {
+        let target = targets.at(&cx, i);
+        i = i + 1usize;
+        if target.offset >= cursor && target.raw_len > 0usize {
+            match css_replacement(&cx, target.value, sheet_url, base_path, asset_urls) {
+                Option::None => (),
+                Option::Some(replacement) => {
+                    out = out.push_bytes(&cx, css.slice(cursor, target.offset)).push_bytes(&cx, replacement);
+                    cursor = target.offset + target.raw_len;
+                },
+            }
+        }
+    }
+    out.push_bytes(&cx, css.slice(cursor, css.len())).save(&cx)
 }
 
 forall 'k.

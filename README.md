@@ -104,6 +104,12 @@ an unknown asset. Original asset paths remain available so existing links
 and relative URLs inside CSS continue to work. Asset content changes update
 the fingerprinted filename on the next build. The `asset_urls` site data key
 is reserved for this map.
+Fingerprinting also rewrites local `url(...)` references in the fingerprinted
+CSS copy, including `@import url(...)`. It leaves the original CSS unchanged.
+The CSS filename is based on the rewritten bytes, so changing an image or
+imported stylesheet updates every stylesheet that depends on it. CSS import
+cycles fail the build. Comments, quoted CSS text, and external URLs are not
+rewritten.
 When fingerprinting is enabled, Markdown images pointing to copied assets
 also use fingerprinted URLs. Root-relative paths such as
 `![Logo](/assets/img/logo.png)` resolve from the site root; relative paths

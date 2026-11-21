@@ -162,7 +162,10 @@ class BuildTests(unittest.TestCase):
                       (output / "excerpts/index.html").read_text())
         self.assertEqual(json.loads((output / "manifest.json").read_text()),
                          f'/docs/assets/js/{js[0].name}?mode=1#run')
-        self.assertEqual(css[0].read_bytes(), (output / "assets/css/site.css").read_bytes())
+        self.assertEqual((output / "assets/css/site.css").read_text(),
+                         'body { background: url("../img/logo.png"); }\n')
+        self.assertIn(f'url("/docs/assets/img/{image[0].name}")',
+                      css[0].read_text())
         self.assertEqual(js[0].read_bytes(), (output / "assets/js/app.js").read_bytes())
         self.assertEqual(image[0].read_bytes(), (output / "assets/img/logo.png").read_bytes())
 
@@ -173,6 +176,22 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(len(changed_js), 1)
         self.assertNotEqual(changed_js[0].name, js[0].name)
         self.assertEqual(list((output / "assets/css").glob("site.*.css"))[0].name, css[0].name)
+
+        (src / "assets/img/logo.png").write_bytes(b"image two\n")
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        changed_css = list((output / "assets/css").glob("site.*.css"))
+        changed_image = list((output / "assets/img").glob("logo.*.png"))
+        self.assertEqual(len(changed_css), 1)
+        self.assertEqual(len(changed_image), 1)
+        self.assertNotEqual(changed_css[0].name, css[0].name)
+        self.assertNotEqual(changed_image[0].name, image[0].name)
+        self.assertIn(f'url("/docs/assets/img/{changed_image[0].name}")',
+                      changed_css[0].read_text())
+        self.assertIn(f'href="/docs/assets/css/{changed_css[0].name}"',
+                      (output / "index.html").read_text())
+        self.assertEqual((output / "assets/css/site.css").read_text(),
+                         'body { background: url("../img/logo.png"); }\n')
 
         (src / "index.html").write_text('{{ "/assets/missing.css" | asset_url }}')
         result = self.check()
@@ -185,6 +204,84 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('fingerprint_assets must be a boolean', result.stderr)
         self.assertEqual(changed_js[0].read_text(), 'console.log("two");\n')
+
+    def test_fingerprinted_css_rewrites_only_local_asset_urls(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "assets/css").mkdir(parents=True)
+        (src / "assets/img").mkdir()
+        (self.site / "krayon.toml").write_text(
+            'base_path = "/docs"\nfingerprint_assets = true\n')
+        (src / "assets/img/my image.png").write_bytes(b"spaced image")
+        (src / "assets/img/logo.png").write_bytes(b"logo")
+        sheet = src / "assets/css/site.css"
+        original = (
+            '/* url(../img/ignored.png) */\n'
+            '.label { content: "url(../img/ignored.png)"; }\n'
+            '.space { background: url(../img/my\\ image.png) }\n'
+            '.root { background: url("/docs/assets/img/logo.png?size=1#view") }\n'
+            '.remote { background: url(https://example.org/photo.png) }\n'
+            '.data { background: url(data:image/png;base64,AAAA) }\n'
+        )
+        sheet.write_text(original)
+        (src / "index.html").write_text(
+            '<link rel="stylesheet" href="{{ "/assets/css/site.css" | asset_url }}">')
+
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = self.site / "dist/assets"
+        hashed_css = list((output / "css").glob("site.*.css"))
+        spaced = list((output / "img").glob("my image.*.png"))
+        logo = list((output / "img").glob("logo.*.png"))
+        self.assertEqual([len(items) for items in (hashed_css, spaced, logo)], [1, 1, 1])
+        rewritten = hashed_css[0].read_text()
+        self.assertIn(f'url(/docs/assets/img/{spaced[0].name.replace(" ", "%20")})', rewritten)
+        self.assertIn(f'url("/docs/assets/img/{logo[0].name}?size=1#view")', rewritten)
+        self.assertIn('/* url(../img/ignored.png) */', rewritten)
+        self.assertIn('content: "url(../img/ignored.png)"', rewritten)
+        self.assertIn('url(https://example.org/photo.png)', rewritten)
+        self.assertIn('url(data:image/png;base64,AAAA)', rewritten)
+        self.assertEqual((output / "css/site.css").read_text(), original)
+
+    def test_css_fingerprints_follow_imports_and_report_cycles(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "assets/css").mkdir(parents=True)
+        (src / "assets/img").mkdir()
+        (self.site / "krayon.toml").write_text('fingerprint_assets = true\n')
+        image = src / "assets/img/logo.png"
+        image.write_bytes(b"first")
+        child = src / "assets/css/child.css"
+        child.write_text('.child { background: url(../img/logo.png) }\n')
+        parent = src / "assets/css/parent.css"
+        parent.write_text('@import url(child.css);\n')
+        (src / "index.html").write_text(
+            '<link rel="stylesheet" href="{{ "/assets/css/parent.css" | asset_url }}">')
+
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = self.site / "dist"
+        first_parent = list((output / "assets/css").glob("parent.*.css"))[0]
+        first_child = list((output / "assets/css").glob("child.*.css"))[0]
+        first_image = list((output / "assets/img").glob("logo.*.png"))[0]
+        self.assertIn(f'url(/assets/css/{first_child.name})', first_parent.read_text())
+        self.assertIn(f'url(/assets/img/{first_image.name})', first_child.read_text())
+
+        image.write_bytes(b"second")
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        second_parent = list((output / "assets/css").glob("parent.*.css"))[0]
+        second_child = list((output / "assets/css").glob("child.*.css"))[0]
+        self.assertNotEqual(second_parent.name, first_parent.name)
+        self.assertNotEqual(second_child.name, first_child.name)
+        self.assertIn(f'url(/assets/css/{second_child.name})', second_parent.read_text())
+        previous = (output / "index.html").read_bytes()
+
+        child.write_text('@import url(parent.css);\n')
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('CSS dependency cycle', result.stderr)
+        self.assertEqual((output / "index.html").read_bytes(), previous)
 
     def test_init_creates_buildable_site_and_refuses_existing_content(self):
         target = Path(self.temp.name) / "nested/new-site"
