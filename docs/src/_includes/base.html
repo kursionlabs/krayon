@@ -8,17 +8,36 @@
   <link rel="stylesheet" href="{{ "/assets/css/docs.css" | url }}">
 </head>
 <body>
-  <header class="site-header">
-    <a class="site-name" href="{{ "/" | url }}">Krayon</a>
-    <nav aria-label="Documentation">
-      <a href="{{ "/start/" | url }}">Start</a>
-      <a href="{{ "/blog/" | url }}">Blog walkthrough</a>
-      <a href="{{ "/configuration/" | url }}">Configuration</a>
-      <a href="{{ "/templates/" | url }}">Templates</a>
-      <a href="{{ "/cli/" | url }}">CLI</a>
-    </nav>
-  </header>
-  <main>{{ content | safe }}</main>
-  <footer><p>Krayon generates files for any static host.</p></footer>
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <div class="site-shell">
+    <header class="site-header">
+      <a class="site-name" href="{{ "/" | url }}">Krayon <span>Docs</span></a>
+      <p>Build static sites with Kursal.</p>
+    </header>
+    <div class="page-layout">
+      <aside class="sidebar">
+        <nav aria-label="Documentation">
+          <p class="nav-heading">Get started</p>
+          <a href="{{ "/start/" | url }}"{% if page.url == "/start/" %} aria-current="page"{% endif %}>Quickstart</a>
+          <a href="{{ "/blog/" | url }}"{% if page.url == "/blog/" %} aria-current="page"{% endif %}>Blog walkthrough</a>
+          <p class="nav-heading">Reference</p>
+          <a href="{{ "/cli/" | url }}"{% if page.url == "/cli/" %} aria-current="page"{% endif %}>Command line</a>
+          <a href="{{ "/configuration/" | url }}"{% if page.url == "/configuration/" %} aria-current="page"{% endif %}>Configuration</a>
+          <a href="{{ "/content/" | url }}"{% if page.url == "/content/" %} aria-current="page"{% endif %}>Content and Markdown</a>
+          <a href="{{ "/templates/" | url }}"{% if page.url == "/templates/" %} aria-current="page"{% endif %}>Templates</a>
+          <a href="{{ "/assets/" | url }}"{% if page.url == "/assets/" %} aria-current="page"{% endif %}>Assets</a>
+          <a href="{{ "/generation/" | url }}"{% if page.url == "/generation/" %} aria-current="page"{% endif %}>Collections</a>
+          <a href="{{ "/formats/" | url }}"{% if page.url == "/formats/" %} aria-current="page"{% endif %}>Output formats</a>
+          <a href="{{ "/validation/" | url }}"{% if page.url == "/validation/" %} aria-current="page"{% endif %}>Validation</a>
+          <p class="nav-heading">Project</p>
+          <a href="{{ "/development/" | url }}"{% if page.url == "/development/" %} aria-current="page"{% endif %}>Development</a>
+        </nav>
+      </aside>
+      <main id="main-content" class="docs-content{% if page.section == "home" %} docs-home{% endif %}">
+        {{ content | safe }}
+      </main>
+    </div>
+    <footer class="site-footer">Krayon generates files for any static host.</footer>
+  </div>
 </body>
 </html>
