@@ -2181,8 +2181,10 @@ fn route_listing(&cx: Domain!['k], root: Span['k], include_drafts: bool, json: b
         let url = prefix(&cx, build.base_path, entry.page.url);
         listing = if json {
             let out = if i > 0usize { listing.push_byte(b',') } else { listing };
-            json_string(&cx, json_string(&cx, out.push_static("{\"source\":"), relative)
-                .push_static(",\"url\":"), url).push_byte(b'}')
+            let out = json_string(&cx, json_string(&cx, out.push_static("{\"source\":"), relative)
+                .push_static(",\"url\":"), url).push_static(",\"output\":");
+            json_string(&cx, out, entry.destination.slice(build.output.len() + 1usize,
+                entry.destination.len())).push_byte(b'}')
         } else {
             listing.push_static("page\t").push_bytes(&cx, relative)
                 .push_byte(b'\t').push_bytes(&cx, url).push_byte(b'\n')
@@ -2197,8 +2199,10 @@ fn route_listing(&cx: Domain!['k], root: Span['k], include_drafts: bool, json: b
         let target = prefix(&cx, build.base_path, redirect.target);
         listing = if json {
             let out = if i > 0usize { listing.push_byte(b',') } else { listing };
-            json_string(&cx, json_string(&cx, out.push_static("{\"url\":"), url)
-                .push_static(",\"target\":"), target).push_byte(b'}')
+            let out = json_string(&cx, json_string(&cx, out.push_static("{\"url\":"), url)
+                .push_static(",\"target\":"), target).push_static(",\"output\":");
+            json_string(&cx, out, redirect.destination.slice(build.output.len() + 1usize,
+                redirect.destination.len())).push_byte(b'}')
         } else {
             listing.push_static("alias\t").push_bytes(&cx, url)
                 .push_byte(b'\t').push_bytes(&cx, target).push_byte(b'\n')
@@ -2226,8 +2230,12 @@ fn route_listing(&cx: Domain!['k], root: Span['k], include_drafts: bool, json: b
                 let url = prefix(&cx, build.base_path, preferred);
                 listing = if json {
                     let out = if asset_count > 0usize { listing.push_byte(b',') } else { listing };
-                    json_string(&cx, json_string(&cx, out.push_static("{\"source\":"), source)
-                        .push_static(",\"url\":"), url).push_byte(b'}')
+                    let out = json_string(&cx, json_string(&cx, out.push_static("{\"source\":"), source)
+                        .push_static(",\"url\":"), url).push_static(",\"outputs\":[");
+                    let out = json_string(&cx, out, source);
+                    let out = if preferred.eq(&cx, original) { out }
+                        else { json_string(&cx, out.push_byte(b','), preferred.slice(1usize, preferred.len())) };
+                    out.push_static("]}")
                 } else {
                     listing.push_static("asset\t").push_bytes(&cx, source)
                         .push_byte(b'\t').push_bytes(&cx, url).push_byte(b'\n')

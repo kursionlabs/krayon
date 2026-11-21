@@ -541,13 +541,17 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {
             "pages": [
-                {"source": "index.md", "url": "/docs/"},
-                {"source": "archive.html [page 1]", "url": "/docs/archive/"},
-                {"source": "archive.html [page 2]", "url": "/docs/archive/page/2/"},
-                {"source": "item.json [item 1]", "url": "/docs/data/a.json"},
-                {"source": "new.md", "url": "/docs/latest/"},
+                {"source": "index.md", "url": "/docs/", "output": "index.html"},
+                {"source": "archive.html [page 1]", "url": "/docs/archive/",
+                 "output": "archive/index.html"},
+                {"source": "archive.html [page 2]", "url": "/docs/archive/page/2/",
+                 "output": "archive/page/2/index.html"},
+                {"source": "item.json [item 1]", "url": "/docs/data/a.json",
+                 "output": "data/a.json"},
+                {"source": "new.md", "url": "/docs/latest/", "output": "latest/index.html"},
             ],
-            "aliases": [{"url": "/docs/old/", "target": "/docs/latest/"}],
+            "aliases": [{"url": "/docs/old/", "target": "/docs/latest/",
+                         "output": "old/index.html"}],
             "assets": [],
         })
         self.assertTrue(result.stdout.endswith("\n"))
@@ -563,8 +567,10 @@ class BuildTests(unittest.TestCase):
         result = self.routes("--json", "--drafts")
         self.assertEqual(result.returncode, 0, result.stderr)
         pages = json.loads(result.stdout)["pages"]
-        self.assertIn({"source": "draft.md", "url": "/docs/draft/"}, pages)
-        self.assertIn({"source": "item.json [item 2]", "url": "/docs/data/b.json"}, pages)
+        self.assertIn({"source": "draft.md", "url": "/docs/draft/",
+                       "output": "draft/index.html"}, pages)
+        self.assertIn({"source": "item.json [item 2]", "url": "/docs/data/b.json",
+                       "output": "data/b.json"}, pages)
         self.assertNotIn("private.md", [page["source"] for page in pages])
 
         (self.site / "dist").mkdir()
@@ -594,15 +600,20 @@ class BuildTests(unittest.TestCase):
         shutil.rmtree(self.site / "src")
         src = self.site / "src"
         (src / "assets").mkdir(parents=True)
+        (self.site / "krayon.toml").write_text('output = "public"\n')
         (src / "index.md").write_text("# Home\n")
         name = 'say"hello\tworld.txt'
         (src / "assets" / name).write_text("hello")
         result = self.routes("--json")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)["assets"],
-                         [{"source": f"assets/{name}", "url": f"/assets/{name}"}])
+        manifest = json.loads(result.stdout)
+        self.assertEqual(manifest["pages"],
+                         [{"source": "index.md", "url": "/", "output": "index.html"}])
+        self.assertEqual(manifest["assets"],
+                         [{"source": f"assets/{name}", "url": f"/assets/{name}",
+                           "outputs": [f"assets/{name}"]}])
         self.assertIn('say\\"hello\\tworld.txt', result.stdout)
-        self.assertFalse((self.site / "dist").exists())
+        self.assertFalse((self.site / "public").exists())
 
         for command in ("build", "check"):
             result = subprocess.run([str(KRAYON), command, str(self.site), "--json"],
@@ -639,8 +650,10 @@ class BuildTests(unittest.TestCase):
         result = self.routes("--json")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["assets"], [
-            {"source": "assets/a.bin", "url": f"/docs/assets/a.{data_hash}.bin"},
-            {"source": "assets/z.css", "url": f"/docs/assets/z.{css_hash}.css"},
+            {"source": "assets/a.bin", "url": f"/docs/assets/a.{data_hash}.bin",
+             "outputs": ["assets/a.bin", f"assets/a.{data_hash}.bin"]},
+            {"source": "assets/z.css", "url": f"/docs/assets/z.{css_hash}.css",
+             "outputs": ["assets/z.css", f"assets/z.{css_hash}.css"]},
         ])
 
         (self.site / "krayon.toml").write_text('base_path = "/docs"\n')
@@ -651,6 +664,42 @@ class BuildTests(unittest.TestCase):
                          'asset\tassets/a.bin\t/docs/assets/a.bin\n'
                          'asset\tassets/z.css\t/docs/assets/z.css\n')
         self.assertFalse((self.site / "dist").exists())
+
+        result = self.routes("--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["assets"], [
+            {"source": "assets/a.bin", "url": "/docs/assets/a.bin",
+             "outputs": ["assets/a.bin"]},
+            {"source": "assets/z.css", "url": "/docs/assets/z.css",
+             "outputs": ["assets/z.css"]},
+        ])
+
+    def test_routes_json_output_paths_match_emitted_files(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "assets").mkdir(parents=True)
+        (self.site / "krayon.toml").write_text(
+            'base_path = "/docs"\nfingerprint_assets = true\n')
+        (src / "index.md").write_text('# Home\n')
+        (src / "guide.md").write_text(
+            '+++\naliases = ["/old/"]\n+++\n# Guide\n')
+        (src / "assets/app.css").write_text('body { color: navy }\n')
+        (src / "assets/logo.bin").write_bytes(b'logo')
+
+        result = self.routes("--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(result.stdout)
+        self.assertFalse((self.site / "dist").exists())
+        paths = {item["output"] for item in manifest["pages"] + manifest["aliases"]}
+        for asset in manifest["assets"]:
+            paths.update(asset["outputs"])
+        self.assertEqual(len(paths), 7)
+
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        emitted = {path.relative_to(self.site / "dist").as_posix()
+                   for path in (self.site / "dist").rglob("*") if path.is_file()}
+        self.assertEqual(paths, emitted)
 
     def test_nested_pages_layouts_data_and_assets(self):
         result = self.build()

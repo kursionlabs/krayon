@@ -46,6 +46,10 @@ Generated and paginated pages use their source template with an item or page
 number. Add `--drafts` to include drafts. Add `--json` for an object with
 `pages`, `aliases`, and `assets` arrays in the same order. Page and asset
 objects have `source` and `url` fields; alias objects have `url` and `target`.
+Page and alias objects also have an `output` path relative to the configured
+output directory. Each asset has an `outputs` array containing its ordinary
+copy, followed by its fingerprinted copy when fingerprinting is enabled.
+These paths omit `base_path`.
 For example, `bin/krayon routes --json` can feed a deployment script.
 `routes` checks source discovery and route collisions, but does not render
 pages, validate links, or write to the output directory.
