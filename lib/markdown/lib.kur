@@ -97,20 +97,20 @@ fn source_link(&cx: Domain!['k], links: LinkContext['k], target: Span['k]) -> Sp
     match target.find_byte(&cx, b'#', 0usize) { Option::Some(at) => if at < end { end = at; }, Option::None => (), }
     let path = target.slice(0usize, end);
     if !path.ends_with(&cx, lit(&cx, ".md")) || starts(&cx, path, "//")
-        || path.find(&cx, lit(&cx, "://"), 0usize).is_some() { return prefix(&cx, links.base, target); }
+        || path.find(&cx, lit(&cx, "://"), 0usize).is_some() { return asset_link(&cx, links, target); }
     let key = match source_path(&cx, links.source, path) {
         Option::Some(found) => found,
-        Option::None => return prefix(&cx, links.base, target),
+        Option::None => return asset_link(&cx, links, target),
     };
     match links.urls.get(&cx, key) {
         Option::Some(url) => prefix(&cx, links.base,
             Buffer!::new().push_bytes(&cx, url).push_bytes(&cx, target.slice(end, target.len())).save(&cx)),
-        Option::None => prefix(&cx, links.base, target),
+        Option::None => asset_link(&cx, links, target),
     }
 }
 
 forall 'k.
-fn image_link(&cx: Domain!['k], links: LinkContext['k], target: Span['k]) -> Span['k] {
+fn asset_link(&cx: Domain!['k], links: LinkContext['k], target: Span['k]) -> Span['k] {
     if !links.fingerprint_assets { return prefix(&cx, links.base, target); }
     var end = target.len();
     match target.find_byte(&cx, b'?', 0usize) { Option::Some(at) => if at < end { end = at; }, Option::None => (), }
@@ -177,7 +177,7 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
                                     },
                                     Option::None => (),
                                 }
-                                out = html_escape(&cx, out.push_static("<img src=\""), image_link(&cx, links, target))
+                                out = html_escape(&cx, out.push_static("<img src=\""), asset_link(&cx, links, target))
                                     .push_static("\" alt=\"");
                                 out = html_escape(&cx, out, s.slice(i + 2usize, end)).push_static("\"");
                                 if !title.is_empty() {

@@ -157,7 +157,7 @@ class BuildTests(unittest.TestCase):
         self.assertIn(f'<img src="/docs/assets/img/{image[0].name}" alt="Relative">', article)
         self.assertIn(f'<img src="/docs/assets/img/{image[0].name}?size=1#view" alt="Root">', article)
         self.assertIn('<img src="https://example.org/image.png" alt="External">', article)
-        self.assertIn('<a href="/docs/assets/css/site.css">CSS</a>', article)
+        self.assertIn(f'<a href="/docs/assets/css/{css[0].name}">CSS</a>', article)
         self.assertIn(f'<img src="/docs/assets/img/{image[0].name}" alt="Relative">',
                       (output / "excerpts/index.html").read_text())
         self.assertEqual(json.loads((output / "manifest.json").read_text()),
@@ -282,6 +282,51 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('CSS dependency cycle', result.stderr)
         self.assertEqual((output / "index.html").read_bytes(), previous)
+
+    def test_markdown_asset_links_use_fingerprints_and_page_links_keep_routes(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "assets/docs").mkdir(parents=True)
+        (src / "posts").mkdir()
+        (self.site / "krayon.toml").write_text(
+            'base_path = "/docs"\nfingerprint_assets = true\n')
+        (src / "assets/docs/manual.pdf").write_bytes(b"%PDF example")
+        (src / "assets/docs/notes.md").write_text("# Downloadable notes\n")
+        (src / "guide.md").write_text(
+            '+++\npermalink = "/manual/"\n+++\n# Setup\n')
+        article = src / "posts/article.md"
+        article.write_text(
+            '# Article\n\n'
+            '[Download](../assets/docs/manual.pdf?version=1#file)\n\n'
+            '[Notes](/assets/docs/notes.md)\n\n'
+            '[Guide](../guide.md#setup)\n\n'
+            '[External](https://example.org/manual.pdf)\n\n'
+            '<!-- more -->\n')
+        (src / "excerpts.html").write_text(
+            '{% for entry in collections.pages %}'
+            '{% if entry.url == "/posts/article/" %}{{ entry.excerpt | safe }}{% endif %}'
+            '{% endfor %}')
+
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = self.site / "dist"
+        pdf = list((output / "assets/docs").glob("manual.*.pdf"))
+        notes = list((output / "assets/docs").glob("notes.*.md"))
+        self.assertEqual([len(pdf), len(notes)], [1, 1])
+        html = (output / "posts/article/index.html").read_text()
+        self.assertIn(f'href="/docs/assets/docs/{pdf[0].name}?version=1#file"', html)
+        self.assertIn(f'href="/docs/assets/docs/{notes[0].name}"', html)
+        self.assertIn('href="/docs/manual/#setup"', html)
+        self.assertIn('href="https://example.org/manual.pdf"', html)
+        excerpt = (output / "excerpts/index.html").read_text()
+        self.assertIn(f'href="/docs/assets/docs/{pdf[0].name}?version=1#file"', excerpt)
+
+        previous = (output / "posts/article/index.html").read_bytes()
+        article.write_text(article.read_text() + '[Missing](/assets/docs/missing.pdf)\n')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('broken local link: /docs/assets/docs/missing.pdf', result.stderr)
+        self.assertEqual((output / "posts/article/index.html").read_bytes(), previous)
 
     def test_init_creates_buildable_site_and_refuses_existing_content(self):
         target = Path(self.temp.name) / "nested/new-site"

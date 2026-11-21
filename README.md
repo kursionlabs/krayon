@@ -110,12 +110,14 @@ The CSS filename is based on the rewritten bytes, so changing an image or
 imported stylesheet updates every stylesheet that depends on it. CSS import
 cycles fail the build. Comments, quoted CSS text, and external URLs are not
 rewritten.
-When fingerprinting is enabled, Markdown images pointing to copied assets
-also use fingerprinted URLs. Root-relative paths such as
+When fingerprinting is enabled, Markdown images and links to copied assets
+also use fingerprinted URLs, including links to PDFs and downloads.
+Root-relative paths such as
 `![Logo](/assets/img/logo.png)` resolve from the site root; relative paths
 such as `![Logo](../assets/img/logo.png)` resolve from the Markdown source
 file. Query strings, fragments, and `base_path` are preserved. Markdown
-links and images outside the asset directory keep their usual behavior.
+links to pages still resolve to their page URLs. Links and images outside
+the asset directory keep their usual behavior.
 `index.md` becomes `/index.html`, `guide/setup.md` becomes
 `/guide/setup/index.html`, and `guide/index.md` becomes
 `/guide/index.html`. HTML pages can set a `permalink` ending in `/` or
