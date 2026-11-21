@@ -1,5 +1,5 @@
 +++
-layout = "page.html"
+layout = "api-page.html"
 +++
 <div class="page-layout api-layout">
   <aside class="sidebar api-sidebar"><nav aria-label="API documentation">
@@ -8,11 +8,11 @@ layout = "page.html"
     <strong class="nav-current">{{ page.nav_title }}</strong>
     {% for group in page.nav_items | group_by: "section" %}
     <section class="nav-section"><h2>{{ group.key }}</h2><ul class="nav-list">
-      {% for item in group.items %}<li><a class="nav-kind-{{ item.kind }}" href="{{ item.url | url }}">{{ item.name }}</a></li>{% endfor %}
+      {% for item in group.items %}<li><a class="nav-kind-{{ item.kind }}" href="{{ item.url | url }}"{% if item.is_page %} aria-current="page"{% endif %}>{{ item.name }}</a></li>{% endfor %}
     </ul></section>
     {% endfor %}
     <section class="nav-section nav-tree"><h2>Package {{ page.package }}</h2><ul class="tree">
-      {% for module in page.tree %}<li class="tree-depth-{{ module.depth }}">{% if module.current %}<a class="tree-current" aria-current="location" href="{{ module.url | url }}">{{ module.name }}</a>{% else %}<a href="{{ module.url | url }}">{{ module.name }}</a>{% endif %}</li>{% endfor %}
+      {% for module in page.tree %}<li class="tree-depth-{{ module.depth }}">{% if module.current %}<a class="tree-current"{% if module.is_page %} aria-current="page"{% else %} aria-current="location"{% endif %} href="{{ module.url | url }}">{{ module.name }}</a>{% else %}<a href="{{ module.url | url }}">{{ module.name }}</a>{% endif %}</li>{% endfor %}
     </ul></section>
   </nav></aside>
   <main id="main-content" class="docs-content api-content">{{ content | safe }}</main>

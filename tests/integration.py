@@ -185,10 +185,14 @@ class BuildTests(unittest.TestCase):
         self.assertIn('class="docs-content api-content docs-home"', api)
         self.assertIn('class="theme-toggle"', api)
         self.assertIn("krayon-docs-theme", api)
-        self.assertEqual((api_root / "assets/docs.css").read_text(),
+        self.assertIn('href="/assets/css/docs.css"', api)
+        self.assertIn('href="/assets/api/site.css"', api)
+        self.assertIn('src="/assets/js/theme.js"', api)
+        self.assertEqual((docs / "dist/assets/css/docs.css").read_text(),
                          (docs / "src/assets/css/docs.css").read_text())
-        self.assertEqual((api_root / "assets/theme.js").read_text(),
+        self.assertEqual((docs / "dist/assets/js/theme.js").read_text(),
                          (docs / "src/assets/js/theme.js").read_text())
+        self.assertTrue((docs / "dist/assets/api/search.js").is_file())
         module = (api_root / "site/index.html").read_text()
         self.assertIn('class="tree-current" aria-current="page" href="/api/site/"',
                       module)
@@ -197,7 +201,7 @@ class BuildTests(unittest.TestCase):
                       config_page)
         self.assertIn('class="tree-current" aria-current="location" href="/api/site/"',
                       config_page)
-        self.assertIn('/api/assets/nav.', config_page)
+        self.assertIn('/assets/api/nav.js', config_page)
         for dependency in ("std", "core", "alloc", "libc", "toml"):
             self.assertNotIn(f'href="{dependency}/"', api)
             self.assertFalse((api_root / dependency).exists())
@@ -238,13 +242,23 @@ class BuildTests(unittest.TestCase):
         self.assertIn('href="/krayon/api/"', home)
         api = (docs / "dist/api/index.html").read_text()
         self.assertIn('content="/krayon/api/"', api)
-        self.assertIn('href="/krayon/api/assets/docs.', api)
-        self.assertIn('href="/krayon/api/assets/site.', api)
-        self.assertIn('src="/krayon/api/assets/theme.', api)
+        self.assertIn('href="/krayon/assets/css/docs.css"', api)
+        self.assertIn('href="/krayon/assets/api/site.css"', api)
+        self.assertIn('src="/krayon/assets/js/theme.js"', api)
         self.assertIn('href="/krayon/">Guides</a>', api)
         config_page = (docs / "dist/api/site/struct.Config.html").read_text()
         self.assertIn('href="/krayon/api/site/struct.Config.html" aria-current="page"',
                       config_page)
+
+        previous = (docs / "dist/api/index.html").read_bytes()
+        layout = docs / "api-theme/src/_includes/api-page.html"
+        layout.write_text(layout.read_text().replace(
+            '<div class="site-shell api-shell">',
+            '<div class="site-shell api-shell"><a href="{{ "/api/std/" | url }}">Removed dependency</a>'))
+        result = build_full_docs()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("broken local link", result.stderr)
+        self.assertEqual((docs / "dist/api/index.html").read_bytes(), previous)
 
     def test_check_accepts_drafts_and_reports_template_errors(self):
         draft = self.site / "src/draft.md"

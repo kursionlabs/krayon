@@ -1,4 +1,4 @@
-"""Build the written Krayon guides and generated Kursal API reference together."""
+"""Build the written guides and Krayon library API as one validated site."""
 
 import argparse
 import html
@@ -15,67 +15,77 @@ from urllib.parse import urljoin, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ENTRY = re.compile(r'<li><a class="package-link" href="([^"]+)">.*?</li>\n?', re.S)
 LINK = re.compile(r'<a\b[^>]*\bhref="([^"]*)"[^>]*>(.*?)</a>', re.S)
+URL_FIELD = re.compile(r'(?m)^(parent|permalink|url) = "(/[^"]*)"$')
+ENTRY = re.compile(r'(?ms)^(\[\[(?:nav_items|tree)\]\]\n)(.*?)(?=^\[\[|\Z)')
+ENTRY_URL = re.compile(r'(?m)^url = "([^"]+)"$')
+LAYOUTS = {"doc.html": "api-doc.html", "index.html": "api-index.html",
+           "source.html": "api-source.html"}
 
 
-def replace_once(text, old, new):
-    if text.count(old) != 1:
-        raise RuntimeError(f"Krayon's API theme changed: expected {old!r}")
-    return text.replace(old, new)
+def page_route(source, api_root):
+    relative = source.relative_to(api_root)
+    if relative.name == "index.md":
+        parent = relative.parent.as_posix()
+        return "/api/" if parent == "." else f"/api/{parent}/"
+    return "/api/" + relative.with_suffix(".html").as_posix()
 
 
-def keep_library_docs(output, api_base_path, packages):
-    """Remove dependency documentation from Kursal's full package graph."""
-    generated_packages = {path.name for path in output.iterdir()
-                          if path.is_dir() and path.name not in {"assets", "src"}}
-    missing = packages - generated_packages
+def prepare_api_source(api_root, packages):
+    """Keep Krayon packages, rewrite their routes, and unlink removed dependencies."""
+    generated = {path.name for path in api_root.iterdir()
+                 if path.is_dir() and path.name != "src"}
+    missing = packages - generated
     if missing:
         raise RuntimeError(f"Kursal did not generate Krayon packages: {sorted(missing)}")
-    excluded = generated_packages - packages
+    excluded = generated - packages
 
-    index = output / "index.html"
-    landing = index.read_text()
-    landing = PACKAGE_ENTRY.sub(
+    index = api_root / "index.md"
+    index.write_text(PACKAGE_ENTRY.sub(
         lambda match: match.group() if match.group(1).rstrip("/") in packages else "",
-        landing)
-    index.write_text(landing)
+        index.read_text()))
 
-    api_root = f"{api_base_path}/"
+    for source in api_root.rglob("*.md"):
+        relative = source.relative_to(api_root)
+        if relative.parts[0] in excluded:
+            continue
+        if relative.parts[0] == "src" and relative.parts[1] in excluded:
+            continue
 
-    def excluded_link(page, href):
-        page_url = api_root + page.relative_to(output).as_posix()
-        target = urlsplit(urljoin("https://krayon.invalid" + page_url,
-                                   html.unescape(href)))
-        if target.netloc != "krayon.invalid" or not target.path.startswith(api_root):
-            return False
-        parts = target.path[len(api_root):].split("/")
-        package = parts[1] if parts[0] == "src" and len(parts) > 1 else parts[0]
-        return package in excluded
+        content = source.read_text()
+        if not content.startswith("+++\n"):
+            raise RuntimeError(f"Kursal page has no front matter: {source}")
+        front, separator, body = content[4:].partition("\n+++\n")
+        if not separator:
+            raise RuntimeError(f"Kursal page has unclosed front matter: {source}")
+        route = page_route(source, api_root)
+        front = re.sub(r'(?m)^layout = "([^"]+)"$',
+                       lambda match: f'layout = "{LAYOUTS[match.group(1)]}"', front)
+        front = URL_FIELD.sub(
+            lambda match: f'{match.group(1)} = "/api{match.group(2)}"', front)
+        permalink = re.search(r'(?m)^permalink = "([^"]+)"$', front)
+        if permalink:
+            route = permalink.group(1)
 
-    for page in output.rglob("*.html"):
-        content = page.read_text()
-        page_url = api_root + page.relative_to(output).as_posix()
-        if page_url.endswith("/index.html"):
-            page_url = page_url[:-len("index.html")]
+        def mark_current(match):
+            url = ENTRY_URL.search(match.group(2))
+            if url and url.group(1) == route:
+                return match.group().rstrip("\n") + "\nis_page = true\n"
+            return match.group()
 
-        def rewrite_link(match):
-            href = match.group(1)
-            if excluded_link(page, href):
-                return match.group(2)
-            target = urlsplit(urljoin("https://krayon.invalid" + page_url,
-                                       html.unescape(href)))
-            if target.netloc != "krayon.invalid" or target.path != page_url or target.fragment:
+        front = ENTRY.sub(mark_current, front)
+
+        def unlink_dependency(match):
+            target = urlsplit(urljoin("https://krayon.invalid" + route,
+                                       html.unescape(match.group(1))))
+            if target.netloc != "krayon.invalid" or not target.path.startswith("/api/"):
                 return match.group()
-            anchor = match.group()
-            if 'class="nav-kind-' in anchor:
-                return anchor.replace(">", ' aria-current="page">', 1)
-            if 'class="tree-current"' in anchor:
-                return anchor.replace('aria-current="location"', 'aria-current="page"', 1)
-            return anchor
+            parts = target.path[len("/api/"):].split("/")
+            package = parts[1] if parts[0] == "src" and len(parts) > 1 else parts[0]
+            return match.group(2) if package in excluded else match.group()
 
-        content = LINK.sub(rewrite_link, content)
-        page.write_text(content)
+        source.write_text("+++\n" + front + "\n+++\n" + LINK.sub(unlink_dependency, body))
 
-    search_index = output / "search-index.json"
+    search_index = api_root / "search-index.json"
     entries = json.loads(search_index.read_text())
     entries = [entry for entry in entries
                if entry["u"].lstrip("/").split("/")[0] in packages]
@@ -83,10 +93,35 @@ def keep_library_docs(output, api_base_path, packages):
                                        separators=(",", ":")) + "\n")
 
     for package in excluded:
-        shutil.rmtree(output / package)
-        source = output / "src" / package
-        if source.exists():
-            shutil.rmtree(source)
+        shutil.rmtree(api_root / package)
+        source_dir = api_root / "src" / package
+        if source_dir.exists():
+            shutil.rmtree(source_dir)
+
+
+def add_api_layouts(site, theme_root):
+    theme = theme_root / "src"
+    layouts = site / "src/_includes"
+    for source in (theme / "_includes").glob("*.html"):
+        shutil.copy2(source, layouts / source.name)
+    shutil.copytree(theme / "assets", site / "src/assets/api")
+
+
+def publish(staged, output):
+    """Prepare the complete output before replacing the published directory."""
+    with tempfile.TemporaryDirectory(prefix=".krayon-docs-", dir=output.parent) as temporary:
+        temporary = Path(temporary)
+        ready = temporary / "ready"
+        shutil.copytree(staged, ready)
+        previous = temporary / "previous"
+        if output.exists():
+            output.rename(previous)
+        try:
+            ready.rename(output)
+        except Exception:
+            if previous.exists():
+                previous.rename(output)
+            raise
 
 
 def main():
@@ -103,38 +138,28 @@ def main():
     site = args.site.resolve()
     with (site / "krayon.toml").open("rb") as config_file:
         config = tomllib.load(config_file)
-    base_path = config.get("base_path", "").rstrip("/")
-    api_base_path = f"{base_path}/api"
-    output = site / config.get("output", "dist")
+    output_name = config.get("output", "dist")
+    output = site / output_name
+    packages = {path.parent.name for path in (ROOT / "lib").glob("*/kur.toml")}
 
-    with tempfile.TemporaryDirectory(prefix="krayon-api-") as temporary:
-        generated = Path(temporary) / "site"
-        packages = {path.parent.name for path in (ROOT / "lib").glob("*/kur.toml")}
+    with tempfile.TemporaryDirectory(prefix="krayon-docs-") as temporary:
+        staged_site = Path(temporary) / "site"
+
+        def ignore(directory, names):
+            if Path(directory) == site:
+                return [name for name in (output_name, "api-theme") if name in names]
+            return []
+
+        shutil.copytree(site, staged_site, ignore=ignore)
+        placeholder = staged_site / "src/api.md"
+        placeholder.unlink(missing_ok=True)
+        api_root = staged_site / "src/api"
         subprocess.run([args.kursal.resolve(), "doc", ROOT / "lib/site",
-                        "-o", generated / "src"], check=True)
-        shutil.copytree(ROOT / "docs/api-site", generated, dirs_exist_ok=True)
-        shutil.copy2(site / "src/assets/css/docs.css",
-                     generated / "src/assets/docs.css")
-        shutil.copy2(site / "src/assets/js/theme.js",
-                     generated / "src/assets/theme.js")
-        generated_config = generated / "krayon.toml"
-        generated_config.write_text(generated_config.read_text()
-                                    + f'base_path = "{api_base_path}"\n')
-
-        subprocess.run([args.krayon.resolve(), "build", generated], check=True)
-        subprocess.run([args.krayon.resolve(), "build", site], check=True)
-
-        api_output = output / "api"
-        staged_api = output / ".api-generated"
-        shutil.copytree(generated / "dist", staged_api)
-        keep_library_docs(staged_api, api_base_path, packages)
-        guide_url = f"{base_path}/" if base_path else "/"
-        for page in staged_api.rglob("*.html"):
-            page.write_text(replace_once(
-                page.read_text(), '<div class="header-actions">',
-                f'<div class="header-actions"><a class="guide-link" href="{guide_url}">Guides</a>'))
-        shutil.rmtree(api_output)
-        staged_api.rename(api_output)
+                        "-o", api_root], check=True)
+        prepare_api_source(api_root, packages)
+        add_api_layouts(staged_site, site / "api-theme")
+        subprocess.run([args.krayon.resolve(), "build", staged_site], check=True)
+        publish(staged_site / output_name, output)
 
     print(f"Documentation written to {output}")
 

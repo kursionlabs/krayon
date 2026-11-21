@@ -43,10 +43,10 @@ bin/krayon check docs
 python3 scripts/build_docs.py
 ```
 
-The script runs `kursal doc` to generate API pages, supplies Krayon's own
-API theme from `docs/api-site`, builds both sites with Krayon, and places the
-library reference under `docs/dist/api`. Running `bin/krayon build docs` alone builds the guides
-with an API placeholder. Host `docs/dist` at `/` on a static host. To publish
+The script runs `kursal doc`, filters its output to Krayon's libraries, adds
+the layouts and assets from `docs/api-theme`, and builds the guides and API as
+one Krayon site. Running `bin/krayon build docs` alone builds the guides with
+an API placeholder. Host `docs/dist` at `/` on a static host. To publish
 under a prefix such as `/krayon`, set `base_path = "/krayon"` in
 `docs/krayon.toml`, rerun the script, and mount `docs/dist` at that prefix.
 The documentation uses Krayon's URL helpers

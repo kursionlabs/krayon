@@ -19,8 +19,8 @@ layout = "base.html"
 - `examples/hello-site/` — independent site example
 - `examples/blog-site/` — blog example with feeds and pagination
 - `docs/` — documentation site built with Krayon
-- `docs/api-site/` — layouts and assets for the generated library API reference
-- `scripts/build_docs.py` — combines the guides with generated API pages
+- `docs/api-theme/` — layouts and assets for the generated library API reference
+- `scripts/build_docs.py` — filters generated API source and builds the complete docs site
 
 Kursal programs can call `site::build(&cx, root)` directly. It takes a site
 root as a byte span and returns `Result[(), Buffer!]`; the error buffer is a
