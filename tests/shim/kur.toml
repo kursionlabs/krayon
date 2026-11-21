@@ -1,0 +1,11 @@
+[package]
+name="shim_test"
+source_root="."
+kind="executable"
+entry="main"
+
+[dependencies.std]
+path="../../../kursal/lib/std"
+
+[dependencies.shim]
+path="../../lib/shim"

@@ -43,3 +43,17 @@ jobs:
       - name: Run integration tests
         working-directory: krayon
         run: python3 tests/integration.py
+
+      - name: Test stdlib shim
+        working-directory: krayon
+        run: |
+          ../kursal/bin/kursal build tests/shim -o bin/shim-test
+          test_root=$(mktemp -d)
+          trap 'rm -rf "$test_root"' EXIT
+          mkdir "$test_root/target"
+          : > "$test_root/file"
+          ln -s target "$test_root/link"
+          ln -s file "$test_root/file-link"
+          bin/shim-test "$test_root"
+          test -d "$test_root/nested/one/two"
+          test -d "$test_root/target/child"

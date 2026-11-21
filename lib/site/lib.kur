@@ -18,6 +18,7 @@ use records::{filter_contains, filter_records, scalar, sort_records};
 use url::{prefix, valid_origin};
 use sha256::{digest_hex, digest_file, new_hash, hash_bytes, finish_hash};
 use shim::path::{join, parent, basename};
+use shim::fs::{CreateDirErrorKind, create_dir_all};
 
 extern "C" fn getpid() -> i32;
 
@@ -172,31 +173,19 @@ fn load(&cx: Domain!['k], file: Span['k]) -> Result[Span['k], Buffer!] {
 }
 
 forall 'k.
-fn ensure_one(&cx: Domain!['k], directory: Span['k]) -> Result[(), Buffer!] {
-    if directory.is_empty() { return Result::Ok.(()); }
-    match metadata(&cx, directory) {
-        Result::Ok(m) => match m.kind {
-            FileKind::Directory => Result::Ok.(()),
-            _ => Result::Err.(report(&cx, "expected directory", directory)),
-        },
-        Result::Err(e) => {
-            if e.errno != 2i32 { return Result::Err.(report(&cx, "cannot stat", directory)); }
-            match mkdir(&cx, directory) {
-                Result::Ok(nothing) => Result::Ok.(()),
-                Result::Err(e) => Result::Err.(report(&cx, "cannot create directory", directory)),
-            }
-        },
-    }
-}
-
-forall 'k.
 fn ensure_dir(&cx: Domain!['k], directory: Span['k]) -> Result[(), Buffer!] {
-    var i = 1usize;
-    while i < directory.len() {
-        if byte(&cx, directory, i) == b'/' { ensure_one(&cx, directory.slice(0usize, i))?; }
-        i = i + 1usize;
+    match create_dir_all(&cx, directory) {
+        Result::Ok(nothing) => Result::Ok.(()),
+        Result::Err(failure) => {
+            let { path, kind } = failure;
+            let action = match kind {
+                CreateDirErrorKind::NotDirectory => "expected directory",
+                CreateDirErrorKind::Stat(e) => "cannot stat",
+                CreateDirErrorKind::Create(e) => "cannot create directory",
+            };
+            Result::Err.(report(&cx, action, path))
+        },
     }
-    ensure_one(&cx, directory)
 }
 
 forall 'k.

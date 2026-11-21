@@ -1,13 +1,13 @@
 //! The Kursal standard library plus modules staged for later inclusion.
 //! Keep the forwarded modules in sync with std::lib.
 
-use package::path;
+use package::{fs, path};
+export fs;
 export path;
 
-use std::{env, float, fs, io, process, thread, time};
+use std::{env, float, io, process, thread, time};
 export env;
 export float;
-export fs;
 export io;
 export process;
 export thread;

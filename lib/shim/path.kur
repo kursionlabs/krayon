@@ -18,22 +18,28 @@ fn join(&cx: Domain!['k], left: Span['k], right: Span['k]) -> Span['k] {
 }
 
 /// Bytes before the final `/`, or an empty span if there is no separator.
-/// For `/file`, the parent is empty; for `dir/`, it is `dir`.
+/// `/` is its own parent; the parent of `/file` is `/`, and of `dir/` is `dir`.
 forall 'k.
 fn parent(&cx: Domain!['k], path: Span['k]) -> Span['k] {
+    if path.len() == 1usize && path.byte_or_zero(&cx, 0usize) == b'/' { return path; }
     var i = path.len();
     while i > 0usize {
         i = i - 1usize;
-        if path.byte_or_zero(&cx, i) == b'/' { return path.slice(0usize, i); }
+        if path.byte_or_zero(&cx, i) == b'/' {
+            return path.slice(0usize, if i == 0usize { 1usize } else { i });
+        }
     }
     path.slice(0usize, 0usize)
 }
 
-/// Bytes after the final `/`, or all of `path` when its parent is empty.
-/// This preserves Krayon's current behavior: `/file` returns `/file`, while
-/// `dir/` returns an empty span.
+/// Bytes after the final `/`, or all of `path` if there is no separator.
+/// `/` and paths ending in `/` have an empty basename; `/file` has `file`.
 forall 'k.
 fn basename(&cx: Domain!['k], path: Span['k]) -> Span['k] {
-    let directory = parent(&cx, path);
-    path.slice(if directory.is_empty() { 0usize } else { directory.len() + 1usize }, path.len())
+    var i = path.len();
+    while i > 0usize {
+        i = i - 1usize;
+        if path.byte_or_zero(&cx, i) == b'/' { return path.slice(i + 1usize, path.len()); }
+    }
+    path
 }

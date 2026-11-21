@@ -1,0 +1,60 @@
+use std::arena::Domain!;
+use std::option::{Option, Result};
+use std::process::{Args, hash_seed};
+use std::raw::Span;
+use shim::fs::{CreateDirErrorKind, create_dir_all};
+use shim::path::{basename, join, parent};
+
+forall 'k.
+fn check(&cx: Domain!['k], root: Span['k]) -> i32 {
+    let slash = Span::from_static(&cx, "/");
+    let absolute_file = Span::from_static(&cx, "/file");
+    let relative_file = Span::from_static(&cx, "file");
+    if !parent(&cx, slash).is(&cx, "/") || !basename(&cx, slash).is_empty()
+        || !parent(&cx, absolute_file).is(&cx, "/") || !basename(&cx, absolute_file).is(&cx, "file")
+        || !parent(&cx, relative_file).is_empty() || !basename(&cx, relative_file).is(&cx, "file")
+        || !parent(&cx, Span::from_static(&cx, "dir/")).is(&cx, "dir")
+        || !basename(&cx, Span::from_static(&cx, "dir/")).is_empty() {
+        return 2i32;
+    }
+    if !join(&cx, Span::from_static(&cx, "a/"), Span::from_static(&cx, "b")).is(&cx, "a/b") {
+        return 3i32;
+    }
+    let nested = join(&cx, root, Span::from_static(&cx, "nested/one/two"));
+    if !create_dir_all(&cx, nested).is_ok() || !create_dir_all(&cx, nested).is_ok() { return 4i32; }
+    let through_link = join(&cx, root, Span::from_static(&cx, "link/child"));
+    if !create_dir_all(&cx, through_link).is_ok() { return 5i32; }
+    let through_file = join(&cx, root, Span::from_static(&cx, "file/child"));
+    match create_dir_all(&cx, through_file) {
+        Result::Ok(nothing) => return 6i32,
+        Result::Err(failure) => {
+            let { path, kind } = failure;
+            if !path.eq(&cx, join(&cx, root, Span::from_static(&cx, "file"))) { return 7i32; }
+            match kind {
+                CreateDirErrorKind::NotDirectory => (),
+                _ => return 8i32,
+            }
+        },
+    }
+    let file_link = join(&cx, root, Span::from_static(&cx, "file-link"));
+    match create_dir_all(&cx, file_link) {
+        Result::Ok(nothing) => return 9i32,
+        Result::Err(failure) => match failure.kind {
+            CreateDirErrorKind::NotDirectory => (),
+            _ => return 10i32,
+        },
+    }
+    if !create_dir_all(&cx, Span::from_static(&cx, "")).is_ok() { return 11i32; }
+    0i32
+}
+
+fn main(args: Args) -> i32 {
+    let exists 'k. cx = Domain!::new(hash_seed());
+    var cx = cx;
+    let code = match args.bytes(1usize) {
+        Option::Some(bytes) => check(&cx, Span::from_static(&cx, bytes)),
+        Option::None => 1i32,
+    };
+    cx.destroy();
+    code
+}

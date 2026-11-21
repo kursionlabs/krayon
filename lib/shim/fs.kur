@@ -1,0 +1,77 @@
+//! Kursal filesystem operations plus recursive directory creation.
+
+use std::arena::Domain!;
+use std::fs::{FileKind, Metadata, DirEntry!, read, read_to_arena, write, metadata,
+    path_exists, canonicalize, remove, rename, mkdir, read_dir};
+use std::io::{Error, ErrorKind};
+use std::option::Result;
+use std::raw::Span;
+
+export FileKind;
+export Metadata;
+export DirEntry!;
+export read;
+export read_to_arena;
+export write;
+export metadata;
+export path_exists;
+export canonicalize;
+export remove;
+export rename;
+export mkdir;
+export read_dir;
+
+/// Why a component of `create_dir_all` failed.
+exposed enum CreateDirErrorKind {
+    NotDirectory,
+    Stat(Error),
+    Create(Error),
+}
+
+/// The component at which recursive directory creation failed.
+forall 'k.
+exposed struct CreateDirError {
+    path: Span['k],
+    kind: CreateDirErrorKind,
+}
+
+forall 'k.
+fn ensure_component(&cx: Domain!['k], path: Span['k]) -> Result[(), CreateDirError['k]] {
+    if path.is_empty() { return Result::Ok.(()); }
+    match metadata(&cx, path) {
+        Result::Ok(info) => match info.kind {
+            FileKind::Directory => Result::Ok.(()),
+            _ => Result::Err.(CreateDirError.{ path, kind: CreateDirErrorKind::NotDirectory }),
+        },
+        Result::Err(e) => match e.kind() {
+            ErrorKind::NotFound => match mkdir(&cx, path) {
+                Result::Ok(nothing) => Result::Ok.(()),
+                Result::Err(create_error) => match create_error.kind() {
+                    ErrorKind::AlreadyExists => match metadata(&cx, path) {
+                        Result::Ok(info) => match info.kind {
+                            FileKind::Directory => Result::Ok.(()),
+                            _ => Result::Err.(CreateDirError.{ path, kind: CreateDirErrorKind::NotDirectory }),
+                        },
+                        Result::Err(stat_error) => Result::Err.(CreateDirError.{ path, kind: CreateDirErrorKind::Stat.(stat_error) }),
+                    },
+                    _ => Result::Err.(CreateDirError.{ path, kind: CreateDirErrorKind::Create.(create_error) }),
+                },
+            },
+            _ => Result::Err.(CreateDirError.{ path, kind: CreateDirErrorKind::Stat.(e) }),
+        },
+    }
+}
+
+/// Make `path` and its missing parents. Empty paths do nothing. Existing
+/// directories, including symlinks to directories, are accepted. A file or
+/// symlink to a file fails with `NotDirectory`. The function checks each
+/// component in order; another process may still change one between calls.
+forall 'k.
+fn create_dir_all(&cx: Domain!['k], path: Span['k]) -> Result[(), CreateDirError['k]] {
+    var i = 1usize;
+    while i < path.len() {
+        if path.byte_or_zero(&cx, i) == b'/' { ensure_component(&cx, path.slice(0usize, i))?; }
+        i = i + 1usize;
+    }
+    ensure_component(&cx, path)
+}
