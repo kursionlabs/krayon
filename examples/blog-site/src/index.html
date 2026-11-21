@@ -1,0 +1,13 @@
++++
+title = "Home"
+layout = "base.html"
++++
+<section class="intro">
+  <h1>Field Notes</h1>
+  <p>{{ site.description }}</p>
+</section>
+<section aria-labelledby="latest-heading">
+  <h2 id="latest-heading">Latest posts</h2>
+  {% for post in collections.posts %}{% include "components/post-card.html" %}{% endfor %}
+  <p><a href="{{ "/archive/" | url }}">Browse the archive</a></p>
+</section>

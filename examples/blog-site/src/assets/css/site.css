@@ -1,0 +1,15 @@
+:root { color-scheme: light; font-family: system-ui, sans-serif; line-height: 1.6; }
+body { max-width: 46rem; margin: 0 auto; padding: 1.5rem; color: #263238; }
+a { color: #075b85; }
+a:hover { color: #043f5d; }
+.site-header, .site-header nav, .pagination, .post-navigation { display: flex; flex-wrap: wrap; gap: 1rem; }
+.site-header { justify-content: space-between; align-items: baseline; border-bottom: 1px solid #d5dfe3; padding-bottom: 1rem; }
+.site-name { font-weight: 700; font-size: 1.3rem; text-decoration: none; }
+main { padding: 1.5rem 0 3rem; }
+.intro { padding: 0.5rem 0 1.5rem; }
+.post-card { border-top: 1px solid #d5dfe3; padding: 1.25rem 0; }
+.post-card h2 { margin: 0; }
+.post-meta, .post-tags, footer { color: #526670; font-size: 0.9rem; }
+.post-tags span { display: inline-block; margin-right: 0.35rem; }
+.post-navigation { justify-content: space-between; margin-top: 2.5rem; }
+footer { border-top: 1px solid #d5dfe3; }

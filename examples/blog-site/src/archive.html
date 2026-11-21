@@ -1,0 +1,14 @@
++++
+title = "Archive"
+layout = "base.html"
+paginate = "collections.posts"
+page_size = 2
+permalink = "/archive/"
++++
+<h1>Archive</h1>
+<p>{{ page.pagination.total_items }} posts</p>
+{% for post in page.pagination.items %}{% include "components/post-card.html" %}{% endfor %}
+<nav class="pagination" aria-label="Archive pages">
+  {% if page.pagination.previous %}<a href="{{ page.pagination.previous | url }}">Newer posts</a>{% endif %}
+  {% if page.pagination.next %}<a href="{{ page.pagination.next | url }}">Older posts</a>{% endif %}
+</nav>

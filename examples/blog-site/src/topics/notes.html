@@ -1,0 +1,7 @@
++++
+title = "Notes"
+layout = "base.html"
++++
+<h1>Notes</h1>
+<p>Posts tagged as notes.</p>
+{% for post in collections.posts | contains: "tags", "notes" %}{% include "components/post-card.html" %}{% endfor %}

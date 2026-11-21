@@ -1,0 +1,10 @@
+input = "src"
+output = "dist"
+layouts = "_includes"
+data = "_data/site.toml"
+assets = "assets"
+
+[collections.posts]
+where = { field = "kind", equals = "post" }
+sort_by = "date"
+sort_order = "desc"

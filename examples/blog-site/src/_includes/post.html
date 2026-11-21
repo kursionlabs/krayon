@@ -1,0 +1,15 @@
++++
+layout = "base.html"
++++
+<article class="post">
+  <header>
+    <p class="post-meta"><time datetime="{{ page.date }}">{{ page.date }}</time></p>
+    <h1>{{ page.title }}</h1>
+    {% if page.tags %}<p class="post-tags">Topics: {% for tag in page.tags %}<span>{{ tag }}</span> {% endfor %}</p>{% endif %}
+  </header>
+  {{ content | safe }}
+</article>
+<nav class="post-navigation" aria-label="Post navigation">
+  {% if page.collection_navigation.posts.previous %}<a href="{{ page.collection_navigation.posts.previous.url | url }}">Newer: {{ page.collection_navigation.posts.previous.title }}</a>{% endif %}
+  {% if page.collection_navigation.posts.next %}<a href="{{ page.collection_navigation.posts.next.url | url }}">Older: {{ page.collection_navigation.posts.next.title }}</a>{% endif %}
+</nav>

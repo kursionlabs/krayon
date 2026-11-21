@@ -80,6 +80,39 @@ class BuildTests(unittest.TestCase):
         self.assertEqual((self.site / "dist/index.html").read_bytes(), previous)
         self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
 
+    def test_blog_example_builds_with_archives_drafts_and_base_path(self):
+        blog = Path(self.temp.name) / "blog"
+        shutil.copytree(ROOT / "examples/blog-site", blog,
+                        ignore=shutil.ignore_patterns("dist"))
+
+        def build_blog(*flags):
+            return subprocess.run([str(KRAYON), "build", str(blog), *flags],
+                                  text=True, capture_output=True)
+
+        result = build_blog()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        home = (blog / "dist/index.html").read_text()
+        self.assertLess(home.index("/posts/third-post/"), home.index("/posts/second-post/"))
+        self.assertLess(home.index("/posts/second-post/"), home.index("/posts/first-post/"))
+        self.assertNotIn("/posts/next-idea/", home)
+        self.assertFalse((blog / "dist/posts/next-idea/index.html").exists())
+        self.assertIn("/posts/first-post/",
+                      (blog / "dist/archive/page/2/index.html").read_text())
+        self.assertIn("Newer: Browsing the archive",
+                      (blog / "dist/posts/second-post/index.html").read_text())
+        self.assertNotIn("/posts/third-post/",
+                         (blog / "dist/topics/notes/index.html").read_text())
+
+        config = blog / "krayon.toml"
+        config.write_text('base_path = "/journal"\n' + config.read_text())
+        result = build_blog("--drafts")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((blog / "dist/posts/next-idea/index.html").exists())
+        self.assertIn('href="/journal/posts/next-idea/"',
+                      (blog / "dist/index.html").read_text())
+        self.assertIn('href="/journal/archive/"',
+                      (blog / "dist/about/index.html").read_text())
+
     def test_check_accepts_drafts_and_reports_template_errors(self):
         draft = self.site / "src/draft.md"
         draft.write_text('+++\ndraft = true\n+++\n# Draft\n')
