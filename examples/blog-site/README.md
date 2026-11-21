@@ -24,6 +24,11 @@ The example demonstrates:
 - An archive with two posts per page and a topic page using `contains`.
 - Markdown excerpts split by `<!-- more -->` and a shared post card include.
 - The `url` filter on template links, ready for a configured `base_path`.
+- An Atom feed and XML sitemap built from page collections with `absolute_url`.
+
+The `origin = "https://example.com"` setting supplies the absolute URLs in
+`atom.xml` and `sitemap.xml`. Replace it with the real site's origin before
+publishing. Krayon checks same-origin links in the generated XML.
 
 To mount the site under a prefix, add `base_path = "/blog"` near the top of
 `krayon.toml`, before `[collections.posts]`, and rebuild. Template links and

@@ -3,6 +3,7 @@ output = "dist"
 layouts = "_includes"
 data = "_data/site.toml"
 assets = "assets"
+origin = "https://example.com"
 
 [collections.posts]
 where = { field = "kind", equals = "post" }

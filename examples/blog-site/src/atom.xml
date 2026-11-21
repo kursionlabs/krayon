@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>{{ site.title }}</title>
+  <subtitle>{{ site.description }}</subtitle>
+  <id>{{ page.url | absolute_url }}</id>
+  <link rel="self" href="{{ page.url | absolute_url }}"/>
+  <link rel="alternate" href="{{ "/" | absolute_url }}"/>
+  <author><name>{{ site.author }}</name></author>
+  {% for post in collections.posts %}{% if loop.first %}<updated>{{ post.date }}T00:00:00Z</updated>{% endif %}{% endfor %}
+  {% for post in collections.posts %}
+  <entry>
+    <title>{{ post.title }}</title>
+    <id>{{ post.url | absolute_url }}</id>
+    <link rel="alternate" href="{{ post.url | absolute_url }}"/>
+    <updated>{{ post.date }}T00:00:00Z</updated>
+  </entry>
+  {% endfor %}
+</feed>

@@ -102,6 +102,20 @@ class BuildTests(unittest.TestCase):
                       (blog / "dist/posts/second-post/index.html").read_text())
         self.assertNotIn("/posts/third-post/",
                          (blog / "dist/topics/notes/index.html").read_text())
+        atom_ns = {"atom": "http://www.w3.org/2005/Atom"}
+        atom = ET.parse(blog / "dist/atom.xml").getroot()
+        entries = atom.findall("atom:entry", atom_ns)
+        self.assertEqual([entry.find("atom:title", atom_ns).text for entry in entries],
+                         ["Browsing the archive", "A reusable layout", "Starting a small blog"])
+        self.assertEqual(atom.find("atom:updated", atom_ns).text,
+                         "2025-03-19T00:00:00Z")
+        self.assertEqual(entries[0].find("atom:link", atom_ns).attrib["href"],
+                         "https://example.com/posts/third-post/")
+        sitemap_ns = {"map": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+        sitemap = ET.parse(blog / "dist/sitemap.xml").getroot()
+        locations = {entry.text for entry in sitemap.findall("map:url/map:loc", sitemap_ns)}
+        self.assertIn("https://example.com/archive/page/2/", locations)
+        self.assertNotIn("https://example.com/posts/next-idea/", locations)
 
         config = blog / "krayon.toml"
         config.write_text('base_path = "/journal"\n' + config.read_text())
@@ -112,6 +126,14 @@ class BuildTests(unittest.TestCase):
                       (blog / "dist/index.html").read_text())
         self.assertIn('href="/journal/archive/"',
                       (blog / "dist/about/index.html").read_text())
+        atom = ET.parse(blog / "dist/atom.xml").getroot()
+        self.assertEqual(atom.find("atom:updated", atom_ns).text,
+                         "2025-04-01T00:00:00Z")
+        self.assertEqual(len(atom.findall("atom:entry", atom_ns)), 4)
+        sitemap = ET.parse(blog / "dist/sitemap.xml").getroot()
+        locations = {entry.text for entry in sitemap.findall("map:url/map:loc", sitemap_ns)}
+        self.assertIn("https://example.com/journal/posts/next-idea/", locations)
+        self.assertIn("https://example.com/journal/archive/page/2/", locations)
 
     def test_check_accepts_drafts_and_reports_template_errors(self):
         draft = self.site / "src/draft.md"

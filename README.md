@@ -30,8 +30,9 @@ HTML layout, and a `.gitignore` for `dist`.
 bin/krayon build examples/hello-site
 ```
 
-For a fuller example with posts, excerpts, collection navigation, and a
-paginated archive, build `examples/blog-site` and see its README.
+For a fuller example with posts, excerpts, collection navigation, a
+paginated archive, an Atom feed, and a sitemap, build `examples/blog-site`
+and see its README.
 
 Run `bin/krayon check [SITE_ROOT]` to render and validate a site without
 replacing its output directory. It catches the same template, output, and
