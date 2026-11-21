@@ -94,8 +94,8 @@ slash, and exposes it as `site.origin`. The default empty origin disables
 A site can contain Markdown (`.md`), HTML (`.html`), XML (`.xml`), JSON
 (`.json`), and text (`.txt`) templates anywhere under `input`. Krayon copies
 `assets` recursively and omits layouts and data from page discovery.
-Set `fingerprint_assets = true` to also copy each asset with a content-based
-suffix before its extension, such as `site.0123456789abcdef.css`. Use
+Set `fingerprint_assets = true` to also copy each asset with its SHA-256
+digest before its extension, in the form `site.<64 hex digits>.css`. Use
 `{{ "/assets/css/site.css" | asset_url }}` in templates to link to the
 fingerprinted copy. The filter accepts a root-relative asset path, preserves
 query strings and fragments, and applies `base_path`. It resolves to the
@@ -468,6 +468,7 @@ headings expose an empty array.
 - `lib/json/` — generated JSON validation
 - `lib/xml/` — generated XML validation
 - `lib/url/` — deployment path prefixes
+- `lib/sha256/` — content digests for fingerprinted assets
 - `lib/highlight/` — fenced code highlighting
 - `examples/hello-site/` — independent site example
 

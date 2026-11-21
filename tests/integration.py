@@ -1,6 +1,7 @@
 """End-to-end checks for a site built with Krayon's public CLI."""
 
 from pathlib import Path
+import hashlib
 import json
 import os
 import shutil
@@ -166,6 +167,8 @@ class BuildTests(unittest.TestCase):
                          'body { background: url("../img/logo.png"); }\n')
         self.assertIn(f'url("/docs/assets/img/{image[0].name}")',
                       css[0].read_text())
+        self.assertEqual(css[0].name,
+                         f'site.{hashlib.sha256(css[0].read_bytes()).hexdigest()}.css')
         self.assertEqual(js[0].read_bytes(), (output / "assets/js/app.js").read_bytes())
         self.assertEqual(image[0].read_bytes(), (output / "assets/img/logo.png").read_bytes())
 
@@ -327,6 +330,37 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('broken local link: /docs/assets/docs/missing.pdf', result.stderr)
         self.assertEqual((output / "posts/article/index.html").read_bytes(), previous)
+
+    def test_asset_fingerprints_match_sha256_for_binary_and_padding_boundaries(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "assets/files").mkdir(parents=True)
+        (self.site / "krayon.toml").write_text('fingerprint_assets = true\n')
+        (src / "index.html").write_text("Ready")
+        vectors = {
+            "empty.bin": b"",
+            "abc.bin": b"abc",
+            "55.bin": b"a" * 55,
+            "56.bin": b"a" * 56,
+            "63.bin": b"a" * 63,
+            "64.bin": b"a" * 64,
+            "65.bin": b"a" * 65,
+            "binary.bin": bytes(range(256)),
+        }
+        known = {
+            "empty.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "abc.bin": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        }
+        for name, payload in vectors.items():
+            (src / "assets/files" / name).write_bytes(payload)
+
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = self.site / "dist/assets/files"
+        for name, payload in vectors.items():
+            stem, suffix = name.rsplit(".", 1)
+            digest = known.get(name, hashlib.sha256(payload).hexdigest())
+            self.assertEqual((output / f"{stem}.{digest}.{suffix}").read_bytes(), payload)
 
     def test_init_creates_buildable_site_and_refuses_existing_content(self):
         target = Path(self.temp.name) / "nested/new-site"

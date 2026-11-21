@@ -28,3 +28,6 @@ path="../xml"
 
 [dependencies.records]
 path="../records"
+
+[dependencies.sha256]
+path="../sha256"

@@ -15,6 +15,7 @@ use json::validate as validate_json;
 use xml::validate as validate_xml_document;
 use records::{filter_contains, filter_records, scalar, sort_records};
 use url::{prefix, valid_origin};
+use sha256::digest_hex;
 
 extern "C" fn getpid() -> i32;
 
@@ -1363,27 +1364,17 @@ fn scan_pages(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usi
 
 forall 'k.
 fn fingerprint_name(&cx: Domain!['k], relative: Span['k], contents: Span['k]) -> Span['k] {
-    var hash = 14695981039346656037u64;
-    var i = 0usize;
-    while i < contents.len() {
-        hash = (hash ^ (byte(&cx, contents, i) as u64)) * 1099511628211u64;
-        i = i + 1usize;
-    }
+    let hash = digest_hex(&cx, contents);
     var dot = relative.len();
-    i = relative.len();
+    var i = relative.len();
     var found = false;
     while i > 0usize && !found {
         i = i - 1usize;
         if byte(&cx, relative, i) == b'/' { found = true; }
         if byte(&cx, relative, i) == b'.' { dot = i; found = true; }
     }
-    var name = Buffer!::new().push_bytes(&cx, relative.slice(0usize, dot)).push_byte(b'.');
-    i = 16usize;
-    while i > 0usize {
-        i = i - 1usize;
-        let digit = ((hash >> ((i as u64) * 4u64)) & 15u64) as u8;
-        name = name.push_byte(if digit < 10u8 { b'0' + digit } else { b'a' + digit - 10u8 });
-    }
+    let name = Buffer!::new().push_bytes(&cx, relative.slice(0usize, dot)).push_byte(b'.')
+        .push_bytes(&cx, hash);
     name.push_bytes(&cx, relative.slice(dot, relative.len())).save(&cx)
 }
 
