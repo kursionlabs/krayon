@@ -26,6 +26,8 @@ Kursal programs can call `site::build(&cx, root)` directly. It takes a site
 root as a byte span and returns `Result[(), Buffer!]`; the error buffer is a
 message suitable for printing. The CLI is a small wrapper around that API.
 `site::build_with_drafts(&cx, root, true)` includes drafts for previews.
+`site::build_with_overlay(&cx, root, overlay, false)` builds a temporary merged
+source tree; the original source and overlay directories stay untouched.
 
 Run `python3 tests/integration.py` for the end-to-end checks. They build
 Krayon with the adjacent Kursal compiler and use temporary site copies.

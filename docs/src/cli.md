@@ -25,6 +25,24 @@ local link errors as `build`, then removes its temporary staging directory.
 The configured output remains untouched, whether or not the check succeeds.
 Add `--drafts` to check draft pages too.
 
+## Add generated source
+
+Pass `--overlay DIR` to `build`, `check`, or `routes` to add a directory of
+generated source files for that invocation. Paths inside `DIR` are relative to
+the site's configured input directory. For example, `generated/api/index.md`
+appears at `src/api/index.md` with:
+
+```sh
+bin/krayon build my-site --overlay generated
+```
+
+Overlay files replace files at the same relative path; other directories and
+files are merged. Krayon then discovers routes and validates the combined
+source using the site's configuration. The original input and overlay stay
+untouched, and a failed build leaves the previous output in place. Symlinks
+inside either source tree are rejected for an overlay build. The overlay
+directory must be outside the site's input directory.
+
 ## Inspect routes
 
 To inspect routes before building, run `bin/krayon routes [SITE_ROOT]`. It

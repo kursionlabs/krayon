@@ -1767,6 +1767,97 @@ fn stage_paths(&cx: Domain!['k], output: Span['k]) -> Result[(Span['k], Span['k]
     Result::Err.(report(&cx, "cannot reserve staging directory", output))
 }
 
+// Copy regular source files into an isolated tree. The overlay pass may replace
+// a file at the same relative path, but files and directories cannot swap roles.
+forall 'k.
+fn copy_source_tree(&cx: Domain!['k], root: Span['k], source: Span['k], destination: Span['k],
+    relative: Span['k], depth: usize) -> Result[(), Buffer!] {
+    if depth >= 64usize { return Result::Err.(report(&cx, "overlay tree too deep", source)); }
+    let opened = match read_dir(&cx, source) {
+        Result::Ok(directory) => directory,
+        Result::Err(e) => return Result::Err.(report(&cx, "cannot list overlay source", source)),
+    };
+    var opened = opened;
+    var going = true;
+    while going {
+        match &opened.next() {
+            Result::Err(e) => { opened.close(); return Result::Err.(report(&cx, "cannot list overlay source", source)); },
+            Result::Ok(next) => match next {
+                Option::None => { going = false; },
+                Option::Some(entry) => {
+                    let name = entry.name.save(&cx);
+                    let child_rel = join(&cx, relative, name);
+                    let child = join(&cx, source, name);
+                    let target = join(&cx, destination, name);
+                    let actual = match real_path(&cx, child) {
+                        Result::Ok(path) => path,
+                        Result::Err(message) => { opened.close(); return Result::Err.(message); },
+                    };
+                    if !actual.eq(&cx, join(&cx, root, child_rel)) {
+                        opened.close();
+                        return Result::Err.(report(&cx, "overlay source may not contain symlinks", child));
+                    }
+                    let copied = if entry.is_directory {
+                        match ensure_dir(&cx, target) {
+                            Result::Err(message) => Result::Err.(message),
+                            Result::Ok(nothing) => copy_source_tree(&cx, root, child, target, child_rel, depth + 1usize),
+                        }
+                    } else {
+                        let existing = match exists_path(&cx, target) {
+                            Result::Ok(found) => found,
+                            Result::Err(message) => { opened.close(); return Result::Err.(message); },
+                        };
+                        if existing {
+                            match metadata(&cx, target) {
+                                Result::Ok(info) => match info.kind {
+                                    FileKind::Directory => Result::Err.(report(&cx, "overlay file conflicts with directory", target)),
+                                    _ => stream_copy(&cx, child, target),
+                                },
+                                Result::Err(e) => Result::Err.(report(&cx, "cannot stat overlay target", target)),
+                            }
+                        } else { stream_copy(&cx, child, target) }
+                    };
+                    match copied {
+                        Result::Ok(nothing) => (),
+                        Result::Err(message) => { opened.close(); return Result::Err.(message); },
+                    }
+                },
+            },
+        }
+    }
+    if !opened.close().is_ok() { return Result::Err.(report(&cx, "cannot close overlay source", source)); }
+    Result::Ok.(())
+}
+
+forall 'k.
+fn stage_overlay(&cx: Domain!['k], root: Span['k], source: Span['k], overlay: Span['k]) -> Result[Span['k], Buffer!] {
+    let source_real = real_path(&cx, source)?;
+    let overlay_real = real_path(&cx, overlay)?;
+    let source_prefix = Buffer!::new().push_bytes(&cx, source_real).push_byte(b'/').save(&cx);
+    let overlay_prefix = Buffer!::new().push_bytes(&cx, overlay_real).push_byte(b'/').save(&cx);
+    if source_real.eq(&cx, overlay_real) || source_real.starts_with(&cx, overlay_prefix)
+        || overlay_real.starts_with(&cx, source_prefix) {
+        return Result::Err.(report(&cx, "overlay must be outside input", overlay));
+    }
+    let overlay_info = match metadata(&cx, overlay) {
+        Result::Ok(info) => info,
+        Result::Err(e) => return Result::Err.(report(&cx, "cannot stat overlay", overlay)),
+    };
+    match overlay_info.kind {
+        FileKind::Directory => (),
+        _ => return Result::Err.(report(&cx, "overlay must be a directory", overlay)),
+    }
+    let (stage, backup) = stage_paths(&cx, join(&cx, root, lit(&cx, ".krayon-overlay")))?;
+    match copy_source_tree(&cx, source_real, source, stage, lit(&cx, ""), 0usize) {
+        Result::Ok(nothing) => (),
+        Result::Err(message) => return Result::Err.(clean_after_error(&cx, stage, message)),
+    }
+    match copy_source_tree(&cx, overlay_real, overlay, stage, lit(&cx, ""), 0usize) {
+        Result::Ok(nothing) => Result::Ok.(stage),
+        Result::Err(message) => Result::Err.(clean_after_error(&cx, stage, message)),
+    }
+}
+
 forall 'k.
 fn check_output(&cx: Domain!['k], source: Span['k], output: Span['k]) -> Result[bool, Buffer!] {
     let source_real = real_path(&cx, source)?;
@@ -2116,12 +2207,22 @@ fn new_build(&cx: Domain!['k], root: Span['k], config: Config['k], source: Span[
 
 forall 'k.
 fn routes_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> Result[Buffer!, Buffer!] {
-    route_listing(&cx, root, include_drafts, false)
+    route_listing(&cx, root, Option::None, include_drafts, false)
 }
 
 forall 'k.
 fn routes_json_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> Result[Buffer!, Buffer!] {
-    route_listing(&cx, root, include_drafts, true)
+    route_listing(&cx, root, Option::None, include_drafts, true)
+}
+
+forall 'k.
+fn routes_with_overlay(&cx: Domain!['k], root: Span['k], overlay: Span['k], include_drafts: bool) -> Result[Buffer!, Buffer!] {
+    route_listing(&cx, root, Option::Some.(overlay), include_drafts, false)
+}
+
+forall 'k.
+fn routes_json_with_overlay(&cx: Domain!['k], root: Span['k], overlay: Span['k], include_drafts: bool) -> Result[Buffer!, Buffer!] {
+    route_listing(&cx, root, Option::Some.(overlay), include_drafts, true)
 }
 
 forall 'k.
@@ -2130,10 +2231,30 @@ fn json_string(&cx: Domain!['k], out: Buffer!, value: Span['k]) -> Buffer! {
 }
 
 forall 'k.
-fn route_listing(&cx: Domain!['k], root: Span['k], include_drafts: bool, json: bool) -> Result[Buffer!, Buffer!] {
+fn route_listing(&cx: Domain!['k], root: Span['k], overlay: Option[Span['k]], include_drafts: bool, json: bool) -> Result[Buffer!, Buffer!] {
     let config = read_config(&cx, root)?;
     check_config_output(&cx, config)?;
-    let source = join(&cx, root, config.input);
+    let original = join(&cx, root, config.input);
+    let source = match overlay {
+        Option::None => original,
+        Option::Some(path) => stage_overlay(&cx, root, original, path)?,
+    };
+    let result = route_listing_source(&cx, root, config, source, include_drafts, json);
+    match overlay {
+        Option::None => result,
+        Option::Some(path) => match result {
+            Result::Ok(listing) => match remove_tree(&cx, source) {
+                Result::Ok(nothing) => Result::Ok.(listing),
+                Result::Err(message) => { listing.destroy(); Result::Err.(message) },
+            },
+            Result::Err(message) => Result::Err.(clean_after_error(&cx, source, message)),
+        },
+    }
+}
+
+forall 'k.
+fn route_listing_source(&cx: Domain!['k], root: Span['k], config: Config['k], source: Span['k],
+    include_drafts: bool, json: bool) -> Result[Buffer!, Buffer!] {
     let output = join(&cx, root, config.output);
     let site_data = read_site_data(&cx, source, config)?;
     let build = new_build(&cx, root, config, source, output, include_drafts, site_data);
@@ -2218,9 +2339,37 @@ fn route_listing(&cx: Domain!['k], root: Span['k], include_drafts: bool, json: b
 
 forall 'k.
 fn check_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> Result[(), Buffer!] {
+    check_with_optional_overlay(&cx, root, Option::None, include_drafts)
+}
+
+forall 'k.
+fn check_with_overlay(&cx: Domain!['k], root: Span['k], overlay: Span['k], include_drafts: bool) -> Result[(), Buffer!] {
+    check_with_optional_overlay(&cx, root, Option::Some.(overlay), include_drafts)
+}
+
+forall 'k.
+fn check_with_optional_overlay(&cx: Domain!['k], root: Span['k], overlay: Option[Span['k]],
+    include_drafts: bool) -> Result[(), Buffer!] {
     let config = read_config(&cx, root)?;
     check_config_output(&cx, config)?;
-    let source = join(&cx, root, config.input);
+    let original = join(&cx, root, config.input);
+    let source = match overlay {
+        Option::None => original,
+        Option::Some(path) => stage_overlay(&cx, root, original, path)?,
+    };
+    let result = check_source(&cx, root, config, source, include_drafts);
+    match overlay {
+        Option::None => result,
+        Option::Some(path) => match result {
+            Result::Ok(nothing) => remove_tree(&cx, source),
+            Result::Err(message) => Result::Err.(clean_after_error(&cx, source, message)),
+        },
+    }
+}
+
+forall 'k.
+fn check_source(&cx: Domain!['k], root: Span['k], config: Config['k], source: Span['k],
+    include_drafts: bool) -> Result[(), Buffer!] {
     let output = join(&cx, root, config.output);
     let site_data = read_site_data(&cx, source, config)?;
     ensure_dir(&cx, parent(&cx, output))?;
@@ -2235,9 +2384,37 @@ fn check_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> 
 
 forall 'k.
 fn build_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> Result[(), Buffer!] {
+    build_with_optional_overlay(&cx, root, Option::None, include_drafts)
+}
+
+forall 'k.
+fn build_with_overlay(&cx: Domain!['k], root: Span['k], overlay: Span['k], include_drafts: bool) -> Result[(), Buffer!] {
+    build_with_optional_overlay(&cx, root, Option::Some.(overlay), include_drafts)
+}
+
+forall 'k.
+fn build_with_optional_overlay(&cx: Domain!['k], root: Span['k], overlay: Option[Span['k]],
+    include_drafts: bool) -> Result[(), Buffer!] {
     let config = read_config(&cx, root)?;
     check_config_output(&cx, config)?;
-    let source = join(&cx, root, config.input);
+    let original = join(&cx, root, config.input);
+    let source = match overlay {
+        Option::None => original,
+        Option::Some(path) => stage_overlay(&cx, root, original, path)?,
+    };
+    let result = build_source(&cx, root, config, source, include_drafts);
+    match overlay {
+        Option::None => result,
+        Option::Some(path) => match result {
+            Result::Ok(nothing) => remove_tree(&cx, source),
+            Result::Err(message) => Result::Err.(clean_after_error(&cx, source, message)),
+        },
+    }
+}
+
+forall 'k.
+fn build_source(&cx: Domain!['k], root: Span['k], config: Config['k], source: Span['k],
+    include_drafts: bool) -> Result[(), Buffer!] {
     let output = join(&cx, root, config.output);
     let site_data = read_site_data(&cx, source, config)?;
     ensure_dir(&cx, parent(&cx, output))?;

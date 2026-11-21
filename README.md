@@ -26,6 +26,9 @@ validate without replacing the output, or `bin/krayon routes my-site` to see
 planned URLs. See the [quickstart](docs/src/start.md) and
 [CLI reference](docs/src/cli.md) for details.
 
+Use `--overlay DIR` with `build`, `check`, or `routes` to merge externally
+generated source into a site for one command.
+
 ## Examples
 
 - [`examples/hello-site`](examples/hello-site) is a small independent site.
@@ -44,13 +47,12 @@ python3 scripts/build_docs.py
 ```
 
 The script runs `kursal doc`, filters its output to Krayon's libraries, adds
-the layouts and assets from `docs/api-theme`, and builds the guides and API as
-one Krayon site. Running `bin/krayon build docs` alone builds the guides with
-an API placeholder. Host `docs/dist` at `/` on a static host. To publish
-under a prefix such as `/krayon`, set `base_path = "/krayon"` in
-`docs/krayon.toml`, rerun the script, and mount `docs/dist` at that prefix.
-The documentation uses Krayon's URL helpers
-for navigation and assets.
+the layouts and assets from `docs/api-theme` to a source overlay, and builds
+the guides and API as one Krayon site. Running `bin/krayon build docs` alone
+builds the guides with an API placeholder. Host `docs/dist` at `/` on a static
+host. To publish under a prefix such as `/krayon`, set `base_path = "/krayon"`
+in `docs/krayon.toml`, rerun the script, and mount `docs/dist` at that prefix.
+The documentation uses Krayon's URL helpers for navigation and assets.
 
 ## Development
 

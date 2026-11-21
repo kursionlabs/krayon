@@ -83,6 +83,62 @@ class BuildTests(unittest.TestCase):
         self.assertEqual((self.site / "dist/index.html").read_bytes(), previous)
         self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
 
+    def test_source_overlay_merges_pages_and_preserves_output_on_failure(self):
+        overlay = Path(self.temp.name) / "generated"
+        overlay.mkdir()
+        home = overlay / "index.md"
+        home.write_text((self.site / "src/index.md").read_text().replace(
+            "# Welcome", "# Overlay home") + "\n[Generated](/generated/)\n")
+        (overlay / "generated").mkdir()
+        generated = overlay / "generated/index.md"
+        generated.write_text("# Generated page\n")
+        (overlay / "assets").mkdir()
+        (overlay / "assets/generated.txt").write_text("generated asset\n")
+
+        result = self.routes("--json", "--overlay", str(overlay))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(result.stdout)
+        self.assertIn({"source": "generated/index.md", "url": "/generated/",
+                       "output": "generated/index.html"}, manifest["pages"])
+        self.assertIn({"source": "assets/generated.txt", "url": "/assets/generated.txt",
+                       "outputs": ["assets/generated.txt"]}, manifest["assets"])
+        self.assertFalse((self.site / "dist").exists())
+
+        result = self.check("--overlay", str(overlay))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.site / "dist").exists())
+        result = self.build("--overlay", str(overlay))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Overlay home", (self.site / "dist/index.html").read_text())
+        self.assertTrue((self.site / "dist/generated/index.html").is_file())
+        self.assertEqual((self.site / "dist/assets/generated.txt").read_text(),
+                         "generated asset\n")
+        self.assertIn("# Welcome", (self.site / "src/index.md").read_text())
+        previous = (self.site / "dist/index.html").read_bytes()
+
+        generated.write_text("# Generated page\n\n[Missing](/missing/)\n")
+        result = self.build("--overlay", str(overlay))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("broken local link", result.stderr)
+        self.assertEqual((self.site / "dist/index.html").read_bytes(), previous)
+        self.assertEqual(list(self.site.glob(".krayon-overlay*")), [])
+
+        generated.write_text("# Generated page\n")
+        (overlay / "escape.md").symlink_to(self.site / "src/index.md")
+        result = self.check("--overlay", str(overlay))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("overlay source may not contain symlinks", result.stderr)
+        self.assertEqual(list(self.site.glob(".krayon-overlay*")), [])
+
+        result = self.routes("--overlay", str(self.site / "src"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("overlay must be outside input", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+        result = self.build("--overlay")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("usage:", result.stderr)
+
     def test_blog_example_builds_with_archives_drafts_and_base_path(self):
         blog = Path(self.temp.name) / "blog"
         shutil.copytree(ROOT / "examples/blog-site", blog,

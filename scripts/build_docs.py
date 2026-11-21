@@ -1,4 +1,4 @@
-"""Build the written guides and Krayon library API as one validated site."""
+"""Generate Krayon's library API and build it as a source overlay on the guides."""
 
 import argparse
 import html
@@ -8,7 +8,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-import tomllib
 from urllib.parse import urljoin, urlsplit
 
 
@@ -101,27 +100,12 @@ def prepare_api_source(api_root, packages):
 
 def add_api_layouts(site, theme_root):
     theme = theme_root / "src"
-    layouts = site / "src/_includes"
+    layouts = site / "_includes"
+    layouts.mkdir()
     for source in (theme / "_includes").glob("*.html"):
         shutil.copy2(source, layouts / source.name)
-    shutil.copytree(theme / "assets", site / "src/assets/api")
-
-
-def publish(staged, output):
-    """Prepare the complete output before replacing the published directory."""
-    with tempfile.TemporaryDirectory(prefix=".krayon-docs-", dir=output.parent) as temporary:
-        temporary = Path(temporary)
-        ready = temporary / "ready"
-        shutil.copytree(staged, ready)
-        previous = temporary / "previous"
-        if output.exists():
-            output.rename(previous)
-        try:
-            ready.rename(output)
-        except Exception:
-            if previous.exists():
-                previous.rename(output)
-            raise
+    (site / "assets").mkdir()
+    shutil.copytree(theme / "assets", site / "assets/api")
 
 
 def main():
@@ -136,32 +120,20 @@ def main():
     args = parser.parse_args()
 
     site = args.site.resolve()
-    with (site / "krayon.toml").open("rb") as config_file:
-        config = tomllib.load(config_file)
-    output_name = config.get("output", "dist")
-    output = site / output_name
     packages = {path.parent.name for path in (ROOT / "lib").glob("*/kur.toml")}
 
     with tempfile.TemporaryDirectory(prefix="krayon-docs-") as temporary:
-        staged_site = Path(temporary) / "site"
-
-        def ignore(directory, names):
-            if Path(directory) == site:
-                return [name for name in (output_name, "api-theme") if name in names]
-            return []
-
-        shutil.copytree(site, staged_site, ignore=ignore)
-        placeholder = staged_site / "src/api.md"
-        placeholder.unlink(missing_ok=True)
-        api_root = staged_site / "src/api"
+        overlay = Path(temporary) / "overlay"
+        overlay.mkdir()
+        api_root = overlay / "api"
         subprocess.run([args.kursal.resolve(), "doc", ROOT / "lib/site",
                         "-o", api_root], check=True)
         prepare_api_source(api_root, packages)
-        add_api_layouts(staged_site, site / "api-theme")
-        subprocess.run([args.krayon.resolve(), "build", staged_site], check=True)
-        publish(staged_site / output_name, output)
+        add_api_layouts(overlay, site / "api-theme")
+        subprocess.run([args.krayon.resolve(), "build", site,
+                        "--overlay", overlay], check=True)
 
-    print(f"Documentation written to {output}")
+    print(f"Documentation built for {site}")
 
 
 if __name__ == "__main__":
