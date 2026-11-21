@@ -2669,6 +2669,60 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(f"{sheet}: broken local link: /assets/image.png", result.stderr)
 
+    def test_html_base_href_resolves_relative_links_and_uses_first_base(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "guides").mkdir(parents=True)
+        (src / "assets").mkdir()
+        (self.site / "krayon.toml").write_text(
+            'base_path = "/docs"\norigin = "https://example.org"\n')
+        (src / "guides/target.md").write_text('# Part {#part}\n')
+        (src / "assets/pic.png").write_bytes(b'picture')
+        page = src / "page.html"
+        page.write_text(
+            '<a href="target/#part">Before base</a>\n'
+            '<base href="/docs/guides/">\n'
+            '<base href="/docs/ignored/">\n'
+            '<img srcset="../assets/pic.png 1x">\n'
+            '<div style="background:url(../assets/pic.png)"></div>\n'
+            '<style>.picture{background:url(../assets/pic.png)}</style>\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        previous = (self.site / "dist/page/index.html").read_bytes()
+
+        source = page.read_text()
+        page.write_text(source.replace('target/#part', 'missing/#part'))
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'{page}: broken local link: missing/#part', result.stderr)
+        self.assertEqual((self.site / "dist/page/index.html").read_bytes(), previous)
+
+        page.write_text(source.replace('/docs/guides/', '/docs/absent/', 1))
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'{page}: broken local link: target/#part', result.stderr)
+
+        page.write_text(source.replace('/docs/guides/', '../guides/', 1))
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        (src / "guides/index.md").write_text('# Base {#base}\n')
+        page.write_text('<base href="https://EXAMPLE.org/docs/guides/?q=1">'
+                        '<a href="#base">Base fragment</a>')
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        page.write_text(page.read_text().replace('#base', '#absent'))
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'{page}: broken local link: #absent', result.stderr)
+
+        page.write_text('<base href="https://elsewhere.example/">'
+                        '<a href="missing/">External</a>'
+                        '<a href="/docs/missing/">External root</a>')
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_broken_link_locations_in_html_srcset_and_css(self):
         page = self.site / "src/located-links.html"
         page.write_text('é <a href="/missing/">Missing</a>')

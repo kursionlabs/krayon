@@ -330,9 +330,10 @@ resolve; fragments targeting generated pages must match an HTML ID. Relative
 URLs, query strings, percent escapes, and `base_path` are handled. Absolute
 URLs matching `origin` are checked; other origins are ignored. A broken link
 fails the build and reports the source file, URL, line, and column. HTML
-positions refer to the generated
-HTML, since Markdown and layouts can change the source positions; copied CSS
-positions refer to the stylesheet source.
+documents use their first `<base href>` when resolving relative links,
+including fragment links, `srcset`, and inline CSS URLs. HTML positions refer
+to the generated HTML, since Markdown and layouts can change the source
+positions; copied CSS positions refer to the stylesheet source.
 
 Pages and layouts may start with TOML front matter between `+++` lines:
 

@@ -227,6 +227,7 @@ forall 'k.
 fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
     let ids = ArenaMap::new(&cx);
     let targets = ArenaVec::new(&cx);
+    var base_href = Option::None;
     let html = document.html;
     var pos = 0usize;
     var raw = 0usize;
@@ -296,6 +297,12 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
                             let raw_value = html.slice(value_start, value_end);
                             let value = html_value(&cx, raw_value);
                             if equal_ci(&cx, name, "id") { ids.insert(&cx, value, true); }
+                            else if equal_ci(&cx, tag, "base") && equal_ci(&cx, name, "href") {
+                                match base_href {
+                                    Option::Some(_) => (),
+                                    Option::None => { base_href = Option::Some.(value.trim(&cx)); },
+                                }
+                            }
                             else if equal_ci(&cx, name, "href") || equal_ci(&cx, name, "src") {
                                 targets.push(&cx, LinkTarget.{ value, offset: value_start, raw_len: 0usize,
                                     bases: Option::None });
@@ -310,6 +317,22 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
         }
     }
     if raw == 2usize { scan_css(&cx, html.slice(raw_start, html.len()), raw_start, false, targets); }
+    let targets = match base_href {
+        Option::None => targets,
+        Option::Some(base) => {
+            let bases = ArenaVec::new(&cx);
+            bases.push(&cx, base);
+            let scoped = ArenaVec::new(&cx);
+            var i = 0usize;
+            while i < targets.len(&cx) {
+                let target = targets.at(&cx, i);
+                scoped.push(&cx, LinkTarget.{ value: target.value, offset: target.offset,
+                    raw_len: target.raw_len, bases: Option::Some.(bases) });
+                i = i + 1usize;
+            }
+            scoped
+        },
+    };
     Parsed.{ source: document.source, output: document.output, url: document.url,
         text: html, generated: true, xml: false, ids, targets }
 }
