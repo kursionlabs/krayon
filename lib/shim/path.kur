@@ -6,12 +6,13 @@ use std::arena::Domain!;
 use std::buffer::Buffer!;
 use std::raw::Span;
 
-/// Join two path fragments with one separator unless `left` already ends
-/// with `/`. Empty fragments return the other fragment unchanged. A leading
-/// `/` in `right` is retained; this function does not replace `left` with it.
+/// Join two path fragments. An absolute `right` replaces `left`. Otherwise,
+/// insert `/` unless `left` already ends with it. Empty fragments return the
+/// other fragment unchanged. This does not normalize `.` or `..`.
 forall 'k.
 fn join(&cx: Domain!['k], left: Span['k], right: Span['k]) -> Span['k] {
     if right.is_empty() { return left; }
+    if right.byte_or_zero(&cx, 0usize) == b'/' { return right; }
     if left.is_empty() { return right; }
     let separator = if left.byte_or_zero(&cx, left.len() - 1usize) == b'/' { "" } else { "/" };
     Buffer!::new().push_bytes(&cx, left).push_static(separator).push_bytes(&cx, right).save(&cx)

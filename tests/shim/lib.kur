@@ -20,6 +20,12 @@ fn check(&cx: Domain!['k], root: Span['k]) -> i32 {
     if !join(&cx, Span::from_static(&cx, "a/"), Span::from_static(&cx, "b")).is(&cx, "a/b") {
         return 3i32;
     }
+    if !join(&cx, Span::from_static(&cx, "a"), Span::from_static(&cx, "/b")).is(&cx, "/b")
+        || !join(&cx, Span::from_static(&cx, "/"), Span::from_static(&cx, "/b")).is(&cx, "/b")
+        || !join(&cx, Span::from_static(&cx, "a"), Span::from_static(&cx, "")).is(&cx, "a")
+        || !join(&cx, Span::from_static(&cx, ""), Span::from_static(&cx, "b")).is(&cx, "b") {
+        return 12i32;
+    }
     let nested = join(&cx, root, Span::from_static(&cx, "nested/one/two"));
     if !create_dir_all(&cx, nested).is_ok() || !create_dir_all(&cx, nested).is_ok() { return 4i32; }
     let through_link = join(&cx, root, Span::from_static(&cx, "link/child"));
