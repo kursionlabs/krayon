@@ -408,6 +408,68 @@ fn sitemap_root(&cx: Domain!['k], tag: Span['k]) -> bool {
         || tag.ends_with(&cx, Span::from_static(&cx, ":sitemapindex"))
 }
 
+forall 'k.
+fn xml_name(&cx: Domain!['k], tag: Span['k], namespace: Span['k], local: Slice[u8, 'static]) -> bool {
+    if namespace.is_empty() { tag.is(&cx, local) }
+    else { tag.eq(&cx, Buffer!::new().push_bytes(&cx, namespace).push_byte(b':').push_static(local).save(&cx)) }
+}
+
+forall 'k.
+fn attribute_text(&cx: Domain!['k], raw: Span['k]) -> Result[Span['k], Error] {
+    var out = Buffer!::new();
+    var i = 0usize;
+    while i < raw.len() {
+        if byte(&cx, raw, i) == b'&' {
+            let next = match reference(&cx, raw, i) {
+                Result::Ok(next) => next,
+                Result::Err(error) => { out.destroy(); return Result::Err.(error); },
+            };
+            out = append_reference(&cx, out, raw, i, next);
+            i = next;
+        } else {
+            let start = i;
+            while i < raw.len() && byte(&cx, raw, i) != b'&' { i = i + 1usize; }
+            out = out.push_bytes(&cx, raw.slice(start, i));
+        }
+    }
+    Result::Ok.(out.save(&cx))
+}
+
+forall 'k.
+fn named_attribute(&cx: Domain!['k], text: Span['k], tag_start: usize, wanted: Span['k])
+    -> Result[Option[Location['k]], Error] {
+    let (_, after) = name(&cx, text, tag_start + 1usize)?;
+    var i = after;
+    var done = false;
+    while i < text.len() && !done {
+        i = skip_space(&cx, text, i);
+        if byte(&cx, text, i) == b'>' || byte(&cx, text, i) == b'/' { done = true; }
+        else {
+            let (attribute, next) = name(&cx, text, i)?;
+            i = skip_space(&cx, text, next);
+            i = skip_space(&cx, text, i + 1usize);
+            let start = i + 1usize;
+            i = quoted(&cx, text, i)?;
+            if attribute.eq(&cx, wanted) {
+                let value = attribute_text(&cx, text.slice(start, i - 1usize))?;
+                return Result::Ok.(Option::Some.(Location.{ value, offset: start }));
+            }
+        }
+    }
+    Result::Ok.(Option::None)
+}
+
+forall 'k.
+fn atom_namespace(&cx: Domain!['k], text: Span['k], tag_start: usize, namespace: Span['k])
+    -> Result[bool, Error] {
+    let attribute = if namespace.is_empty() { Span::from_static(&cx, "xmlns") }
+        else { Buffer!::new().push_static("xmlns:").push_bytes(&cx, namespace).save(&cx) };
+    match named_attribute(&cx, text, tag_start, attribute)? {
+        Option::Some(found) => Result::Ok.(found.value.is(&cx, "http://www.w3.org/2005/Atom")),
+        Option::None => Result::Ok.(false),
+    }
+}
+
 // Called after validate, so all XML tokens and references are well formed.
 forall 'k.
 fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 'k], Error] {
@@ -420,6 +482,11 @@ fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 
     var active = false;
     var root_seen = false;
     var sitemap = false;
+    var atom = false;
+    var rss = false;
+    var namespace = Span::from_static(&cx, "");
+    let open = ArenaVec::new(&cx);
+    var active_tag = Span::from_static(&cx, "");
     var depth = 0usize;
     var parts = ArenaVec::new(&cx);
     var offset = 0usize;
@@ -465,7 +532,7 @@ fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 
         } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "</")) {
             let (tag, next) = end_tag(&cx, text, i)?;
             if active {
-                if depth == 0usize && loc_name(&cx, tag) {
+                if depth == 0usize && tag.eq(&cx, active_tag) {
                     var value = Buffer!::new();
                     var part = 0usize;
                     while part < parts.len(&cx) {
@@ -481,17 +548,48 @@ fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 
                     active = false;
                 } else if depth > 0usize { depth = depth - 1usize; }
             }
+            let _ = open.pop(&cx);
             i = next;
         } else {
             let (tag, next, empty) = start_tag(&cx, text, i)?;
-            if !root_seen { root_seen = true; sitemap = sitemap_root(&cx, tag); }
+            if !root_seen {
+                root_seen = true;
+                sitemap = sitemap_root(&cx, tag);
+                let colon = match tag.find_byte(&cx, b':', 0usize) {
+                    Option::Some(at) => at,
+                    Option::None => tag.len(),
+                };
+                if colon < tag.len() { namespace = tag.slice(0usize, colon); }
+                atom = xml_name(&cx, tag, namespace, "feed")
+                    && atom_namespace(&cx, text, i, namespace)?;
+                rss = tag.is(&cx, "rss");
+            }
+            if atom && xml_name(&cx, tag, namespace, "link") &&
+                ((open.len(&cx) == 1usize && xml_name(&cx, open.at(&cx, 0usize), namespace, "feed")) ||
+                 (open.len(&cx) == 2usize && xml_name(&cx, open.at(&cx, 1usize), namespace, "entry"))) {
+                match named_attribute(&cx, text, i, Span::from_static(&cx, "href"))? {
+                    Option::Some(location) => found.push(&cx, location),
+                    Option::None => (),
+                }
+            }
             if active { if !empty { depth = depth + 1usize; } }
             else if sitemap && !empty && loc_name(&cx, tag) {
                 active = true;
+                active_tag = tag;
+                parts = ArenaVec::new(&cx);
+                offset = next;
+                have_offset = false;
+            } else if rss && !empty && tag.is(&cx, "link") &&
+                ((open.len(&cx) == 2usize && open.at(&cx, 1usize).is(&cx, "channel")) ||
+                 (open.len(&cx) == 3usize && open.at(&cx, 1usize).is(&cx, "channel") &&
+                    open.at(&cx, 2usize).is(&cx, "item"))) {
+                active = true;
+                active_tag = tag;
                 parts = ArenaVec::new(&cx);
                 offset = next;
                 have_offset = false;
             }
+            if !empty { open.push(&cx, tag); }
             i = next;
         }
     }

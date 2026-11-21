@@ -1680,6 +1680,67 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(f'{index}: broken local link: /docs/absent.xml', result.stderr)
 
+    def test_generated_atom_and_rss_links_use_local_link_checks(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        src.mkdir()
+        (self.site / "krayon.toml").write_text(
+            'base_path = "/docs"\norigin = "https://example.org:8443"\n')
+        (src / "index.md").write_text('# Home\n')
+        (src / "article.md").write_text('# Part {#part}\n')
+        (src / "data.xml").write_text('<root><link href="/docs/ignored/">data</link></root>')
+        (src / "other-feed.xml").write_text(
+            '<feed xmlns="urn:other"><link href="/docs/ignored/"/></feed>')
+        atom = src / "atom.xml"
+        atom.write_text(
+            '<feed xmlns="http://www.w3.org/2005/Atom">\n'
+            '<link rel="self" href="/docs/atom.xml"/>\n'
+            '<entry><link href="https://example.org:8443/docs/article/?a=1&amp;b=2#part"/></entry>\n'
+            '<entry><link href="article/#part"/></entry>\n'
+            '<entry><link href="https://other.example/missing/"/></entry>\n'
+            '</feed>\n')
+        prefixed = src / "prefixed.xml"
+        prefixed.write_text(
+            '<a:feed xmlns:a="http://www.w3.org/2005/Atom">'
+            '<a:link href="/docs/article/"/>'
+            '<x:link xmlns:x="urn:custom" href="/docs/ignored/"/>'
+            '</a:feed>')
+        rss = src / "rss.xml"
+        rss.write_text(
+            '<rss version="2.0" xmlns:x="urn:custom"><channel>\n'
+            '<link>https://example.org:8443/docs/</link>\n'
+            '<item><link><![CDATA[/docs/article/#part]]></link></item>\n'
+            '<item><link>article/#part</link></item>\n'
+            '<image><link>/docs/ignored/</link></image>\n'
+            '<item><x:link>/docs/ignored/</x:link></item>\n'
+            '</channel></rss>')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        previous_atom = (self.site / "dist/atom.xml").read_bytes()
+        previous_rss = (self.site / "dist/rss.xml").read_bytes()
+
+        atom.write_text(atom.read_text().replace('/docs/article/?a=1&amp;b=2#part',
+                                                 '/docs/missing/?a=1&amp;b=2'))
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'{atom}: broken local link: https://example.org:8443/docs/missing/?a=1&b=2',
+                      result.stderr)
+        self.assertIn('generated XML line 3', result.stderr)
+        self.assertEqual((self.site / "dist/atom.xml").read_bytes(), previous_atom)
+        atom.write_bytes(previous_atom)
+
+        rss.write_text(rss.read_text().replace('/docs/article/#part', '/docs/article/#absent'))
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'{rss}: broken local link: /docs/article/#absent', result.stderr)
+        self.assertEqual((self.site / "dist/rss.xml").read_bytes(), previous_rss)
+        rss.write_bytes(previous_rss)
+
+        prefixed.write_text(prefixed.read_text().replace('/docs/article/', '/docs/absent/'))
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'{prefixed}: broken local link: /docs/absent/', result.stderr)
+
     def test_generated_xml_is_validated_before_output_install(self):
         template = self.site / "src/feed.xml"
         template.write_text('<?xml version="1.0" encoding="UTF-8"?>\n'

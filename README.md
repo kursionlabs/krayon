@@ -317,13 +317,14 @@ declarations and other encodings are unsupported. For JSON arrays, loops expose
 
 `collections.pages` contains rendered HTML and Markdown pages; output files
 such as `sitemap.xml` are excluded. HTML link checks accept links to these
-files. In generated XML sitemaps (`urlset` and `sitemapindex`), local URLs in
-`loc` elements are checked too. References in other XML, JSON, and text files
-are not scanned.
+files. In generated XML, Krayon also checks sitemap `loc` elements, `link`
+`href` attributes in feeds using the Atom namespace, and RSS channel and item
+`link` text. Other XML fields and references in JSON and text files are not
+scanned.
 
 Before installing the output, Krayon checks local `href`, `src`, and `srcset`
 values in generated HTML, plus CSS `url()` references in inline styles and
-copied `.css` assets, and sitemap `loc` values. Page links and copied assets must
+copied `.css` assets, and the XML link fields above. Page links and copied assets must
 resolve; fragments targeting generated pages must match an HTML ID. Relative
 URLs, query strings, percent escapes, and `base_path` are handled. Absolute
 URLs matching `origin` are checked; other origins are ignored. A broken link
