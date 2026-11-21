@@ -2708,6 +2708,46 @@ class BuildTests(unittest.TestCase):
         self.assertEqual((self.site / "dist/index.html").read_bytes(), previous)
         self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
 
+    def test_duplicate_generated_html_ids_report_every_repeat(self):
+        self.assertEqual(self.build().returncode, 0)
+        previous = (self.site / "dist/index.html").read_bytes()
+        page = self.site / "src/duplicate.html"
+        page.write_text('é <div id="a&amp;b"></div>\n'
+                        "<span ID='a&b'></span>\n"
+                        '<a id="a&b" href="/missing/">Broken</a>\n')
+        for command in (self.check, self.build):
+            result = command()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stderr.count("duplicate HTML ID: a&b"), 2)
+            self.assertIn("generated HTML /duplicate/ line 2, column 11; "
+                          "first at line 1, column 12", result.stderr)
+            self.assertIn("generated HTML /duplicate/ line 3", result.stderr)
+            self.assertIn("broken local link: /missing/", result.stderr)
+            self.assertEqual((self.site / "dist/index.html").read_bytes(), previous)
+            self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
+
+        page.write_text('<div id="shared"></div><div id="Shared"></div>')
+        (self.site / "src/other.html").write_text('<div id="shared"></div>')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_layout_and_markdown_raw_html_ids_collide_with_heading(self):
+        home = self.site / "src/index.md"
+        layout = self.site / "src/_includes/base.html"
+        original_layout = layout.read_text()
+        layout.write_text(original_layout.replace("<main>", '<main><div id="welcome"></div>', 1))
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{home}: duplicate HTML ID: welcome "
+                      "(generated HTML / line", result.stderr)
+
+        layout.write_text(original_layout)
+        home.write_text(home.read_text() + '\n<div id="welcome"></div>\n')
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{home}: duplicate HTML ID: welcome "
+                      "(generated HTML / line", result.stderr)
+
     def test_broken_asset_and_fragment_links(self):
         layout = self.site / "src/_includes/base.html"
         layout.write_text(layout.read_text().replace("/assets/css/site.css",

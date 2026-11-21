@@ -340,6 +340,9 @@ line, and column. HTML documents use their first `<base href>` when resolving
 relative links, including fragments, `srcset`, and inline CSS URLs. HTML
 positions refer to generated HTML, since Markdown and layouts can change
 source positions; copied CSS positions refer to the stylesheet source.
+Krayon also reports duplicate IDs in generated HTML, including IDs from
+layouts, raw HTML, and Markdown headings. Diagnostics show both occurrences
+in the generated page. Duplicate IDs and broken links are reported together.
 
 Pages and layouts may start with TOML front matter between `+++` lines:
 

@@ -40,8 +40,16 @@ struct Parsed {
     text: Span['k],
     generated: bool,
     xml: bool,
-    ids: ArenaMap[Span['k], bool, 'k],
+    ids: ArenaMap[Span['k], usize, 'k],
+    duplicate_ids: ArenaVec[DuplicateId['k], 'k],
     targets: ArenaVec[LinkTarget['k], 'k],
+}
+
+forall 'k.
+struct DuplicateId {
+    value: Span['k],
+    offset: usize,
+    first_offset: usize,
 }
 
 forall 'k.
@@ -249,19 +257,20 @@ fn scan_stylesheet(&cx: Domain!['k], sheet: Stylesheet['k]) -> Parsed['k] {
     scan_css(&cx, sheet.css, 0usize, false, targets);
     Parsed.{ source: sheet.source, output: sheet.output, url: sheet.url,
         text: sheet.css, generated: false, xml: false,
-        ids: ArenaMap::new(&cx), targets }
+        ids: ArenaMap::new(&cx), duplicate_ids: ArenaVec::new(&cx), targets }
 }
 
 forall 'k.
 fn scan_xml(&cx: Domain!['k], document: XmlDocument['k]) -> Parsed['k] {
     Parsed.{ source: document.source, output: document.output, url: document.url,
         text: document.xml, generated: true, xml: true,
-        ids: ArenaMap::new(&cx), targets: document.targets }
+        ids: ArenaMap::new(&cx), duplicate_ids: ArenaVec::new(&cx), targets: document.targets }
 }
 
 forall 'k.
 fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
     let ids = ArenaMap::new(&cx);
+    let duplicate_ids = ArenaVec::new(&cx);
     let targets = ArenaVec::new(&cx);
     var base_href = Option::None;
     let html = document.html;
@@ -332,7 +341,13 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
                             }
                             let raw_value = html.slice(value_start, value_end);
                             let value = html_value(&cx, raw_value);
-                            if equal_ci(&cx, name, "id") { ids.insert(&cx, value, true); }
+                            if equal_ci(&cx, name, "id") {
+                                match ids.get(&cx, value) {
+                                    Option::Some(first_offset) => duplicate_ids.push(&cx,
+                                        DuplicateId.{ value, offset: value_start, first_offset }),
+                                    Option::None => { ids.insert(&cx, value, value_start); },
+                                }
+                            }
                             else if equal_ci(&cx, tag, "base") && equal_ci(&cx, name, "href") {
                                 match base_href {
                                     Option::Some(_) => (),
@@ -370,7 +385,7 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
         },
     };
     Parsed.{ source: document.source, output: document.output, url: document.url,
-        text: html, generated: true, xml: false, ids, targets }
+        text: html, generated: true, xml: false, ids, duplicate_ids, targets }
 }
 
 fn hex(c: u8) -> u8 {
@@ -775,6 +790,18 @@ fn broken(&cx: Domain!['k], page: Parsed['k], target: LinkTarget['k]) -> Buffer!
 }
 
 forall 'k.
+fn duplicate_id(&cx: Domain!['k], page: Parsed['k], duplicate: DuplicateId['k]) -> Buffer! {
+    let (line, column) = location(&cx, page.text, duplicate.offset);
+    let (first_line, first_column) = location(&cx, page.text, duplicate.first_offset);
+    Buffer!::new().push_static("krayon: ").push_bytes(&cx, page.source)
+        .push_static(": duplicate HTML ID: ").push_bytes(&cx, duplicate.value)
+        .push_static(" (generated HTML ").push_bytes(&cx, page.url).push_static(" line ")
+        .push_usize(line).push_static(", column ").push_usize(column)
+        .push_static("; first at line ").push_usize(first_line)
+        .push_static(", column ").push_usize(first_column).push_static(")\n")
+}
+
+forall 'k.
 fn invalid_link(&cx: Domain!['k], page: Parsed['k], link: LinkTarget['k],
     pages: ArenaVec[Parsed['k], 'k], outputs: ArenaMap[Span['k], Span['k], 'k],
     root: Span['k], base_path: Span['k], origin: Span['k]) -> bool {
@@ -850,6 +877,12 @@ fn validate(&cx: Domain!['k], documents: ArenaVec[Document['k], 'k], stylesheets
     while i < pages.len(&cx) {
         let page = pages.at(&cx, i);
         var j = 0usize;
+        while j < page.duplicate_ids.len(&cx) {
+            errors = errors.push_buffer(duplicate_id(&cx, page, page.duplicate_ids.at(&cx, j)));
+            count = count + 1usize;
+            j = j + 1usize;
+        }
+        j = 0usize;
         while j < page.targets.len(&cx) {
             let link = page.targets.at(&cx, j);
             if invalid_link(&cx, page, link, pages, outputs, root, base_path, origin) {
