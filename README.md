@@ -95,7 +95,8 @@ Set `origin` to the site's HTTP or HTTPS origin, such as
 `"https://example.org"`, when templates need absolute URLs. It accepts an
 optional port and trailing slash, stores the origin without the trailing
 slash, and exposes it as `site.origin`. The default empty origin disables
-`| absolute_url`.
+`| absolute_url`. With `origin` set, links using that configured origin are checked
+as local links, including absolute URLs emitted by `| absolute_url`.
 
 A site can contain Markdown (`.md`), HTML (`.html`), XML (`.xml`), JSON
 (`.json`), and text (`.txt`) templates anywhere under `input`. Krayon copies
@@ -324,9 +325,10 @@ Before installing the output, Krayon checks local `href`, `src`, and `srcset`
 values in generated HTML, plus CSS `url()` references in inline styles and
 copied `.css` assets, and sitemap `loc` values. Page links and copied assets must
 resolve; fragments targeting generated pages must match an HTML ID. Relative
-URLs, query strings, percent escapes, and `base_path` are handled;
-external URLs are ignored. A broken link fails the build and reports the
-source file, URL, line, and column. HTML positions refer to the generated
+URLs, query strings, percent escapes, and `base_path` are handled. Absolute
+URLs matching `origin` are checked; other origins are ignored. A broken link
+fails the build and reports the source file, URL, line, and column. HTML
+positions refer to the generated
 HTML, since Markdown and layouts can change the source positions; copied CSS
 positions refer to the stylesheet source.
 

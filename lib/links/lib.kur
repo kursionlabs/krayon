@@ -412,6 +412,20 @@ fn external(&cx: Domain!['k], target: Span['k]) -> bool {
 }
 
 forall 'k.
+fn site_target(&cx: Domain!['k], target: Span['k], origin: Span['k]) -> Span['k] {
+    if origin.is_empty() || target.len() < origin.len() { return target; }
+    var i = 0usize;
+    while i < origin.len() {
+        if lower(at(&cx, target, i)) != lower(at(&cx, origin, i)) { return target; }
+        i = i + 1usize;
+    }
+    let next = at(&cx, target, i);
+    if i < target.len() && next != b'/' && next != b'?' && next != b'#' { return target; }
+    if next == b'/' { return target.slice(i, target.len()); }
+    Buffer!::new().push_static("/").push_bytes(&cx, target.slice(i, target.len())).save(&cx)
+}
+
+forall 'k.
 fn parent(&cx: Domain!['k], path: Span['k]) -> Span['k] {
     var i = path.len();
     while i > 0usize {
@@ -582,7 +596,7 @@ fn broken(&cx: Domain!['k], page: Parsed['k], target: LinkTarget['k]) -> Buffer!
 forall 'k.
 fn validate(&cx: Domain!['k], documents: ArenaVec[Document['k], 'k], stylesheets: ArenaVec[Stylesheet['k], 'k],
     xml_documents: ArenaVec[XmlDocument['k], 'k],
-    outputs: ArenaMap[Span['k], Span['k], 'k], root: Span['k], base_path: Span['k]) -> Result[(), Buffer!] {
+    outputs: ArenaMap[Span['k], Span['k], 'k], root: Span['k], base_path: Span['k], origin: Span['k]) -> Result[(), Buffer!] {
     let pages: ArenaVec[Parsed['k], 'k] = ArenaVec::new(&cx);
     var i = 0usize;
     while i < documents.len(&cx) {
@@ -606,17 +620,18 @@ fn validate(&cx: Domain!['k], documents: ArenaVec[Document['k], 'k], stylesheets
         while j < page.targets.len(&cx) {
             let link = page.targets.at(&cx, j);
             let target = link.value;
-            if !external(&cx, target) {
-                let hash = match target.find_byte(&cx, b'#', 0usize) {
+            let local_target = site_target(&cx, target, origin);
+            if !local_target.eq(&cx, target) || !external(&cx, local_target) {
+                let hash = match local_target.find_byte(&cx, b'#', 0usize) {
                     Option::Some(at_pos) => at_pos,
-                    Option::None => target.len(),
+                    Option::None => local_target.len(),
                 };
-                let query = match target.find_byte(&cx, b'?', 0usize) {
+                let query = match local_target.find_byte(&cx, b'?', 0usize) {
                     Option::Some(at_pos) => if at_pos < hash { at_pos } else { hash },
                     Option::None => hash,
                 };
-                let original_path = target.slice(0usize, query);
-                let fragment = if hash < target.len() { decoded(&cx, target.slice(hash + 1usize, target.len())) }
+                let original_path = local_target.slice(0usize, query);
+                let fragment = if hash < local_target.len() { decoded(&cx, local_target.slice(hash + 1usize, local_target.len())) }
                     else { lit(&cx, "") };
                 var path = original_path;
                 if path.is_empty() { path = page.url; }

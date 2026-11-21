@@ -2155,6 +2155,49 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("unsafe base_path", result.stderr)
 
+    def test_same_origin_absolute_links_are_checked(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        src.mkdir()
+        (self.site / "krayon.toml").write_text(
+            'base_path = "/docs"\norigin = "https://example.org:8443"\n')
+        (src / "index.md").write_text('# Home {#home}\n')
+        (src / "guide.md").write_text('# Part {#part}\n')
+        html = src / "links.html"
+        html.write_text(
+            '<a href="https://EXAMPLE.org:8443/docs/guide/?q=1#part">Guide</a>'
+            '<a href="https://example.org:8443/docs?x=1#home">Home</a>'
+            '<a href="https://example.org:8444/docs/missing/">Other port</a>'
+            '<a href="https://example.org.evil/docs/missing/">Other host</a>'
+            '<a href="//example.org:8443/docs/missing/">Protocol relative</a>')
+        sitemap = src / "sitemap.xml"
+        sitemap.write_text(
+            '<urlset><url><loc>https://example.org:8443/docs/guide/</loc></url>'
+            '<url><loc>https://elsewhere.example/missing/</loc></url></urlset>')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        previous = (self.site / 'dist/sitemap.xml').read_bytes()
+
+        sitemap.write_text(sitemap.read_text().replace('/docs/guide/', '/docs/absent/'))
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'{sitemap}: broken local link: https://example.org:8443/docs/absent/',
+                      result.stderr)
+        self.assertEqual((self.site / 'dist/sitemap.xml').read_bytes(), previous)
+
+        sitemap.write_text(sitemap.read_text().replace('/docs/absent/', '//absent/'))
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('broken local link: https://example.org:8443//absent/', result.stderr)
+
+        sitemap.write_bytes(previous)
+        html.write_text(html.read_text().replace('/docs/guide/?q=1#part',
+                                                '/docs/guide/#absent'))
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'{html}: broken local link: https://EXAMPLE.org:8443/docs/guide/#absent',
+                      result.stderr)
+
     def test_absolute_url_filter_uses_origin_and_base_path(self):
         shutil.rmtree(self.site / "src")
         src = self.site / "src"
@@ -2186,6 +2229,17 @@ class BuildTests(unittest.TestCase):
                          'https://example.org:8443/docs/guide/?a=1&b=2')
         self.assertEqual(json.loads((self.site / "dist/feed.json").read_text()),
                          {"guide": "https://example.org:8443/docs/guide/"})
+
+        sitemap = src / "sitemap.xml"
+        sitemap_source = sitemap.read_text()
+        previous_sitemap = (self.site / "dist/sitemap.xml").read_bytes()
+        sitemap.write_text(sitemap_source.replace('/guide/?a=1&b=2', '/missing/?a=1&b=2'))
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('broken local link: https://example.org:8443/docs/missing/?a=1&b=2',
+                      result.stderr)
+        self.assertEqual((self.site / "dist/sitemap.xml").read_bytes(), previous_sitemap)
+        sitemap.write_text(sitemap_source)
 
         previous = (self.site / "dist/index.html").read_bytes()
         (self.site / "krayon.toml").write_text('base_path = "/docs"\n')

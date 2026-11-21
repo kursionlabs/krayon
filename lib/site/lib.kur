@@ -45,6 +45,7 @@ struct Build {
     asset_urls: ArenaMap[Span['k], Span['k], 'k],
     data_dir: Span['k],
     base_path: Span['k],
+    origin: Span['k],
     include_drafts: bool,
     exclude: ArenaVec[Span['k], 'k],
     site_data: ArenaMap[Span['k], TomlValue['k], 'k],
@@ -2085,7 +2086,8 @@ fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
         }
         i = i + 1usize;
     }
-    validate(&cx, documents, build.stylesheets, xml_documents, build.written, build.output, build.base_path)?;
+    validate(&cx, documents, build.stylesheets, xml_documents, build.written, build.output,
+        build.base_path, build.origin)?;
     Result::Ok.(())
 }
 
@@ -2136,7 +2138,7 @@ fn new_build(&cx: Domain!['k], root: Span['k], config: Config['k], source: Span[
     output: Span['k], include_drafts: bool, site_data: ArenaMap[Span['k], TomlValue['k], 'k]) -> Build['k] {
     Build.{ source, output, layouts: join(&cx, source, config.layouts), layouts_rel: config.layouts,
         assets: config.assets, fingerprint_assets: config.fingerprint_assets, asset_urls: ArenaMap::new(&cx),
-        data_dir: parent(&cx, config.data), base_path: config.base_path,
+        data_dir: parent(&cx, config.data), base_path: config.base_path, origin: config.origin,
         include_drafts, exclude: config.exclude,
         site_data, definitions: config.definitions, config_file: join(&cx, root, lit(&cx, "krayon.toml")),
         collections: ArenaMap::new(&cx), navigation: ArenaMap::new(&cx),
