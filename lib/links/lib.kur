@@ -739,6 +739,56 @@ fn broken(&cx: Domain!['k], page: Parsed['k], target: LinkTarget['k]) -> Buffer!
 }
 
 forall 'k.
+fn invalid_link(&cx: Domain!['k], page: Parsed['k], link: LinkTarget['k],
+    pages: ArenaVec[Parsed['k], 'k], outputs: ArenaMap[Span['k], Span['k], 'k],
+    root: Span['k], base_path: Span['k], origin: Span['k]) -> bool {
+    let target = match link.bases {
+        Option::Some(bases) => scoped_target(&cx, page.url, base_path, origin, bases, link.value),
+        Option::None => link.value,
+    };
+    let local_target = site_target(&cx, target, origin);
+    if local_target.eq(&cx, target) && external(&cx, local_target) { return false; }
+    let hash = match local_target.find_byte(&cx, b'#', 0usize) {
+        Option::Some(at_pos) => at_pos,
+        Option::None => local_target.len(),
+    };
+    let query = match local_target.find_byte(&cx, b'?', 0usize) {
+        Option::Some(at_pos) => if at_pos < hash { at_pos } else { hash },
+        Option::None => hash,
+    };
+    let original_path = local_target.slice(0usize, query);
+    let fragment = if hash < local_target.len() { decoded(&cx, local_target.slice(hash + 1usize, local_target.len())) }
+        else { lit(&cx, "") };
+    var path = original_path;
+    if path.is_empty() { path = page.url; }
+    else if at(&cx, path, 0usize) == b'/' {
+        if !base_path.is_empty() {
+            if path.eq(&cx, base_path) { path = lit(&cx, "/"); }
+            else if path.starts_with(&cx, base_path) && at(&cx, path, base_path.len()) == b'/' {
+                path = path.slice(base_path.len(), path.len());
+            } else { return true; }
+        }
+    } else {
+        path = Buffer!::new().push_bytes(&cx, parent(&cx, page.url)).push_bytes(&cx, path).save(&cx);
+    }
+    let path = match normalized(&cx, decoded(&cx, path)) {
+        Option::Some(found) => found,
+        Option::None => return true,
+    };
+    let output = output_path(&cx, root, path);
+    if !outputs.contains(&cx, output) { return true; }
+    if !fragment.is_empty() && output.ends_with(&cx, lit(&cx, ".html")) {
+        var k = 0usize;
+        while k < pages.len(&cx) {
+            let candidate = pages.at(&cx, k);
+            if candidate.output.eq(&cx, output) { return !candidate.ids.contains(&cx, fragment); }
+            k = k + 1usize;
+        }
+    }
+    false
+}
+
+forall 'k.
 fn validate(&cx: Domain!['k], documents: ArenaVec[Document['k], 'k], stylesheets: ArenaVec[Stylesheet['k], 'k],
     xml_documents: ArenaVec[XmlDocument['k], 'k],
     outputs: ArenaMap[Span['k], Span['k], 'k], root: Span['k], base_path: Span['k], origin: Span['k]) -> Result[(), Buffer!] {
@@ -758,65 +808,22 @@ fn validate(&cx: Domain!['k], documents: ArenaVec[Document['k], 'k], stylesheets
         pages.push(&cx, scan_xml(&cx, xml_documents.at(&cx, i)));
         i = i + 1usize;
     }
+    var errors = Buffer!::new();
+    var count = 0usize;
     i = 0usize;
     while i < pages.len(&cx) {
         let page = pages.at(&cx, i);
         var j = 0usize;
         while j < page.targets.len(&cx) {
             let link = page.targets.at(&cx, j);
-            let target = match link.bases {
-                Option::Some(bases) => scoped_target(&cx, page.url, base_path, origin, bases, link.value),
-                Option::None => link.value,
-            };
-            let local_target = site_target(&cx, target, origin);
-            if !local_target.eq(&cx, target) || !external(&cx, local_target) {
-                let hash = match local_target.find_byte(&cx, b'#', 0usize) {
-                    Option::Some(at_pos) => at_pos,
-                    Option::None => local_target.len(),
-                };
-                let query = match local_target.find_byte(&cx, b'?', 0usize) {
-                    Option::Some(at_pos) => if at_pos < hash { at_pos } else { hash },
-                    Option::None => hash,
-                };
-                let original_path = local_target.slice(0usize, query);
-                let fragment = if hash < local_target.len() { decoded(&cx, local_target.slice(hash + 1usize, local_target.len())) }
-                    else { lit(&cx, "") };
-                var path = original_path;
-                if path.is_empty() { path = page.url; }
-                else if at(&cx, path, 0usize) == b'/' {
-                    if !base_path.is_empty() {
-                        if path.eq(&cx, base_path) { path = lit(&cx, "/"); }
-                        else if path.starts_with(&cx, base_path) && at(&cx, path, base_path.len()) == b'/' {
-                            path = path.slice(base_path.len(), path.len());
-                        } else { return Result::Err.(broken(&cx, page, link)); }
-                    }
-                } else {
-                    path = Buffer!::new().push_bytes(&cx, parent(&cx, page.url)).push_bytes(&cx, path).save(&cx);
-                }
-                let path = match normalized(&cx, decoded(&cx, path)) {
-                    Option::Some(found) => found,
-                    Option::None => return Result::Err.(broken(&cx, page, link)),
-                };
-                let output = output_path(&cx, root, path);
-                if !outputs.contains(&cx, output) { return Result::Err.(broken(&cx, page, link)); }
-                if !fragment.is_empty() && output.ends_with(&cx, lit(&cx, ".html")) {
-                    var found = false;
-                    var generated_page = false;
-                    var k = 0usize;
-                    while k < pages.len(&cx) {
-                        let candidate = pages.at(&cx, k);
-                        if candidate.output.eq(&cx, output) {
-                            generated_page = true;
-                            found = candidate.ids.contains(&cx, fragment);
-                            k = pages.len(&cx);
-                        } else { k = k + 1usize; }
-                    }
-                    if generated_page && !found { return Result::Err.(broken(&cx, page, link)); }
-                }
+            if invalid_link(&cx, page, link, pages, outputs, root, base_path, origin) {
+                errors = errors.push_buffer(broken(&cx, page, link));
+                count = count + 1usize;
             }
             j = j + 1usize;
         }
         i = i + 1usize;
     }
-    Result::Ok.(())
+    if count > 0usize { Result::Err.(errors) }
+    else { errors.destroy(); Result::Ok.(()) }
 }

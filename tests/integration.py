@@ -2723,6 +2723,45 @@ class BuildTests(unittest.TestCase):
         result = self.check()
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_build_and_check_report_all_broken_links_without_replacing_output(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "assets").mkdir(parents=True)
+        (self.site / "krayon.toml").write_text(
+            'base_path = "/docs"\norigin = "https://example.org"\n')
+        (src / "guide.md").write_text('# Part {#part}\n')
+        page = src / "links.html"
+        page.write_text('<a href="/docs/guide/#part">Guide</a>')
+        sheet = src / "assets/site.css"
+        sheet.write_text('.x { color: red }')
+        sitemap = src / "sitemap.xml"
+        sitemap.write_text('<urlset><url><loc>/docs/guide/</loc></url></urlset>')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        previous_page = (self.site / "dist/links/index.html").read_bytes()
+        previous_sheet = (self.site / "dist/assets/site.css").read_bytes()
+        previous_sitemap = (self.site / "dist/sitemap.xml").read_bytes()
+
+        page.write_text(
+            '<a href="/docs/missing-one/">One</a>\n'
+            '<a href="https://example.org/docs/guide/#missing">Fragment</a>\n'
+            '<img srcset="/docs/assets/missing-a.png 1x, '
+            '/docs/assets/missing-b.png 2x">')
+        sheet.write_text('.x { background: url(/docs/assets/missing-c.png) }')
+        sitemap.write_text('<urlset><url><loc>/docs/missing-xml/</loc></url></urlset>')
+        for command in (self.check, self.build):
+            result = command()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stderr.count('broken local link:'), 6)
+            for missing in ('/docs/missing-one/', 'https://example.org/docs/guide/#missing',
+                            '/docs/assets/missing-a.png', '/docs/assets/missing-b.png',
+                            '/docs/assets/missing-c.png', '/docs/missing-xml/'):
+                self.assertIn(f'broken local link: {missing}', result.stderr)
+            self.assertEqual((self.site / "dist/links/index.html").read_bytes(), previous_page)
+            self.assertEqual((self.site / "dist/assets/site.css").read_bytes(), previous_sheet)
+            self.assertEqual((self.site / "dist/sitemap.xml").read_bytes(), previous_sitemap)
+            self.assertEqual(list(self.site.glob("dist.krayon-*")), [])
+
     def test_broken_link_locations_in_html_srcset_and_css(self):
         page = self.site / "src/located-links.html"
         page.write_text('é <a href="/missing/">Missing</a>')
