@@ -135,6 +135,36 @@ class BuildTests(unittest.TestCase):
         self.assertIn("https://example.com/journal/posts/next-idea/", locations)
         self.assertIn("https://example.com/journal/archive/page/2/", locations)
 
+    def test_documentation_site_builds_with_base_path(self):
+        docs = Path(self.temp.name) / "docs"
+        shutil.copytree(ROOT / "docs", docs,
+                        ignore=shutil.ignore_patterns("dist"))
+
+        def build_docs(command):
+            return subprocess.run([str(KRAYON), command, str(docs)],
+                                  text=True, capture_output=True)
+
+        result = build_docs("build")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        home = (docs / "dist/index.html").read_text()
+        self.assertIn('href="/start/"', home)
+        self.assertIn('href="/blog/"', home)
+        self.assertIn('href="/assets/css/docs.css"', home)
+        self.assertTrue((docs / "dist/templates/index.html").is_file())
+        self.assertTrue((docs / "dist/validation/index.html").is_file())
+
+        config = docs / "krayon.toml"
+        config.write_text('base_path = "/krayon"\n' + config.read_text())
+        result = build_docs("check")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((docs / "dist/index.html").read_text(), home)
+        result = build_docs("build")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        home = (docs / "dist/index.html").read_text()
+        self.assertIn('href="/krayon/start/"', home)
+        self.assertIn('href="/krayon/assets/css/docs.css"', home)
+        self.assertIn('href="/krayon/templates/"', home)
+
     def test_check_accepts_drafts_and_reports_template_errors(self):
         draft = self.site / "src/draft.md"
         draft.write_text('+++\ndraft = true\n+++\n# Draft\n')
