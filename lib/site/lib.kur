@@ -11,9 +11,9 @@ use toml::parse;
 use toml::value::TomlValue;
 use html::{Page, TemplateFormat, parse_page, template, escape_json};
 use markdown::markdown;
-use links::{Document, Stylesheet, validate, rewrite_css, css_dependencies};
+use links::{Document, XmlDocument, LinkTarget, Stylesheet, validate, rewrite_css, css_dependencies};
 use json::validate as validate_json;
-use xml::validate as validate_xml_document;
+use xml::{validate as validate_xml_document, locations as xml_locations};
 use records::{filter_contains, filter_records, scalar, sort_records};
 use url::{prefix, valid_origin};
 use sha256::{digest_hex, digest_file, new_hash, hash_bytes, finish_hash};
@@ -2053,6 +2053,7 @@ fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
     let assets = join(&cx, build.source, build.assets);
     if exists_path(&cx, assets)? { copy_assets(&cx, build, lit(&cx, ""), 0usize)?; }
     let documents = ArenaVec::new(&cx);
+    let xml_documents = ArenaVec::new(&cx);
     i = 0usize;
     while i < build.pages.len(&cx) {
         let source = build.pages.at(&cx, i);
@@ -2061,11 +2062,30 @@ fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
                 source: source.file, output: source.destination, url: source.page.url,
                 html: load(&cx, source.destination)?,
             }),
+            TemplateFormat::Xml => {
+                let rendered = load(&cx, source.destination)?;
+                let locations = match xml_locations(&cx, rendered) {
+                    Result::Ok(found) => found,
+                    Result::Err(error) => return Result::Err.(report_generated(&cx, source, rendered,
+                        "XML", error.offset, error.message)),
+                };
+                let targets = ArenaVec::new(&cx);
+                var j = 0usize;
+                while j < locations.len(&cx) {
+                    let location = locations.at(&cx, j);
+                    targets.push(&cx, LinkTarget.{ value: location.value, offset: location.offset, raw_len: 0usize });
+                    j = j + 1usize;
+                }
+                xml_documents.push(&cx, XmlDocument.{
+                    source: source.file, output: source.destination, url: source.page.url,
+                    xml: rendered, targets,
+                });
+            },
             _ => (),
         }
         i = i + 1usize;
     }
-    validate(&cx, documents, build.stylesheets, build.written, build.output, build.base_path)?;
+    validate(&cx, documents, build.stylesheets, xml_documents, build.written, build.output, build.base_path)?;
     Result::Ok.(())
 }
 

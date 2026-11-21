@@ -16,6 +16,15 @@ exposed struct Document {
 }
 
 forall 'k.
+exposed struct XmlDocument {
+    source: Span['k],
+    output: Span['k],
+    url: Span['k],
+    xml: Span['k],
+    targets: ArenaVec[LinkTarget['k], 'k],
+}
+
+forall 'k.
 exposed struct Stylesheet {
     source: Span['k],
     output: Span['k],
@@ -30,6 +39,7 @@ struct Parsed {
     url: Span['k],
     text: Span['k],
     generated: bool,
+    xml: bool,
     ids: ArenaMap[Span['k], bool, 'k],
     targets: ArenaVec[LinkTarget['k], 'k],
 }
@@ -200,8 +210,15 @@ fn scan_stylesheet(&cx: Domain!['k], sheet: Stylesheet['k]) -> Parsed['k] {
     let targets = ArenaVec::new(&cx);
     scan_css(&cx, sheet.css, 0usize, false, targets);
     Parsed.{ source: sheet.source, output: sheet.output, url: sheet.url,
-        text: sheet.css, generated: false,
+        text: sheet.css, generated: false, xml: false,
         ids: ArenaMap::new(&cx), targets }
+}
+
+forall 'k.
+fn scan_xml(&cx: Domain!['k], document: XmlDocument['k]) -> Parsed['k] {
+    Parsed.{ source: document.source, output: document.output, url: document.url,
+        text: document.xml, generated: true, xml: true,
+        ids: ArenaMap::new(&cx), targets: document.targets }
 }
 
 forall 'k.
@@ -291,7 +308,7 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
     }
     if raw == 2usize { scan_css(&cx, html.slice(raw_start, html.len()), raw_start, false, targets); }
     Parsed.{ source: document.source, output: document.output, url: document.url,
-        text: html, generated: true, ids, targets }
+        text: html, generated: true, xml: false, ids, targets }
 }
 
 fn hex(c: u8) -> u8 {
@@ -557,12 +574,14 @@ fn broken(&cx: Domain!['k], page: Parsed['k], target: LinkTarget['k]) -> Buffer!
     let (line, column) = location(&cx, page.text, target.offset);
     Buffer!::new().push_static("krayon: ").push_bytes(&cx, page.source)
         .push_static(": broken local link: ").push_bytes(&cx, target.value)
-        .push_static(if page.generated { " (generated HTML line " } else { " (line " })
+        .push_static(if page.xml { " (generated XML line " }
+            else if page.generated { " (generated HTML line " } else { " (line " })
         .push_usize(line).push_static(", column ").push_usize(column).push_static(")\n")
 }
 
 forall 'k.
 fn validate(&cx: Domain!['k], documents: ArenaVec[Document['k], 'k], stylesheets: ArenaVec[Stylesheet['k], 'k],
+    xml_documents: ArenaVec[XmlDocument['k], 'k],
     outputs: ArenaMap[Span['k], Span['k], 'k], root: Span['k], base_path: Span['k]) -> Result[(), Buffer!] {
     let pages: ArenaVec[Parsed['k], 'k] = ArenaVec::new(&cx);
     var i = 0usize;
@@ -573,6 +592,11 @@ fn validate(&cx: Domain!['k], documents: ArenaVec[Document['k], 'k], stylesheets
     i = 0usize;
     while i < stylesheets.len(&cx) {
         pages.push(&cx, scan_stylesheet(&cx, stylesheets.at(&cx, i)));
+        i = i + 1usize;
+    }
+    i = 0usize;
+    while i < xml_documents.len(&cx) {
+        pages.push(&cx, scan_xml(&cx, xml_documents.at(&cx, i)));
         i = i + 1usize;
     }
     i = 0usize;

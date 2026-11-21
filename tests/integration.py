@@ -1630,6 +1630,56 @@ class BuildTests(unittest.TestCase):
         self.assertIn('mismatched XML closing tag', result.stderr)
         self.assertEqual((self.site / "dist/sitemap.xml").read_bytes(), previous)
 
+    def test_generated_xml_sitemap_locations_use_local_link_checks(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        src.mkdir()
+        (self.site / "krayon.toml").write_text('base_path = "/docs"\n')
+        (src / "index.md").write_text("# Home\n")
+        (src / "guide.md").write_text("# Part\n")
+        (src / "data.xml").write_text('<root><loc>not a URL</loc></root>')
+        sitemap = src / "sitemap.xml"
+        sitemap.write_text(
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+            '<url><loc>/docs/</loc></url>\n'
+            '<url><loc>/docs/guide/?a=1&amp;b=2#part</loc></url>\n'
+            '<url><loc><![CDATA[/docs/guide/]]></loc></url>\n'
+            '<url><loc>https://example.org/external/</loc></url>\n'
+            '</urlset>\n')
+        (src / "sitemap-index.xml").write_text(
+            '<s:sitemapindex xmlns:s="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            '<s:sitemap><s:loc>/docs/sitemap.xml</s:loc></s:sitemap>'
+            '</s:sitemapindex>')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        previous = (self.site / "dist/sitemap.xml").read_bytes()
+
+        sitemap.write_text(sitemap.read_text().replace(
+            '/docs/guide/?a=1&amp;b=2#part', '\n  /docs/missing/?a=1&amp;b=2'))
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'{sitemap}: broken local link: /docs/missing/?a=1&b=2',
+                      result.stderr)
+        self.assertIn('generated XML line 4, column 3', result.stderr)
+        self.assertEqual((self.site / "dist/sitemap.xml").read_bytes(), previous)
+
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.site / "dist/sitemap.xml").read_bytes(), previous)
+
+        sitemap.write_text(sitemap.read_text().replace(
+            '/docs/missing/?a=1&amp;b=2', '/docs/guide/#missing'))
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('broken local link: /docs/guide/#missing', result.stderr)
+
+        sitemap.write_bytes(previous)
+        index = src / "sitemap-index.xml"
+        index.write_text(index.read_text().replace('/docs/sitemap.xml', '/docs/absent.xml'))
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'{index}: broken local link: /docs/absent.xml', result.stderr)
+
     def test_generated_xml_is_validated_before_output_install(self):
         template = self.site / "src/feed.xml"
         template.write_text('<?xml version="1.0" encoding="UTF-8"?>\n'

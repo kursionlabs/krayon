@@ -1,4 +1,5 @@
 use std::arena::Domain!;
+use std::buffer::Buffer!;
 use std::collections::arena_vec::ArenaVec;
 use std::option::{Option, Result};
 use std::raw::Span;
@@ -8,6 +9,12 @@ use std::utf8::decode;
 exposed struct Error {
     offset: usize,
     message: Slice[u8, 'static],
+}
+
+forall 'k.
+exposed struct Location {
+    value: Span['k],
+    offset: usize,
 }
 
 fn fail(offset: usize, message: Slice[u8, 'static]) -> Error { Error.{ offset, message } }
@@ -350,4 +357,143 @@ fn validate(&cx: Domain!['k], text: Span['k]) -> Result[(), Error] {
     if !root { return Result::Err.(fail(i, "missing XML root element")); }
     if open.len(&cx) != 0usize { return Result::Err.(fail(i, "unclosed XML element")); }
     Result::Ok.(())
+}
+
+fn append_utf8(out: Buffer!, code: usize) -> Buffer! {
+    if code < 128usize { out.push_byte(code as u8) }
+    else if code < 2048usize {
+        out.push_byte((192usize + code / 64usize) as u8)
+            .push_byte((128usize + code % 64usize) as u8)
+    } else if code < 65536usize {
+        out.push_byte((224usize + code / 4096usize) as u8)
+            .push_byte((128usize + (code / 64usize) % 64usize) as u8)
+            .push_byte((128usize + code % 64usize) as u8)
+    } else {
+        out.push_byte((240usize + code / 262144usize) as u8)
+            .push_byte((128usize + (code / 4096usize) % 64usize) as u8)
+            .push_byte((128usize + (code / 64usize) % 64usize) as u8)
+            .push_byte((128usize + code % 64usize) as u8)
+    }
+}
+
+forall 'k.
+fn append_reference(&cx: Domain!['k], out: Buffer!, text: Span['k], start: usize, end: usize) -> Buffer! {
+    let entity = text.slice(start + 1usize, end - 1usize);
+    if entity.is(&cx, "amp") { return out.push_byte(b'&'); }
+    if entity.is(&cx, "lt") { return out.push_byte(b'<'); }
+    if entity.is(&cx, "gt") { return out.push_byte(b'>'); }
+    if entity.is(&cx, "quot") { return out.push_byte(b'"'); }
+    if entity.is(&cx, "apos") { return out.push_byte(b'\''); }
+    let hexadecimal = byte(&cx, entity, 1usize) == b'x';
+    let base = if hexadecimal { 16usize } else { 10usize };
+    var i = if hexadecimal { 2usize } else { 1usize };
+    var code = 0usize;
+    while i < entity.len() {
+        code = code * base + (if hexadecimal { hex_value(byte(&cx, entity, i)) }
+            else { (byte(&cx, entity, i) - b'0') as usize });
+        i = i + 1usize;
+    }
+    append_utf8(out, code)
+}
+
+forall 'k.
+fn loc_name(&cx: Domain!['k], tag: Span['k]) -> bool {
+    tag.is(&cx, "loc") || tag.ends_with(&cx, Span::from_static(&cx, ":loc"))
+}
+
+forall 'k.
+fn sitemap_root(&cx: Domain!['k], tag: Span['k]) -> bool {
+    tag.is(&cx, "urlset") || tag.is(&cx, "sitemapindex")
+        || tag.ends_with(&cx, Span::from_static(&cx, ":urlset"))
+        || tag.ends_with(&cx, Span::from_static(&cx, ":sitemapindex"))
+}
+
+// Called after validate, so all XML tokens and references are well formed.
+forall 'k.
+fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 'k], Error] {
+    let found = ArenaVec::new(&cx);
+    var i = 0usize;
+    if text.len() >= 3usize && byte(&cx, text, 0usize) == 239u8
+        && byte(&cx, text, 1usize) == 187u8 && byte(&cx, text, 2usize) == 191u8 { i = 3usize; }
+    if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<?xml"))
+        && space(byte(&cx, text, i + 5usize)) { i = declaration(&cx, text, i)?; }
+    var active = false;
+    var root_seen = false;
+    var sitemap = false;
+    var depth = 0usize;
+    var parts = ArenaVec::new(&cx);
+    var offset = 0usize;
+    var have_offset = false;
+    while i < text.len() {
+        if byte(&cx, text, i) != b'<' {
+            if byte(&cx, text, i) == b'&' {
+                let next = reference(&cx, text, i)?;
+                if active && depth == 0usize {
+                    if !have_offset { offset = i; have_offset = true; }
+                    parts.push(&cx, append_reference(&cx, Buffer!::new(), text, i, next).save(&cx));
+                }
+                i = next;
+            } else {
+                let start = i;
+                while i < text.len() && byte(&cx, text, i) != b'<' && byte(&cx, text, i) != b'&' {
+                    i = i + 1usize;
+                }
+                if active && depth == 0usize {
+                    if !have_offset {
+                        var first = start;
+                        while first < i && space(byte(&cx, text, first)) { first = first + 1usize; }
+                        if first < i { offset = first; have_offset = true; }
+                    }
+                    parts.push(&cx, text.slice(start, i));
+                }
+            }
+        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<!--")) {
+            i = comment(&cx, text, i)?;
+        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<![CDATA[")) {
+            let next = cdata(&cx, text, i)?;
+            if active && depth == 0usize {
+                if !have_offset {
+                    var first = i + 9usize;
+                    while first < next - 3usize && space(byte(&cx, text, first)) { first = first + 1usize; }
+                    if first < next - 3usize { offset = first; have_offset = true; }
+                }
+                parts.push(&cx, text.slice(i + 9usize, next - 3usize));
+            }
+            i = next;
+        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<?")) {
+            i = processing_instruction(&cx, text, i)?;
+        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "</")) {
+            let (tag, next) = end_tag(&cx, text, i)?;
+            if active {
+                if depth == 0usize && loc_name(&cx, tag) {
+                    var value = Buffer!::new();
+                    var part = 0usize;
+                    while part < parts.len(&cx) {
+                        value = value.push_bytes(&cx, parts.at(&cx, part));
+                        part = part + 1usize;
+                    }
+                    let raw = value.save(&cx);
+                    var start = 0usize;
+                    var end = raw.len();
+                    while start < end && space(byte(&cx, raw, start)) { start = start + 1usize; }
+                    while end > start && space(byte(&cx, raw, end - 1usize)) { end = end - 1usize; }
+                    if end > start { found.push(&cx, Location.{ value: raw.slice(start, end), offset }); }
+                    active = false;
+                } else if depth > 0usize { depth = depth - 1usize; }
+            }
+            i = next;
+        } else {
+            let (tag, next, empty) = start_tag(&cx, text, i)?;
+            if !root_seen { root_seen = true; sitemap = sitemap_root(&cx, tag); }
+            if active { if !empty { depth = depth + 1usize; } }
+            else if sitemap && !empty && loc_name(&cx, tag) {
+                active = true;
+                parts = ArenaVec::new(&cx);
+                offset = next;
+                have_offset = false;
+            }
+            i = next;
+        }
+    }
+    Result::Ok.(found)
 }
