@@ -17,6 +17,7 @@ use xml::{validate as validate_xml_document, locations as xml_locations};
 use records::{filter_contains, filter_records, scalar, sort_records};
 use url::{prefix, valid_origin};
 use sha256::{digest_hex, digest_file, new_hash, hash_bytes, finish_hash};
+use shim::path::{join, parent, basename};
 
 extern "C" fn getpid() -> i32;
 
@@ -121,14 +122,6 @@ forall 'k.
 fn byte(&cx: Domain!['k], s: Span['k], i: usize) -> u8 { s.byte_or_zero(&cx, i) }
 
 forall 'k.
-fn join(&cx: Domain!['k], a: Span['k], b: Span['k]) -> Span['k] {
-    if b.is_empty() { return a; }
-    if a.is_empty() { return b; }
-    let separator = if a.ends_with(&cx, lit(&cx, "/")) { "" } else { "/" };
-    Buffer!::new().push_bytes(&cx, a).push_static(separator).push_bytes(&cx, b).save(&cx)
-}
-
-forall 'k.
 fn report(&cx: Domain!['k], action: Slice[u8, 'static], file: Span['k]) -> Buffer! {
     Buffer!::new().push_static("krayon: ").push_static(action).push_static(": ").push_bytes(&cx, file).push_byte(b'\n')
 }
@@ -204,16 +197,6 @@ fn ensure_dir(&cx: Domain!['k], directory: Span['k]) -> Result[(), Buffer!] {
         i = i + 1usize;
     }
     ensure_one(&cx, directory)
-}
-
-forall 'k.
-fn parent(&cx: Domain!['k], file: Span['k]) -> Span['k] {
-    var i = file.len();
-    while i > 0usize {
-        i = i - 1usize;
-        if byte(&cx, file, i) == b'/' { return file.slice(0usize, i); }
-    }
-    lit(&cx, "")
 }
 
 forall 'k.
@@ -1715,12 +1698,6 @@ fn real_path(&cx: Domain!['k], path: Span['k]) -> Result[Span['k], Buffer!] {
         Result::Ok(found) => Result::Ok.(found.save(&cx)),
         Result::Err(e) => Result::Err.(report(&cx, "cannot resolve", path)),
     }
-}
-
-forall 'k.
-fn basename(&cx: Domain!['k], path: Span['k]) -> Span['k] {
-    let directory = parent(&cx, path);
-    path.slice(if directory.is_empty() { 0usize } else { directory.len() + 1usize }, path.len())
 }
 
 // Walk only real directories under `root`. A directory symlink resolves to a

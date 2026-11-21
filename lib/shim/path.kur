@@ -1,0 +1,39 @@
+//! Lexical filesystem path operations proposed for the Kursal standard library.
+//! These functions only inspect bytes; they do not access the filesystem or
+//! resolve `.` / `..` / symlinks. The separator is `/`.
+
+use std::arena::Domain!;
+use std::buffer::Buffer!;
+use std::raw::Span;
+
+/// Join two path fragments with one separator unless `left` already ends
+/// with `/`. Empty fragments return the other fragment unchanged. A leading
+/// `/` in `right` is retained; this function does not replace `left` with it.
+forall 'k.
+fn join(&cx: Domain!['k], left: Span['k], right: Span['k]) -> Span['k] {
+    if right.is_empty() { return left; }
+    if left.is_empty() { return right; }
+    let separator = if left.byte_or_zero(&cx, left.len() - 1usize) == b'/' { "" } else { "/" };
+    Buffer!::new().push_bytes(&cx, left).push_static(separator).push_bytes(&cx, right).save(&cx)
+}
+
+/// Bytes before the final `/`, or an empty span if there is no separator.
+/// For `/file`, the parent is empty; for `dir/`, it is `dir`.
+forall 'k.
+fn parent(&cx: Domain!['k], path: Span['k]) -> Span['k] {
+    var i = path.len();
+    while i > 0usize {
+        i = i - 1usize;
+        if path.byte_or_zero(&cx, i) == b'/' { return path.slice(0usize, i); }
+    }
+    path.slice(0usize, 0usize)
+}
+
+/// Bytes after the final `/`, or all of `path` when its parent is empty.
+/// This preserves Krayon's current behavior: `/file` returns `/file`, while
+/// `dir/` returns an empty span.
+forall 'k.
+fn basename(&cx: Domain!['k], path: Span['k]) -> Span['k] {
+    let directory = parent(&cx, path);
+    path.slice(if directory.is_empty() { 0usize } else { directory.len() + 1usize }, path.len())
+}

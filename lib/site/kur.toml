@@ -31,3 +31,6 @@ path="../records"
 
 [dependencies.sha256]
 path="../sha256"
+
+[dependencies.shim]
+path="../shim"

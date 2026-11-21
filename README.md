@@ -489,6 +489,7 @@ headings expose an empty array.
 - `lib/url/` — deployment path prefixes
 - `lib/sha256/` — content digests for fingerprinted assets
 - `lib/highlight/` — fenced code highlighting
+- `lib/shim/` — stdlib overlay with proposed `path` module
 - `examples/hello-site/` — independent site example
 
 Kursal programs can call `site::build(&cx, root)` directly. It takes a site
