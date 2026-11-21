@@ -153,17 +153,53 @@ fn push_css_target(&cx: Domain!['k], raw: Span['k], offset: usize, entities: boo
 }
 
 forall 'k.
-fn scan_css(&cx: Domain!['k], css: Span['k], base: usize, entities: bool,
-    targets: ArenaVec[LinkTarget['k], 'k]) -> () {
-    var pos = 0usize;
-    while pos < css.len() {
-        let c = at(&cx, css, pos);
-        if c == b'/' && at(&cx, css, pos + 1usize) == b'*' {
+fn skip_css_space_comments(&cx: Domain!['k], css: Span['k], start: usize) -> usize {
+    var pos = start;
+    var more = true;
+    while more {
+        while pos < css.len() && space(at(&cx, css, pos)) { pos = pos + 1usize; }
+        if at(&cx, css, pos) == b'/' && at(&cx, css, pos + 1usize) == b'*' {
             pos = pos + 2usize;
             while pos < css.len() && !(at(&cx, css, pos) == b'*' && at(&cx, css, pos + 1usize) == b'/') {
                 pos = pos + 1usize;
             }
             if pos < css.len() { pos = pos + 2usize; }
+        } else { more = false; }
+    }
+    pos
+}
+
+forall 'k.
+fn scan_css(&cx: Domain!['k], css: Span['k], base: usize, entities: bool,
+    targets: ArenaVec[LinkTarget['k], 'k]) -> () {
+    var pos = 0usize;
+    var depth = 0usize;
+    while pos < css.len() {
+        let c = at(&cx, css, pos);
+        if c == b'{' { depth = depth + 1usize; pos = pos + 1usize; }
+        else if c == b'}' { if depth > 0usize { depth = depth - 1usize; } pos = pos + 1usize; }
+        else if c == b'/' && at(&cx, css, pos + 1usize) == b'*' {
+            pos = pos + 2usize;
+            while pos < css.len() && !(at(&cx, css, pos) == b'*' && at(&cx, css, pos + 1usize) == b'/') {
+                pos = pos + 1usize;
+            }
+            if pos < css.len() { pos = pos + 2usize; }
+        } else if !entities && depth == 0usize && c == b'@' && starts_ci(&cx, css, pos, "@import")
+            && !name_byte(at(&cx, css, pos + 7usize)) {
+            pos = skip_css_space_comments(&cx, css, pos + 7usize);
+            let quote = at(&cx, css, pos);
+            if quote == b'"' || quote == b'\'' {
+                pos = pos + 1usize;
+                let start = pos;
+                while pos < css.len() && at(&cx, css, pos) != quote {
+                    if at(&cx, css, pos) == b'\\' && pos + 1usize < css.len() { pos = pos + 1usize; }
+                    pos = pos + 1usize;
+                }
+                if pos < css.len() {
+                    push_css_target(&cx, css.slice(start, pos), base + start, entities, targets);
+                    pos = pos + 1usize;
+                }
+            }
         } else if c == b'"' || c == b'\'' {
             let quote = c;
             pos = pos + 1usize;

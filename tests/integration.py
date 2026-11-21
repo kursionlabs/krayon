@@ -286,6 +286,85 @@ class BuildTests(unittest.TestCase):
         self.assertIn('CSS dependency cycle', result.stderr)
         self.assertEqual((output / "index.html").read_bytes(), previous)
 
+    def test_quoted_css_imports_are_rewritten_checked_and_follow_dependencies(self):
+        shutil.rmtree(self.site / "src")
+        src = self.site / "src"
+        (src / "assets/css").mkdir(parents=True)
+        (src / "assets/img").mkdir()
+        (self.site / "krayon.toml").write_text(
+            'base_path = "/docs"\nfingerprint_assets = true\n')
+        image = src / "assets/img/logo.png"
+        image.write_bytes(b"first")
+        grand = src / "assets/css/grand.css"
+        grand.write_text('.icon { background: url(../img/logo.png) }\n')
+        child = src / "assets/css/child.css"
+        child.write_text("@import 'grand.css' layer(base);\n")
+        parent = src / "assets/css/parent.css"
+        original = (
+            '/* @import "missing-comment.css"; */\n'
+            '@import /* note */ "child.css?version=1" screen;\n'
+            '@IMPORT "ch\\69ld.css";\n'
+            '@import "https://elsewhere.example/remote.css";\n'
+            '@imported "missing-name.css";\n'
+            '.label { content: "@import \'missing-string.css\'"; }\n'
+            '.custom { --raw: @import "missing-declaration.css"; }\n'
+        )
+        parent.write_text(original)
+        (src / "index.html").write_text(
+            '<link rel="stylesheet" href="{{ "/assets/css/parent.css" | asset_url }}">'
+            '<div style=\'--raw: @import "missing-style.css";\'></div>')
+
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = self.site / "dist"
+        css = output / "assets/css"
+        first_parent = list(css.glob("parent.*.css"))[0]
+        first_child = list(css.glob("child.*.css"))[0]
+        first_grand = list(css.glob("grand.*.css"))[0]
+        first_image = list((output / "assets/img").glob("logo.*.png"))[0]
+        rewritten = first_parent.read_text()
+        self.assertIn(f'@import /* note */ "/docs/assets/css/{first_child.name}?version=1" screen;',
+                      rewritten)
+        self.assertIn(f'@IMPORT "/docs/assets/css/{first_child.name}";', rewritten)
+        self.assertIn(f"@import '/docs/assets/css/{first_grand.name}' layer(base);",
+                      first_child.read_text())
+        self.assertIn(f'url(/docs/assets/img/{first_image.name})', first_grand.read_text())
+        self.assertIn('@import "missing-comment.css"', rewritten)
+        self.assertIn("@import 'missing-string.css'", rewritten)
+        self.assertIn('@import "https://elsewhere.example/remote.css"', rewritten)
+        self.assertEqual((css / "parent.css").read_text(), original)
+
+        image.write_bytes(b"second")
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        second_parent = list(css.glob("parent.*.css"))[0]
+        second_child = list(css.glob("child.*.css"))[0]
+        second_grand = list(css.glob("grand.*.css"))[0]
+        self.assertNotEqual(second_parent.name, first_parent.name)
+        self.assertNotEqual(second_child.name, first_child.name)
+        self.assertNotEqual(second_grand.name, first_grand.name)
+        previous = (output / "index.html").read_bytes()
+
+        grand.write_text("@import 'parent.css';\n")
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('CSS dependency cycle', result.stderr)
+        self.assertEqual((output / "index.html").read_bytes(), previous)
+
+        grand.write_text('.icon { background: url(../img/logo.png) }\n')
+        parent.write_text('@import "missing.css";\n')
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'{parent}: broken local link: missing.css', result.stderr)
+        self.assertEqual((output / "index.html").read_bytes(), previous)
+
+        parent.write_text(original)
+        (src / "index.html").write_text('<style>@import "missing.css";</style>')
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'{src / "index.html"}: broken local link: missing.css', result.stderr)
+        self.assertEqual((output / "index.html").read_bytes(), previous)
+
     def test_markdown_asset_links_use_fingerprints_and_page_links_keep_routes(self):
         shutil.rmtree(self.site / "src")
         src = self.site / "src"

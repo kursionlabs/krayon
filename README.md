@@ -111,12 +111,13 @@ an unknown asset. Original asset paths remain available so existing links
 and relative URLs inside CSS continue to work. Asset content changes update
 the fingerprinted filename on the next build. The `asset_urls` site data key
 is reserved for this map.
-Fingerprinting also rewrites local `url(...)` references in the fingerprinted
-CSS copy, including `@import url(...)`. It leaves the original CSS unchanged.
+Fingerprinting also rewrites local `url(...)` references and quoted
+`@import "..."` or `@import '...'` paths in the fingerprinted CSS copy. It
+leaves the original CSS unchanged.
 The CSS filename is based on the rewritten bytes, so changing an image or
 imported stylesheet updates every stylesheet that depends on it. CSS import
-cycles fail the build. Comments, quoted CSS text, and external URLs are not
-rewritten.
+cycles fail the build. Comments, ordinary quoted CSS text, and external URLs
+are not rewritten.
 When fingerprinting is enabled, Markdown images and links to copied assets
 also use fingerprinted URLs, including links to PDFs and downloads.
 Root-relative paths such as
@@ -324,10 +325,11 @@ scanned. Relative Atom links honor `xml:base` on the feed, entry, or link;
 without it, they resolve from the feed URL.
 
 Before installing the output, Krayon checks local `href`, `src`, and `srcset`
-values in generated HTML, plus CSS `url()` references in inline styles and
-copied `.css` assets, and the XML link fields above. Page links and copied assets must
-resolve; fragments targeting generated pages must match an HTML ID. Relative
-URLs, query strings, percent escapes, and `base_path` are handled. Absolute
+values in generated HTML, CSS `url()` references in inline styles and copied
+`.css` assets, quoted `@import` paths in `<style>` elements and copied CSS,
+and the XML link fields above. Page links and copied assets must resolve;
+fragments targeting generated pages must match an HTML ID. Relative URLs,
+query strings, percent escapes, and `base_path` are handled. Absolute
 URLs matching `origin` are checked; other origins are ignored. A broken link
 fails the build. Krayon reports every broken link with its source file, URL,
 line, and column. HTML documents use their first `<base href>` when resolving
