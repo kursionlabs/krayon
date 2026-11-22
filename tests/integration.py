@@ -3069,20 +3069,41 @@ class BuildTests(unittest.TestCase):
 
     def test_layout_and_markdown_raw_html_ids_collide_with_heading(self):
         home = self.site / "src/index.md"
+        original_home = home.read_text()
         layout = self.site / "src/_includes/base.html"
         original_layout = layout.read_text()
         layout.write_text(original_layout.replace("<main>", '<main><div id="welcome"></div>', 1))
         result = self.check()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(f"{home}: duplicate HTML ID: welcome "
-                      "(generated HTML / line", result.stderr)
+                      "(source line 5, column 1; first at generated HTML / line", result.stderr)
 
         layout.write_text(original_layout)
-        home.write_text(home.read_text() + '\n<div id="welcome"></div>\n')
+        home.write_text(original_home + '\n<div id="welcome"></div>\n')
         result = self.check()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(f"{home}: duplicate HTML ID: welcome "
                       "(generated HTML / line", result.stderr)
+        self.assertIn("first at source line 5, column 1", result.stderr)
+
+        home.write_text(original_home)
+        explicit = self.site / "src/explicit.md"
+        explicit.write_text('+++\ntitle = "Explicit"\nlayout = "base.html"\n+++\n'
+                            '## Heading {#shared}\n<div id="shared"></div>\n')
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{explicit}: duplicate HTML ID: shared ", result.stderr)
+        self.assertIn("first at source line 5, column 1", result.stderr)
+
+        explicit.unlink()
+        layout.write_text(original_layout.replace("<main>", '<main><div id="nested"></div>', 1))
+        quoted = self.site / "src/quoted.md"
+        quoted.write_text('+++\ntitle = "Quoted"\nlayout = "base.html"\n+++\n'
+                          '> > ## Nested\n')
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{quoted}: duplicate HTML ID: nested "
+                      "(source line 5, column 5; first at generated HTML /quoted/ line", result.stderr)
 
     def test_broken_asset_and_fragment_links(self):
         layout = self.site / "src/_includes/base.html"
@@ -3335,7 +3356,7 @@ class BuildTests(unittest.TestCase):
                         '# Title\n\n[Home](/)\n')
         result = self.build()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotIn('krayon-md-link',
+        self.assertNotIn('krayon-md-source',
                          (self.site / 'dist/located/index.html').read_text())
 
         page.write_text('+++\ntitle = "Located"\nlayout = "base.html"\n+++\n'

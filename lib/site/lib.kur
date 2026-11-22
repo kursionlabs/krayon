@@ -1121,21 +1121,27 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k],
 }
 
 forall 'k.
-fn strip_link_markers(&cx: Domain!['k], html: Span['k], body_len: usize)
+fn strip_source_markers(&cx: Domain!['k], html: Span['k], body_len: usize)
     -> (Span['k], ArenaMap[usize, usize, 'k]) {
     let positions = ArenaMap::new(&cx);
+    let prefix = lit(&cx, "<!--krayon-md-source:");
     var clean = Buffer!::new();
     var i = 0usize;
     while i < html.len() {
-        if html.slice(i, html.len()).starts_with(&cx, lit(&cx, "<!--krayon-md-link:")) {
-            var end = i + 19usize;
+        if html.slice(i, html.len()).starts_with(&cx, prefix) {
+            let digits_start = i + prefix.len();
+            var end = digits_start;
             while end < html.len() && byte(&cx, html, end) >= b'0' && byte(&cx, html, end) <= b'9' {
                 end = end + 1usize;
             }
-            let marker = if end > i + 19usize && html.slice(end, html.len()).starts_with(&cx, lit(&cx, "-->"))
-                && (html.slice(end + 3usize, html.len()).starts_with(&cx, lit(&cx, "<a "))
-                    || html.slice(end + 3usize, html.len()).starts_with(&cx, lit(&cx, "<img "))) {
-                parse_usize(&cx, html.slice(i + 19usize, end))
+            let tag = html.slice(end + 3usize, html.len());
+            let heading = tag.starts_with(&cx, lit(&cx, "<h"))
+                && byte(&cx, tag, 2usize) >= b'1' && byte(&cx, tag, 2usize) <= b'6'
+                && byte(&cx, tag, 3usize) == b' ';
+            let marker = if end > digits_start && html.slice(end, html.len()).starts_with(&cx, lit(&cx, "-->"))
+                && (tag.starts_with(&cx, lit(&cx, "<a "))
+                    || tag.starts_with(&cx, lit(&cx, "<img ")) || heading) {
+                parse_usize(&cx, html.slice(digits_start, end))
             } else { Option::None };
             match marker {
                 Some(number) => if number < body_len {
@@ -1212,7 +1218,7 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
         _ => (),
     }
     let output = if source.is_markdown {
-        let (clean, positions) = strip_link_markers(&cx, rendered, page.body.len());
+        let (clean, positions) = strip_source_markers(&cx, rendered, page.body.len());
         build.markdown_positions.insert(&cx, source.destination, positions);
         clean
     } else { rendered };

@@ -34,5 +34,6 @@ relative links, including fragments, `srcset`, and inline CSS URLs. Copied CSS
 positions refer to the stylesheet source.
 
 Krayon also reports duplicate IDs in generated HTML, including IDs from
-layouts, raw HTML, and Markdown headings. Diagnostics show both occurrences
-in the generated page. Duplicate IDs and broken links are reported together.
+layouts, raw HTML, and Markdown headings. A heading's location points to its
+Markdown source; other IDs use generated HTML locations. Diagnostics show both
+occurrences. Duplicate IDs and broken links are reported together.

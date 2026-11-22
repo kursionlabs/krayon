@@ -353,6 +353,10 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
                             let raw_value = html.slice(value_start, value_end);
                             let value = html_value(&cx, raw_value);
                             if equal_ci(&cx, name, "id") {
+                                match source_offset {
+                                    Some(original) => { source_offsets.insert(&cx, value_start, original); },
+                                    None => (),
+                                }
                                 match ids.get(&cx, value) {
                                     Some(first_offset) => duplicate_ids.push(&cx,
                                         DuplicateId.{ value, offset: value_start, first_offset }),
@@ -798,17 +802,28 @@ fn location(&cx: Domain!['k], source: Span['k], offset: usize) -> (usize, usize)
 }
 
 forall 'k.
-fn broken(&cx: Domain!['k], page: Parsed['k], target: LinkTarget['k]) -> Buffer! {
-    match page.source_offsets.get(&cx, target.offset) {
+fn markdown_location(&cx: Domain!['k], page: Parsed['k], offset: usize) -> Option[(usize, usize)] {
+    match page.source_offsets.get(&cx, offset) {
         Some(original) => match page.markdown_body {
             Some(body) => {
                 let (line, column) = location(&cx, body, original);
-                return Buffer!::new().push_static("krayon: ").push_bytes(&cx, page.source)
-                    .push_static(": broken local link: ").push_bytes(&cx, target.value)
-                    .push_static(" (line ").push_usize(page.body_line + line - 1usize)
-                    .push_static(", column ").push_usize(column).push_static(")\n");
+                Option::Some.((page.body_line + line - 1usize, column))
             },
-            None => (),
+            None => Option::None,
+        },
+        None => Option::None,
+    }
+}
+
+forall 'k.
+fn broken(&cx: Domain!['k], page: Parsed['k], target: LinkTarget['k]) -> Buffer! {
+    match markdown_location(&cx, page, target.offset) {
+        Some(position) => {
+            let (line, column) = position;
+            return Buffer!::new().push_static("krayon: ").push_bytes(&cx, page.source)
+                    .push_static(": broken local link: ").push_bytes(&cx, target.value)
+                    .push_static(" (line ").push_usize(line)
+                    .push_static(", column ").push_usize(column).push_static(")\n");
         },
         None => (),
     }
@@ -822,14 +837,36 @@ fn broken(&cx: Domain!['k], page: Parsed['k], target: LinkTarget['k]) -> Buffer!
 
 forall 'k.
 fn duplicate_id(&cx: Domain!['k], page: Parsed['k], duplicate: DuplicateId['k]) -> Buffer! {
-    let (line, column) = location(&cx, page.text, duplicate.offset);
-    let (first_line, first_column) = location(&cx, page.text, duplicate.first_offset);
-    Buffer!::new().push_static("krayon: ").push_bytes(&cx, page.source)
-        .push_static(": duplicate HTML ID: ").push_bytes(&cx, duplicate.value)
-        .push_static(" (generated HTML ").push_bytes(&cx, page.url).push_static(" line ")
-        .push_usize(line).push_static(", column ").push_usize(column)
-        .push_static("; first at line ").push_usize(first_line)
-        .push_static(", column ").push_usize(first_column).push_static(")\n")
+    var out = Buffer!::new().push_static("krayon: ").push_bytes(&cx, page.source)
+        .push_static(": duplicate HTML ID: ").push_bytes(&cx, duplicate.value);
+    let current_source = markdown_location(&cx, page, duplicate.offset);
+    match current_source {
+        Some(position) => {
+            let (line, column) = position;
+            out = out.push_static(" (source line ").push_usize(line)
+                .push_static(", column ").push_usize(column);
+        },
+        None => {
+            let (line, column) = location(&cx, page.text, duplicate.offset);
+            out = out.push_static(" (generated HTML ").push_bytes(&cx, page.url)
+                .push_static(" line ").push_usize(line).push_static(", column ").push_usize(column);
+        },
+    }
+    match markdown_location(&cx, page, duplicate.first_offset) {
+        Some(position) => {
+            let (line, column) = position;
+            out.push_static("; first at source line ").push_usize(line)
+                .push_static(", column ").push_usize(column).push_static(")\n")
+        },
+        None => {
+            let (line, column) = location(&cx, page.text, duplicate.first_offset);
+            let out = if current_source.is_some() {
+                out.push_static("; first at generated HTML ").push_bytes(&cx, page.url).push_static(" line ")
+            } else { out.push_static("; first at line ") };
+            out.push_usize(line)
+                .push_static(", column ").push_usize(column).push_static(")\n")
+        },
+    }
 }
 
 forall 'k.

@@ -175,10 +175,10 @@ fn original_offset(&cx: Domain!['k], links: LinkContext['k], text: Span['k], ind
 }
 
 forall 'k.
-fn mark_link(&cx: Domain!['k], out: Buffer!, text: Span['k], index: usize, links: LinkContext['k]) -> Buffer! {
+fn mark_source(&cx: Domain!['k], out: Buffer!, text: Span['k], index: usize, links: LinkContext['k]) -> Buffer! {
     if !links.track_sources { return out; }
     match original_offset(&cx, links, text, index) {
-        Some(offset) => out.push_static("<!--krayon-md-link:").push_usize(offset).push_static("-->"),
+        Some(offset) => out.push_static("<!--krayon-md-source:").push_usize(offset).push_static("-->"),
         None => out,
     }
 }
@@ -213,7 +213,7 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
                                     },
                                     None => (),
                                 }
-                                out = mark_link(&cx, out, s, i, links);
+                                out = mark_source(&cx, out, s, i, links);
                                 out = html_escape(&cx, out.push_static("<img src=\""), asset_link(&cx, links, target))
                                     .push_static("\" alt=\"");
                                 out = html_escape(&cx, out, s.slice(i + 2usize, end)).push_static("\"");
@@ -235,7 +235,7 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
                     if at(&cx, s, end + 1usize) == b'(' {
                         match s.find_byte(&cx, b')', end + 2usize) {
                             Some(close) => {
-                                out = mark_link(&cx, out, s, i, links);
+                                out = mark_source(&cx, out, s, i, links);
                                 out = html_escape(&cx, out.push_static("<a href=\""), source_link(&cx, links, s.slice(end + 2usize, close))).push_static("\">");
                                 out = inline(&cx, out, s.slice(i + 1usize, end), links).push_static("</a>");
                                 i = close + 1usize;
@@ -408,6 +408,7 @@ fn heading(&cx: Domain!['k], out: Buffer!, line: Span['k], level: usize,
     }
     ids.insert(&cx, id, true);
     headings.push(&cx, Heading.{ level, text: plain, id });
+    out = mark_source(&cx, out, line, 0usize, links);
     out = out.push_static("<h").push_usize(level);
     out = out.push_static(" id=\"").push_bytes(&cx, id).push_static("\"");
     let class_text = classes.save(&cx);
