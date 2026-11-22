@@ -148,8 +148,8 @@ fn hash_bytes(&cx: Domain!['k], hash: Hasher['k], &read: C, bytes: S) -> Hasher[
     let count = ReadBytes[C, S]::len(&read, bytes);
     while i < count {
         let value = match ReadBytes[C, S]::get(&read, bytes, i) {
-            Option::Some(found) => found,
-            Option::None => 0u8,
+            Some(found) => found,
+            None => 0u8,
         };
         used = absorb(&cx, hash, used, value);
         total = total + 1u64;
@@ -226,8 +226,8 @@ fn digest_file(&cx: Domain!['k], path: Span['k]) -> Result[Span['k], Error] {
     var going = true;
     while going {
         let count = match &opened.read_exact(&chunk, 65536usize) {
-            Result::Ok(n) => n,
-            Result::Err(e) => {
+            Ok(n) => n,
+            Err(e) => {
                 chunk.destroy();
                 let closed = opened.close();
                 return Result::Err.(e);
@@ -243,7 +243,7 @@ fn digest_file(&cx: Domain!['k], path: Span['k]) -> Result[Span['k], Error] {
     }
     chunk.destroy();
     match opened.close() {
-        Result::Ok(nothing) => Result::Ok.(finish_hash(&cx, hash)),
-        Result::Err(e) => Result::Err.(e),
+        Ok(nothing) => Result::Ok.(finish_hash(&cx, hash)),
+        Err(e) => Result::Err.(e),
     }
 }

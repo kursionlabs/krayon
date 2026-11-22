@@ -291,14 +291,14 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
             pos = pos + 1usize;
         } else if starts_ci(&cx, html, pos, "<!--") {
             match html.find(&cx, lit(&cx, "-->"), pos + 4usize) {
-                Option::Some(end) => { pos = end + 3usize; },
-                Option::None => { pos = html.len(); },
+                Some(end) => { pos = end + 3usize; },
+                None => { pos = html.len(); },
             }
         } else if at(&cx, html, pos + 1usize) == b'/' ||
             at(&cx, html, pos + 1usize) == b'!' || at(&cx, html, pos + 1usize) == b'?' {
             match html.find_byte(&cx, b'>', pos + 1usize) {
-                Option::Some(end) => { pos = end + 1usize; },
-                Option::None => { pos = html.len(); },
+                Some(end) => { pos = end + 1usize; },
+                None => { pos = html.len(); },
             }
         } else {
             var name_end = pos + 1usize;
@@ -343,15 +343,15 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
                             let value = html_value(&cx, raw_value);
                             if equal_ci(&cx, name, "id") {
                                 match ids.get(&cx, value) {
-                                    Option::Some(first_offset) => duplicate_ids.push(&cx,
+                                    Some(first_offset) => duplicate_ids.push(&cx,
                                         DuplicateId.{ value, offset: value_start, first_offset }),
-                                    Option::None => { ids.insert(&cx, value, value_start); },
+                                    None => { ids.insert(&cx, value, value_start); },
                                 }
                             }
                             else if equal_ci(&cx, tag, "base") && equal_ci(&cx, name, "href") {
                                 match base_href {
-                                    Option::Some(_) => (),
-                                    Option::None => { base_href = Option::Some.(value.trim(&cx)); },
+                                    Some(_) => (),
+                                    None => { base_href = Option::Some.(value.trim(&cx)); },
                                 }
                             }
                             else if equal_ci(&cx, name, "href") || equal_ci(&cx, name, "src")
@@ -371,8 +371,8 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
     }
     if raw == 2usize { scan_css(&cx, html.slice(raw_start, html.len()), raw_start, false, targets); }
     let targets = match base_href {
-        Option::None => targets,
-        Option::Some(base) => {
+        None => targets,
+        Some(base) => {
             let bases = ArenaVec::new(&cx);
             bases.push(&cx, base);
             let scoped = ArenaVec::new(&cx);
@@ -421,7 +421,7 @@ fn html_value(&cx: Domain!['k], source: Span['k]) -> Span['k] {
     while i < source.len() {
         if at(&cx, source, i) == b'&' {
             match source.find_byte(&cx, b';', i + 1usize) {
-                Option::Some(end) => {
+                Some(end) => {
                     if end - i <= 12usize {
                         let name = source.slice(i + 1usize, end);
                         var code = 0usize;
@@ -455,7 +455,7 @@ fn html_value(&cx: Domain!['k], source: Span['k]) -> Span['k] {
                         } else { out = out.push_byte(b'&'); i = i + 1usize; }
                     } else { out = out.push_byte(b'&'); i = i + 1usize; }
                 },
-                Option::None => { out = out.push_byte(b'&'); i = i + 1usize; },
+                None => { out = out.push_byte(b'&'); i = i + 1usize; },
             }
         } else { out = out.push_byte(at(&cx, source, i)); i = i + 1usize; }
     }
@@ -545,12 +545,12 @@ fn normalized_uri(&cx: Domain!['k], uri: Span['k]) -> Span['k] {
         }
     }
     let hash = match uri.find_byte(&cx, b'#', authority_end) {
-        Option::Some(at_pos) => at_pos,
-        Option::None => uri.len(),
+        Some(at_pos) => at_pos,
+        None => uri.len(),
     };
     let query = match uri.find_byte(&cx, b'?', authority_end) {
-        Option::Some(at_pos) => if at_pos < hash { at_pos } else { hash },
-        Option::None => hash,
+        Some(at_pos) => if at_pos < hash { at_pos } else { hash },
+        None => hash,
     };
     let path = uri_path(&cx, uri.slice(authority_end, query));
     Buffer!::new().push_bytes(&cx, uri.slice(0usize, authority_end)).push_bytes(&cx, path)
@@ -580,12 +580,12 @@ fn resolve_reference(&cx: Domain!['k], base: Span['k], reference: Span['k]) -> S
         }
     } else if external(&cx, base) { return base; }
     let hash = match base.find_byte(&cx, b'#', authority_end) {
-        Option::Some(at_pos) => at_pos,
-        Option::None => base.len(),
+        Some(at_pos) => at_pos,
+        None => base.len(),
     };
     let query = match base.find_byte(&cx, b'?', authority_end) {
-        Option::Some(at_pos) => if at_pos < hash { at_pos } else { hash },
-        Option::None => hash,
+        Some(at_pos) => if at_pos < hash { at_pos } else { hash },
+        None => hash,
     };
     let end = query;
     let path = if end == authority_end { lit(&cx, "/") } else { base.slice(authority_end, end) };
@@ -643,8 +643,8 @@ fn normalized(&cx: Domain!['k], path: Span['k]) -> Option[Span['k]] {
             let part = path.slice(start, i);
             if part.is(&cx, "..") {
                 match parts.pop(&cx) {
-                    Option::Some(_) => (),
-                    Option::None => return Option::None,
+                    Some(_) => (),
+                    None => return Option::None,
                 }
             } else if !part.is_empty() && !part.is(&cx, ".") { parts.push(&cx, part); }
             start = i + 1usize;
@@ -702,12 +702,12 @@ forall 'k.
 fn css_replacement(&cx: Domain!['k], value: Span['k], sheet_url: Span['k], base_path: Span['k],
     asset_urls: ArenaMap[Span['k], Span['k], 'k]) -> Option[Span['k]] {
     let key = match css_key(&cx, value, sheet_url, base_path) {
-        Option::Some(found) => found,
-        Option::None => return Option::None,
+        Some(found) => found,
+        None => return Option::None,
     };
     let hashed = match asset_urls.get(&cx, key) {
-        Option::Some(found) => found,
-        Option::None => return Option::None,
+        Some(found) => found,
+        None => return Option::None,
     };
     var end = value.len();
     match value.find_byte(&cx, b'?', 0usize) { Option::Some(at_pos) => if at_pos < end { end = at_pos; }, Option::None => (), }
@@ -726,9 +726,9 @@ fn css_dependencies(&cx: Domain!['k], css: Span['k], sheet_url: Span['k], base_p
     while i < targets.len(&cx) {
         let target = targets.at(&cx, i);
         match css_key(&cx, target.value, sheet_url, base_path) {
-            Option::Some(path) => if path.ends_with(&cx, lit(&cx, ".css"))
+            Some(path) => if path.ends_with(&cx, lit(&cx, ".css"))
                 && asset_urls.contains(&cx, path) { dependencies.push(&cx, path); },
-            Option::None => (),
+            None => (),
         }
         i = i + 1usize;
     }
@@ -748,8 +748,8 @@ fn rewrite_css(&cx: Domain!['k], css: Span['k], sheet_url: Span['k], base_path: 
         i = i + 1usize;
         if target.offset >= cursor && target.raw_len > 0usize {
             match css_replacement(&cx, target.value, sheet_url, base_path, asset_urls) {
-                Option::None => (),
-                Option::Some(replacement) => {
+                None => (),
+                Some(replacement) => {
                     out = out.push_bytes(&cx, css.slice(cursor, target.offset)).push_bytes(&cx, replacement);
                     cursor = target.offset + target.raw_len;
                 },
@@ -808,18 +808,18 @@ fn invalid_link(&cx: Domain!['k], page: Parsed['k], link: LinkTarget['k],
     pages: ArenaVec[Parsed['k], 'k], outputs: ArenaMap[Span['k], Span['k], 'k],
     root: Span['k], base_path: Span['k], origin: Span['k]) -> bool {
     let target = match link.bases {
-        Option::Some(bases) => scoped_target(&cx, page.url, base_path, origin, bases, link.value),
-        Option::None => link.value,
+        Some(bases) => scoped_target(&cx, page.url, base_path, origin, bases, link.value),
+        None => link.value,
     };
     let local_target = site_target(&cx, target, origin);
     if local_target.eq(&cx, target) && external(&cx, local_target) { return false; }
     let hash = match local_target.find_byte(&cx, b'#', 0usize) {
-        Option::Some(at_pos) => at_pos,
-        Option::None => local_target.len(),
+        Some(at_pos) => at_pos,
+        None => local_target.len(),
     };
     let query = match local_target.find_byte(&cx, b'?', 0usize) {
-        Option::Some(at_pos) => if at_pos < hash { at_pos } else { hash },
-        Option::None => hash,
+        Some(at_pos) => if at_pos < hash { at_pos } else { hash },
+        None => hash,
     };
     let original_path = local_target.slice(0usize, query);
     let fragment = if hash < local_target.len() { decoded(&cx, local_target.slice(hash + 1usize, local_target.len())) }
@@ -837,8 +837,8 @@ fn invalid_link(&cx: Domain!['k], page: Parsed['k], link: LinkTarget['k],
         path = Buffer!::new().push_bytes(&cx, parent(&cx, page.url)).push_bytes(&cx, path).save(&cx);
     }
     let path = match normalized(&cx, decoded(&cx, path)) {
-        Option::Some(found) => found,
-        Option::None => return true,
+        Some(found) => found,
+        None => return true,
     };
     let output = output_path(&cx, root, path);
     if !outputs.contains(&cx, output) { return true; }

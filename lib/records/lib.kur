@@ -20,19 +20,19 @@ fn field(&cx: Domain!['k], record: TomlValue['k], path: Span['k]) -> Option[Toml
     var remaining = path;
     while true {
         let table = match value.as_table() {
-            Option::Some(found) => found,
-            Option::None => return Option::None,
+            Some(found) => found,
+            None => return Option::None,
         };
         match remaining.find_byte(&cx, b'.', 0usize) {
-            Option::Some(dot) => {
+            Some(dot) => {
                 if dot == 0usize { return Option::None; }
                 value = match table.get(&cx, remaining.slice(0usize, dot)) {
-                    Option::Some(found) => found,
-                    Option::None => return Option::None,
+                    Some(found) => found,
+                    None => return Option::None,
                 };
                 remaining = remaining.slice(dot + 1usize, remaining.len());
             },
-            Option::None => return table.get(&cx, remaining),
+            None => return table.get(&cx, remaining),
         }
     }
     Option::None
@@ -58,15 +58,15 @@ fn filter_records(&cx: Domain!['k], values: ArenaVec[TomlValue['k], 'k], key: Sp
     while i < values.len(&cx) {
         let value = values.at(&cx, i);
         match value.as_table() {
-            Option::Some(table) => (),
-            Option::None => return Result::Err.("filter item must be a table"),
+            Some(table) => (),
+            None => return Result::Err.("filter item must be a table"),
         }
         match field(&cx, value, key) {
-            Option::Some(found) => match scalar(&cx, found) {
-                Option::Some(text) => if text.eq(&cx, target) { selected.push(&cx, value); },
-                Option::None => (),
+            Some(found) => match scalar(&cx, found) {
+                Some(text) => if text.eq(&cx, target) { selected.push(&cx, value); },
+                None => (),
             },
-            Option::None => (),
+            None => (),
         }
         i = i + 1usize;
     }
@@ -82,26 +82,26 @@ fn filter_contains(&cx: Domain!['k], values: ArenaVec[TomlValue['k], 'k], key: S
     while i < values.len(&cx) {
         let value = values.at(&cx, i);
         match value.as_table() {
-            Option::Some(table) => (),
-            Option::None => return Result::Err.("filter item must be a table"),
+            Some(table) => (),
+            None => return Result::Err.("filter item must be a table"),
         }
         match field(&cx, value, key) {
-            Option::Some(found) => match found.as_array() {
-                Option::Some(items) => {
+            Some(found) => match found.as_array() {
+                Some(items) => {
                     var j = 0usize;
                     var matched = false;
                     while j < items.len(&cx) && !matched {
                         match scalar(&cx, items.at(&cx, j)) {
-                            Option::Some(text) => if text.eq(&cx, target) { matched = true; },
-                            Option::None => (),
+                            Some(text) => if text.eq(&cx, target) { matched = true; },
+                            None => (),
                         }
                         j = j + 1usize;
                     }
                     if matched { selected.push(&cx, value); }
                 },
-                Option::None => (),
+                None => (),
             },
-            Option::None => (),
+            None => (),
         }
         i = i + 1usize;
     }
@@ -161,8 +161,8 @@ fn sort_records(&cx: Domain!['k], values: ArenaVec[TomlValue['k], 'k], key: Span
     while i < values.len(&cx) {
         let value = values.at(&cx, i);
         let sort_key = match field(&cx, value, key) {
-            Option::Some(found) => found,
-            Option::None => return Result::Err.("sort field is missing"),
+            Some(found) => found,
+            None => return Result::Err.("sort field is missing"),
         };
         let type_id = kind(sort_key);
         if type_id == 0usize { return Result::Err.("sort field must be a scalar"); }

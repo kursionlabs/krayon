@@ -16,11 +16,11 @@ forall 'k.
 fn workspace(&cx: Domain!['k]) -> Result[Span['k], Buffer!] {
     let fallback = Span::from_static(&cx, "/tmp");
     let directory = match variable(&cx, Span::from_static(&cx, "TMPDIR")) {
-        Option::Some(value) => {
+        Some(value) => {
             let path = value.save(&cx);
             if path.is_empty() { fallback } else { path }
         },
-        Option::None => fallback,
+        None => fallback,
     };
     let parent = real_path(&cx, directory)?;
     let template = Buffer!::new().push_bytes(&cx, parent).push_static("/krayon-preview-XXXXXX").push_byte(0);
@@ -51,8 +51,8 @@ fn run_server(&cx: Domain!['k], server: Server!, temporary: Span['k],
         return Result::Err.(f"krayon: cannot write preview URL\n");
     }
     match server.run() {
-        Result::Ok(nothing) => Result::Ok.(()),
-        Result::Err(code) => Result::Err.(f"krayon: preview stopped (libuv error {code})\n"),
+        Ok(nothing) => Result::Ok.(()),
+        Err(code) => Result::Err.(f"krayon: preview stopped (libuv error {code})\n"),
     }
 }
 
@@ -61,19 +61,19 @@ fn serve(&cx: Domain!['k], root: Span['k], include_drafts: bool,
     overlay: Option[Span['k]], port: u16) -> Result[(), Buffer!] {
     // Bind first so Kable can receive shutdown signals during the build.
     let server = match Server!::bind(port, static_files::serve_from_cwd) {
-        Result::Ok(server) => server,
-        Result::Err(code) => return Result::Err.(f"krayon: cannot bind preview on port {port} (libuv error {code})\n"),
+        Ok(server) => server,
+        Err(code) => return Result::Err.(f"krayon: cannot bind preview on port {port} (libuv error {code})\n"),
     };
     let temporary = match workspace(&cx) {
-        Result::Ok(path) => path,
-        Result::Err(message) => { server.stop(); return Result::Err.(message); },
+        Ok(path) => path,
+        Err(message) => { server.stop(); return Result::Err.(message); },
     };
     let result = match build_preview(&cx, root, temporary, overlay, include_drafts) {
-        Result::Ok(base) => run_server(&cx, server, temporary, base),
-        Result::Err(message) => { server.stop(); Result::Err.(message) },
+        Ok(base) => run_server(&cx, server, temporary, base),
+        Err(message) => { server.stop(); Result::Err.(message) },
     };
     match result {
-        Result::Ok(nothing) => remove_tree(&cx, temporary),
-        Result::Err(message) => Result::Err.(clean_after_error(&cx, temporary, message)),
+        Ok(nothing) => remove_tree(&cx, temporary),
+        Err(message) => Result::Err.(clean_after_error(&cx, temporary, message)),
     }
 }

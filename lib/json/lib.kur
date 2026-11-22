@@ -84,8 +84,8 @@ fn string(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error
         } else {
             if c >= 128u8 {
                 match decode(&cx, text, i) {
-                    Option::Some(pair) => { let (code, next) = pair; i = next; },
-                    Option::None => return Result::Err.(fail(i, "invalid UTF-8 in string")),
+                    Some(pair) => { let (code, next) = pair; i = next; },
+                    None => return Result::Err.(fail(i, "invalid UTF-8 in string")),
                 }
             } else { i = i + 1usize; }
         }

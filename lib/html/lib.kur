@@ -89,15 +89,15 @@ fn parse_page(&cx: Domain!['k], source: Span['k], url: Span['k]) -> Result[Page[
             url, body: source, body_line: 1usize });
     }
     match source.find(&cx, lit(&cx, "\n+++"), 4usize) {
-        Option::None => Result::Err.(lit(&cx, "unclosed TOML front matter")),
-        Option::Some(end) => {
+        None => Result::Err.(lit(&cx, "unclosed TOML front matter")),
+        Some(end) => {
             let after = end + 4usize;
             if after < source.len() && byte(&cx, source, after) != b'\n' {
                 return Result::Err.(lit(&cx, "front matter delimiter must end its line"));
             }
             match parse(&cx, source.slice(4usize, end)) {
-                Result::Err(e) => Result::Err.(Span::from_static(&cx, e.message)),
-                Result::Ok(data) => {
+                Err(e) => Result::Err.(Span::from_static(&cx, e.message)),
+                Ok(data) => {
                     let start = if after < source.len() { after + 1usize } else { after };
                     let (line, column) = position(&cx, source, start, 1usize, 1usize);
                     Result::Ok.(Page.{ data, source_urls: ArenaMap::new(&cx),
@@ -116,8 +116,8 @@ fn field(&cx: Domain!['k], table: ArenaMap[Span['k], TomlValue['k], 'k], name: S
 forall 'k.
 fn string_field(&cx: Domain!['k], table: ArenaMap[Span['k], TomlValue['k], 'k], name: Slice[u8, 'static]) -> Option[Span['k]] {
     match field(&cx, table, name) {
-        Option::None => Option::None,
-        Option::Some(value) => value.as_string(),
+        None => Option::None,
+        Some(value) => value.as_string(),
     }
 }
 
@@ -155,10 +155,10 @@ fn lookup(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
             let binding = bindings.at(&cx, i);
             if binding.name.eq(&cx, root) {
                 return match dot {
-                    Option::None => Option::Some.(binding.value),
-                    Option::Some(at) => match binding.value.as_table() {
-                        Option::None => Option::None,
-                        Option::Some(found) => lookup_table(&cx, found, path.slice(at + 1usize, path.len())),
+                    None => Option::Some.(binding.value),
+                    Some(at) => match binding.value.as_table() {
+                        None => Option::None,
+                        Some(found) => lookup_table(&cx, found, path.slice(at + 1usize, path.len())),
                     },
                 };
             }
@@ -174,18 +174,18 @@ fn lookup_table(&cx: Domain!['k], start: ArenaMap[Span['k], TomlValue['k], 'k], 
     var path = path;
     while true {
         match path.find_byte(&cx, b'.', 0usize) {
-            Option::Some(dot) => {
+            Some(dot) => {
                 let key = path.slice(0usize, dot);
                 match table.get(&cx, key) {
-                    Option::None => return Option::None,
-                    Option::Some(value) => match value.as_table() {
-                        Option::None => return Option::None,
-                        Option::Some(next) => { table = next; },
+                    None => return Option::None,
+                    Some(value) => match value.as_table() {
+                        None => return Option::None,
+                        Some(next) => { table = next; },
                     },
                 }
                 path = path.slice(dot + 1usize, path.len());
             },
-            Option::None => return table.get(&cx, path),
+            None => return table.get(&cx, path),
         }
     }
     Option::None
@@ -210,20 +210,20 @@ fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
     if expr.ends_with(&cx, lit(&cx, " | safe")) {
         let source = expr.slice(0usize, expr.len() - 7usize).trim(&cx);
         return match lookup(&cx, site, collections, page, bindings, source) {
-            Option::Some(value) => scalar(&cx, value),
-            Option::None => Option::None,
+            Some(value) => scalar(&cx, value),
+            None => Option::None,
         };
     }
     if expr.ends_with(&cx, lit(&cx, " | page_url")) {
         let source = expr.slice(0usize, expr.len() - 11usize).trim(&cx);
         let target = match literal(&cx, source) {
-            Option::Some(value) => value,
-            Option::None => match lookup(&cx, site, collections, page, bindings, source) {
-                Option::Some(value) => match scalar(&cx, value) {
-                    Option::Some(text) => text,
-                    Option::None => return Option::None,
+            Some(value) => value,
+            None => match lookup(&cx, site, collections, page, bindings, source) {
+                Some(value) => match scalar(&cx, value) {
+                    Some(text) => text,
+                    None => return Option::None,
                 },
-                Option::None => return Option::None,
+                None => return Option::None,
             },
         };
         var end = target.len();
@@ -233,12 +233,12 @@ fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
         if path.starts_with(&cx, lit(&cx, "/")) { path = path.slice(1usize, path.len()); }
         else if path.starts_with(&cx, lit(&cx, "./")) { path = path.slice(2usize, path.len()); }
         let url = match page.source_urls.get(&cx, path) {
-            Option::Some(found) => found,
-            Option::None => return Option::None,
+            Some(found) => found,
+            None => return Option::None,
         };
         let base = match string_field(&cx, site, "base_path") {
-            Option::Some(path) => path,
-            Option::None => lit(&cx, ""),
+            Some(path) => path,
+            None => lit(&cx, ""),
         };
         return Option::Some.(prefix(&cx, base,
             Buffer!::new().push_bytes(&cx, url).push_bytes(&cx, target.slice(end, target.len())).save(&cx)));
@@ -246,35 +246,35 @@ fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
     if expr.ends_with(&cx, lit(&cx, " | asset_url")) {
         let source = expr.slice(0usize, expr.len() - 12usize).trim(&cx);
         let target = match literal(&cx, source) {
-            Option::Some(value) => value,
-            Option::None => match lookup(&cx, site, collections, page, bindings, source) {
-                Option::Some(value) => match scalar(&cx, value) {
-                    Option::Some(text) => text,
-                    Option::None => return Option::None,
+            Some(value) => value,
+            None => match lookup(&cx, site, collections, page, bindings, source) {
+                Some(value) => match scalar(&cx, value) {
+                    Some(text) => text,
+                    None => return Option::None,
                 },
-                Option::None => return Option::None,
+                None => return Option::None,
             },
         };
         var end = target.len();
         match target.find_byte(&cx, b'?', 0usize) { Option::Some(at) => if at < end { end = at; }, Option::None => (), }
         match target.find_byte(&cx, b'#', 0usize) { Option::Some(at) => if at < end { end = at; }, Option::None => (), }
         let paths = match site.get(&cx, lit(&cx, "asset_urls")) {
-            Option::Some(value) => match value.as_table() {
-                Option::Some(table) => table,
-                Option::None => return Option::None,
+            Some(value) => match value.as_table() {
+                Some(table) => table,
+                None => return Option::None,
             },
-            Option::None => return Option::None,
+            None => return Option::None,
         };
         let url = match paths.get(&cx, target.slice(0usize, end)) {
-            Option::Some(value) => match value.as_string() {
-                Option::Some(found) => found,
-                Option::None => return Option::None,
+            Some(value) => match value.as_string() {
+                Some(found) => found,
+                None => return Option::None,
             },
-            Option::None => return Option::None,
+            None => return Option::None,
         };
         let base = match string_field(&cx, site, "base_path") {
-            Option::Some(path) => path,
-            Option::None => lit(&cx, ""),
+            Some(path) => path,
+            None => lit(&cx, ""),
         };
         return Option::Some.(prefix(&cx, base,
             Buffer!::new().push_bytes(&cx, url).push_bytes(&cx, target.slice(end, target.len())).save(&cx)));
@@ -282,59 +282,59 @@ fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
     if expr.ends_with(&cx, lit(&cx, " | absolute_url")) {
         let source = expr.slice(0usize, expr.len() - 15usize).trim(&cx);
         let target = match literal(&cx, source) {
-            Option::Some(value) => value,
-            Option::None => match lookup(&cx, site, collections, page, bindings, source) {
-                Option::Some(value) => match scalar(&cx, value) {
-                    Option::Some(text) => text,
-                    Option::None => return Option::None,
+            Some(value) => value,
+            None => match lookup(&cx, site, collections, page, bindings, source) {
+                Some(value) => match scalar(&cx, value) {
+                    Some(text) => text,
+                    None => return Option::None,
                 },
-                Option::None => return Option::None,
+                None => return Option::None,
             },
         };
         let origin = match string_field(&cx, site, "origin") {
-            Option::Some(value) => value,
-            Option::None => return Option::None,
+            Some(value) => value,
+            None => return Option::None,
         };
         if origin.is_empty() { return Option::None; }
         let base = match string_field(&cx, site, "base_path") {
-            Option::Some(path) => path,
-            Option::None => lit(&cx, ""),
+            Some(path) => path,
+            None => lit(&cx, ""),
         };
         return Option::Some.(absolute(&cx, origin, base, target));
     }
     if expr.ends_with(&cx, lit(&cx, " | url")) {
         let source = expr.slice(0usize, expr.len() - 6usize).trim(&cx);
         let target = match literal(&cx, source) {
-            Option::Some(value) => value,
-            Option::None => match lookup(&cx, site, collections, page, bindings, source) {
-                Option::Some(value) => match scalar(&cx, value) {
-                    Option::Some(text) => text,
-                    Option::None => return Option::None,
+            Some(value) => value,
+            None => match lookup(&cx, site, collections, page, bindings, source) {
+                Some(value) => match scalar(&cx, value) {
+                    Some(text) => text,
+                    None => return Option::None,
                 },
-                Option::None => return Option::None,
+                None => return Option::None,
             },
         };
         let base = match string_field(&cx, site, "base_path") {
-            Option::Some(path) => path,
-            Option::None => lit(&cx, ""),
+            Some(path) => path,
+            None => lit(&cx, ""),
         };
         return Option::Some.(prefix(&cx, base, target));
     }
     match expr.find(&cx, lit(&cx, " or "), 0usize) {
-        Option::Some(at) => {
+        Some(at) => {
             let left = expr.slice(0usize, at).trim(&cx);
             match lookup(&cx, site, collections, page, bindings, left) {
-                Option::Some(v) => match scalar(&cx, v) {
-                    Option::Some(s) => if !s.is_empty() { return Option::Some.(s); },
-                    Option::None => (),
+                Some(v) => match scalar(&cx, v) {
+                    Some(s) => if !s.is_empty() { return Option::Some.(s); },
+                    None => (),
                 },
-                Option::None => (),
+                None => (),
             }
             literal(&cx, expr.slice(at + 4usize, expr.len()))
         },
-        Option::None => match lookup(&cx, site, collections, page, bindings, expr) {
-            Option::None => Option::None,
-            Option::Some(v) => scalar(&cx, v),
+        None => match lookup(&cx, site, collections, page, bindings, expr) {
+            None => Option::None,
+            Some(v) => scalar(&cx, v),
         },
     }
 }
@@ -345,29 +345,29 @@ fn truth(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
     expr: Span['k], content: Span['k]) -> bool {
     let expr = expr.trim(&cx);
     match expr.find(&cx, lit(&cx, " == "), 0usize) {
-        Option::Some(at) => {
+        Some(at) => {
             let left = resolve(&cx, site, collections, page, bindings, expr.slice(0usize, at), content);
             let right = literal(&cx, expr.slice(at + 4usize, expr.len()));
             match left {
-                Option::None => false,
-                Option::Some(a) => match right {
-                    Option::None => false,
-                    Option::Some(b) => a.eq(&cx, b),
+                None => false,
+                Some(a) => match right {
+                    None => false,
+                    Some(b) => a.eq(&cx, b),
                 },
             }
         },
-        Option::None => {
+        None => {
             match lookup(&cx, site, collections, page, bindings, expr) {
-                Option::Some(value) => match value {
+                Some(value) => match value {
                     TomlValue::Array(items) => return items.len(&cx) > 0usize,
                     TomlValue::Table(fields) => return fields.len(&cx) > 0usize,
                     _ => (),
                 },
-                Option::None => (),
+                None => (),
             }
             match resolve(&cx, site, collections, page, bindings, expr, content) {
-                Option::None => false,
-                Option::Some(s) => !s.is_empty() && !s.is(&cx, "false") && !s.is(&cx, "0"),
+                None => false,
+                Some(s) => !s.is_empty() && !s.is(&cx, "false") && !s.is(&cx, "0"),
             }
         },
     }
@@ -435,8 +435,8 @@ fn json_value(&cx: Domain!['k], out: Buffer!, value: TomlValue['k], depth: usize
             while i < items.len(&cx) {
                 if i > 0usize { out = out.push_byte(b','); }
                 out = match json_value(&cx, out, items.at(&cx, i), depth + 1usize) {
-                    Result::Ok(next) => next,
-                    Result::Err(message) => return Result::Err.(message),
+                    Ok(next) => next,
+                    Err(message) => return Result::Err.(message),
                 };
                 i = i + 1usize;
             }
@@ -447,8 +447,8 @@ fn json_value(&cx: Domain!['k], out: Buffer!, value: TomlValue['k], depth: usize
             var i = 0usize;
             while i < table.positions(&cx) {
                 match table.key_at(&cx, i) {
-                    Option::Some(key) => keys.push(&cx, key),
-                    Option::None => (),
+                    Some(key) => keys.push(&cx, key),
+                    None => (),
                 }
                 i = i + 1usize;
             }
@@ -460,12 +460,12 @@ fn json_value(&cx: Domain!['k], out: Buffer!, value: TomlValue['k], depth: usize
                 if i > 0usize { out = out.push_byte(b','); }
                 out = escape_json(&cx, out.push_byte(b'"'), key).push_static("\":");
                 let field = match table.get(&cx, key) {
-                    Option::Some(found) => found,
-                    Option::None => { out.destroy(); return Result::Err.(lit(&cx, "JSON table key disappeared")); },
+                    Some(found) => found,
+                    None => { out.destroy(); return Result::Err.(lit(&cx, "JSON table key disappeared")); },
                 };
                 out = match json_value(&cx, out, field, depth + 1usize) {
-                    Result::Ok(next) => next,
-                    Result::Err(message) => return Result::Err.(message),
+                    Ok(next) => next,
+                    Err(message) => return Result::Err.(message),
                 };
                 i = i + 1usize;
             }
@@ -552,21 +552,21 @@ fn include_error(&cx: Domain!['k], name: Span['k], detail: Slice[u8, 'static]) -
 forall 'k.
 fn include_source(&cx: Domain!['k], root: Span['k], name: Span['k]) -> Result[Span['k], Span['k]] {
     let base = match canonicalize(&cx, root) {
-        Result::Ok(path) => path.save(&cx),
-        Result::Err(e) => return Result::Err.(include_error(&cx, name, "cannot resolve layouts directory")),
+        Ok(path) => path.save(&cx),
+        Err(e) => return Result::Err.(include_error(&cx, name, "cannot resolve layouts directory")),
     };
     let requested = Buffer!::new().push_bytes(&cx, root).push_static("/").push_bytes(&cx, name).save(&cx);
     let actual = match canonicalize(&cx, requested) {
-        Result::Ok(path) => path.save(&cx),
-        Result::Err(e) => return Result::Err.(include_error(&cx, name, "cannot read file")),
+        Ok(path) => path.save(&cx),
+        Err(e) => return Result::Err.(include_error(&cx, name, "cannot read file")),
     };
     let prefix = Buffer!::new().push_bytes(&cx, base).push_static("/").save(&cx);
     if !actual.starts_with(&cx, prefix) {
         return Result::Err.(include_error(&cx, name, "path escapes layouts directory"));
     }
     match read_to_arena(&cx, actual) {
-        Result::Ok(source) => Result::Ok.(source),
-        Result::Err(e) => Result::Err.(include_error(&cx, name, "cannot read file")),
+        Ok(source) => Result::Ok.(source),
+        Err(e) => Result::Err.(include_error(&cx, name, "cannot read file")),
     }
 }
 
@@ -575,10 +575,10 @@ fn query_value(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
     collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k],
     bindings: ArenaVec[Binding['k], 'k], text: Span['k]) -> Option[Span['k]] {
     match literal(&cx, text) {
-        Option::Some(value) => Option::Some.(value),
-        Option::None => match lookup(&cx, site, collections, page, bindings, text.trim(&cx)) {
-            Option::Some(value) => scalar(&cx, value),
-            Option::None => Option::None,
+        Some(value) => Option::Some.(value),
+        None => match lookup(&cx, site, collections, page, bindings, text.trim(&cx)) {
+            Some(value) => scalar(&cx, value),
+            None => Option::None,
         },
     }
 }
@@ -588,67 +588,67 @@ fn query_array(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
     collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k],
     bindings: ArenaVec[Binding['k], 'k], expression: Span['k]) -> Result[ArenaVec[TomlValue['k], 'k], Span['k]] {
     let first_pipe = match expression.find_byte(&cx, b'|', 0usize) {
-        Option::Some(at) => at,
-        Option::None => expression.len(),
+        Some(at) => at,
+        None => expression.len(),
     };
     let source = expression.slice(0usize, first_pipe).trim(&cx);
     var values = match lookup(&cx, site, collections, page, bindings, source) {
-        Option::Some(value) => match value.as_array() {
-            Option::Some(array) => array,
-            Option::None => return Result::Err.(source),
+        Some(value) => match value.as_array() {
+            Some(array) => array,
+            None => return Result::Err.(source),
         },
-        Option::None => return Result::Err.(source),
+        None => return Result::Err.(source),
     };
     var pos = first_pipe;
     while pos < expression.len() {
         let start = pos + 1usize;
         let end = match expression.find_byte(&cx, b'|', start) {
-            Option::Some(at) => at,
-            Option::None => expression.len(),
+            Some(at) => at,
+            None => expression.len(),
         };
         let filter = expression.slice(start, end).trim(&cx);
         let colon = match filter.find_byte(&cx, b':', 0usize) {
-            Option::Some(at) => at,
-            Option::None => return Result::Err.(filter),
+            Some(at) => at,
+            None => return Result::Err.(filter),
         };
         let operation = filter.slice(0usize, colon).trim(&cx);
         let arguments = filter.slice(colon + 1usize, filter.len()).trim(&cx);
         if operation.is(&cx, "children_of") {
             let parent = match query_value(&cx, site, collections, page, bindings, arguments) {
-                Option::Some(value) => value,
-                Option::None => return Result::Err.(filter),
+                Some(value) => value,
+                None => return Result::Err.(filter),
             };
             let result = ArenaVec::new(&cx);
             var i = 0usize;
             while i < values.len(&cx) {
                 let value = values.at(&cx, i);
                 let table = match value.as_table() {
-                    Option::Some(table) => table,
-                    Option::None => return Result::Err.(filter),
+                    Some(table) => table,
+                    None => return Result::Err.(filter),
                 };
                 var matches = false;
                 match table.get(&cx, lit(&cx, "parent")) {
-                    Option::Some(field) => match field.as_string() {
-                        Option::Some(url) => { matches = url.eq(&cx, parent); },
-                        Option::None => return Result::Err.(filter),
+                    Some(field) => match field.as_string() {
+                        Some(url) => { matches = url.eq(&cx, parent); },
+                        None => return Result::Err.(filter),
                     },
-                    Option::None => (),
+                    None => (),
                 }
                 match table.get(&cx, lit(&cx, "parents")) {
-                    Option::Some(field) => match field.as_array() {
-                        Option::Some(parents) => {
+                    Some(field) => match field.as_array() {
+                        Some(parents) => {
                             var j = 0usize;
                             while j < parents.len(&cx) {
                                 match parents.at(&cx, j).as_string() {
-                                    Option::Some(url) => if url.eq(&cx, parent) { matches = true; },
-                                    Option::None => return Result::Err.(filter),
+                                    Some(url) => if url.eq(&cx, parent) { matches = true; },
+                                    None => return Result::Err.(filter),
                                 }
                                 j = j + 1usize;
                             }
                         },
-                        Option::None => return Result::Err.(filter),
+                        None => return Result::Err.(filter),
                     },
-                    Option::None => (),
+                    None => (),
                 }
                 if matches { result.push(&cx, value); }
                 i = i + 1usize;
@@ -661,44 +661,44 @@ fn query_array(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                 match comma { Option::Some(_) => return Result::Err.(filter), Option::None => (), }
             }
             let field_text = match comma {
-                Option::Some(at) => arguments.slice(0usize, at).trim(&cx),
-                Option::None => arguments,
+                Some(at) => arguments.slice(0usize, at).trim(&cx),
+                None => arguments,
             };
             let field_name = match literal(&cx, field_text) {
-                Option::Some(name) => name,
-                Option::None => return Result::Err.(filter),
+                Some(name) => name,
+                None => return Result::Err.(filter),
             };
             if field_name.is_empty() { return Result::Err.(filter); }
             if operation.is(&cx, "sort_by") {
                 let descending = match comma {
-                    Option::None => false,
-                    Option::Some(at) => match literal(&cx, arguments.slice(at + 1usize, arguments.len())) {
-                        Option::Some(order) => if order.is(&cx, "desc") { true }
+                    None => false,
+                    Some(at) => match literal(&cx, arguments.slice(at + 1usize, arguments.len())) {
+                        Some(order) => if order.is(&cx, "desc") { true }
                             else if order.is(&cx, "asc") { false }
                             else { return Result::Err.(filter); },
-                        Option::None => return Result::Err.(filter),
+                        None => return Result::Err.(filter),
                     },
                 };
                 values = match sort_records(&cx, values, field_name, descending) {
-                    Result::Ok(sorted) => sorted,
-                    Result::Err(message) => return Result::Err.(Buffer!::new().push_bytes(&cx, filter)
+                    Ok(sorted) => sorted,
+                    Err(message) => return Result::Err.(Buffer!::new().push_bytes(&cx, filter)
                         .push_static(": ").push_static(message).save(&cx)),
                 };
             } else if operation.is(&cx, "where") || operation.is(&cx, "contains") {
                 let comma_at = match comma {
-                    Option::Some(at) => at,
-                    Option::None => return Result::Err.(filter),
+                    Some(at) => at,
+                    None => return Result::Err.(filter),
                 };
                 let target = match query_value(&cx, site, collections, page, bindings, arguments.slice(comma_at + 1usize, arguments.len())) {
-                    Option::Some(value) => value,
-                    Option::None => return Result::Err.(filter),
+                    Some(value) => value,
+                    None => return Result::Err.(filter),
                 };
                 let filtered = if operation.is(&cx, "contains") {
                     filter_contains(&cx, values, field_name, target)
                 } else { filter_records(&cx, values, field_name, target) };
                 values = match filtered {
-                    Result::Ok(selected) => selected,
-                    Result::Err(message) => return Result::Err.(Buffer!::new().push_bytes(&cx, filter)
+                    Ok(selected) => selected,
+                    Err(message) => return Result::Err.(Buffer!::new().push_bytes(&cx, filter)
                         .push_static(": ").push_static(message).save(&cx)),
                 };
             } else {
@@ -707,15 +707,15 @@ fn query_array(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                 while i < values.len(&cx) {
                     let value = values.at(&cx, i);
                     let table = match value.as_table() {
-                        Option::Some(table) => table,
-                        Option::None => return Result::Err.(filter),
+                        Some(table) => table,
+                        None => return Result::Err.(filter),
                     };
                     let key = match table.get(&cx, field_name) {
-                        Option::Some(field) => match scalar(&cx, field) {
-                            Option::Some(text) => text,
-                            Option::None => return Result::Err.(filter),
+                        Some(field) => match scalar(&cx, field) {
+                            Some(text) => text,
+                            None => return Result::Err.(filter),
                         },
-                        Option::None => return Result::Err.(filter),
+                        None => return Result::Err.(filter),
                     };
                     var found = false;
                     var j = 0usize;
@@ -757,12 +757,12 @@ fn find_endfor(&cx: Domain!['k], source: Span['k], start: usize) -> Option[(usiz
     var pos = start;
     while pos < source.len() {
         let opening = match source.find(&cx, lit(&cx, "{%"), pos) {
-            Option::Some(at) => at,
-            Option::None => return Option::None,
+            Some(at) => at,
+            None => return Option::None,
         };
         let close = match source.find(&cx, lit(&cx, "%}"), opening + 2usize) {
-            Option::Some(at) => at,
-            Option::None => return Option::None,
+            Some(at) => at,
+            None => return Option::None,
         };
         let directive = source.slice(opening + 2usize, close).trim(&cx);
         if starts(&cx, directive, "for ") { depth = depth + 1usize; }
@@ -793,16 +793,16 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
     while pos < source.len() {
         if byte(&cx, source, pos) == b'{' && byte(&cx, source, pos + 1usize) == b'{' {
             match source.find(&cx, lit(&cx, "}}"), pos + 2usize) {
-                Option::None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                     first_line, first_column, lit(&cx, "unclosed variable"))); },
-                Option::Some(end) => {
+                Some(end) => {
                     if active {
                         let expr = source.slice(pos + 2usize, end).trim(&cx);
                         if expr.ends_with(&cx, lit(&cx, " | absolute_url"))
                             || expr.ends_with(&cx, lit(&cx, " | absolute_url | json")) {
                             let origin = match string_field(&cx, site, "origin") {
-                                Option::Some(value) => value,
-                                Option::None => lit(&cx, ""),
+                                Some(value) => value,
+                                None => lit(&cx, ""),
                             };
                             if origin.is_empty() {
                                 out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
@@ -817,32 +817,32 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                             }
                             let field = expr.slice(0usize, expr.len() - 7usize).trim(&cx);
                             let value = match literal(&cx, field) {
-                                Option::Some(text) => Option::Some.(TomlValue::String.(text)),
-                                Option::None => if field.ends_with(&cx, lit(&cx, " | url"))
+                                Some(text) => Option::Some.(TomlValue::String.(text)),
+                                None => if field.ends_with(&cx, lit(&cx, " | url"))
                                     || field.ends_with(&cx, lit(&cx, " | page_url"))
                                     || field.ends_with(&cx, lit(&cx, " | asset_url"))
                                     || field.ends_with(&cx, lit(&cx, " | absolute_url")) {
                                     match resolve(&cx, site, collections, page, bindings, field, content) {
-                                        Option::Some(text) => Option::Some.(TomlValue::String.(text)),
-                                        Option::None => Option::None,
+                                        Some(text) => Option::Some.(TomlValue::String.(text)),
+                                        None => Option::None,
                                     }
                                 } else { lookup(&cx, site, collections, page, bindings, field) },
                             };
                             let value = match value {
-                                Option::Some(found) => found,
-                                Option::None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                                Some(found) => found,
+                                None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                                     first_line, first_column, expr)); },
                             };
                             out = match json_value(&cx, out, value, 0usize) {
-                                Result::Ok(next) => next,
-                                Result::Err(message) => return Result::Err.(template_error(&cx, file, source, pos,
+                                Ok(next) => next,
+                                Err(message) => return Result::Err.(template_error(&cx, file, source, pos,
                                     first_line, first_column, message)),
                             };
                         } else {
                             match resolve(&cx, site, collections, page, bindings, expr, content) {
-                                Option::None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                                None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                                     first_line, first_column, expr)); },
-                                Option::Some(value) => {
+                                Some(value) => {
                                     if expr.ends_with(&cx, lit(&cx, " | safe")) { out = out.push_bytes(&cx, value); }
                                     else {
                                         if xml && !valid_xml(&cx, value) {
@@ -860,9 +860,9 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
             }
         } else if byte(&cx, source, pos) == b'{' && byte(&cx, source, pos + 1usize) == b'%' {
             match source.find(&cx, lit(&cx, "%}"), pos + 2usize) {
-                Option::None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                     first_line, first_column, lit(&cx, "unclosed directive"))); },
-                Option::Some(end) => {
+                Some(end) => {
                     let directive = source.slice(pos + 2usize, end).trim(&cx);
                     var after = end + 2usize;
                     if starts(&cx, directive, "if ") {
@@ -871,9 +871,9 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                         active = matched;
                     } else if directive.is(&cx, "else") {
                         match stack.pop(&cx) {
-                            Option::None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                            None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                                 first_line, first_column, lit(&cx, "else without if"))); },
-                            Option::Some(frame) => {
+                            Some(frame) => {
                                 if frame.else_seen { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                                     first_line, first_column, lit(&cx, "duplicate else"))); }
                                 active = frame.parent && !frame.matched;
@@ -882,15 +882,15 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                         }
                     } else if directive.is(&cx, "endif") {
                         match stack.pop(&cx) {
-                            Option::None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                            None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                                 first_line, first_column, lit(&cx, "endif without if"))); },
-                            Option::Some(frame) => { active = frame.parent; },
+                            Some(frame) => { active = frame.parent; },
                         }
                     } else if starts(&cx, directive, "for ") {
                         let clause = directive.slice(4usize, directive.len());
                         let separator = match clause.find(&cx, lit(&cx, " in "), 0usize) {
-                            Option::Some(at) => at,
-                            Option::None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                            Some(at) => at,
+                            None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                                 first_line, first_column, directive)); },
                         };
                         let name = clause.slice(0usize, separator).trim(&cx);
@@ -898,14 +898,14 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                         if !valid_name(&cx, name) { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                             first_line, first_column, directive)); }
                         let (body_end, tag_end) = match find_endfor(&cx, source, after) {
-                            Option::Some(positions) => positions,
-                            Option::None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                            Some(positions) => positions,
+                            None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                                 first_line, first_column, lit(&cx, "unclosed for"))); },
                         };
                         if active {
                             let values = match query_array(&cx, site, collections, page, bindings, items) {
-                                Result::Ok(array) => array,
-                                Result::Err(message) => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                                Ok(array) => array,
+                                Err(message) => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                                     first_line, first_column, message)); },
                             };
                             let (line, column) = position(&cx, source, after, first_line, first_column);
@@ -922,8 +922,8 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                                 let popped = bindings.pop(&cx);
                                 let popped_loop = bindings.pop(&cx);
                                 match part {
-                                    Result::Ok(html) => { out = out.push_buffer(html); },
-                                    Result::Err(message) => { out.destroy(); return Result::Err.(message); },
+                                    Ok(html) => { out = out.push_buffer(html); },
+                                    Err(message) => { out.destroy(); return Result::Err.(message); },
                                 }
                                 i = i + 1usize;
                             }
@@ -932,8 +932,8 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                     } else if starts(&cx, directive, "include ") {
                         let operand = directive.slice(8usize, directive.len()).trim(&cx);
                         let name = match literal(&cx, operand) {
-                            Option::Some(path) => path,
-                            Option::None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                            Some(path) => path,
+                            None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                                 first_line, first_column, directive)); },
                         };
                         if !name.ends_with(&cx, format_extension(&cx, format)) {
@@ -954,8 +954,8 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                                 i = i + 1usize;
                             }
                             let partial = match include_source(&cx, root, name) {
-                                Result::Ok(source) => source,
-                                Result::Err(message) => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
+                                Ok(source) => source,
+                                Err(message) => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                                     first_line, first_column, message)); },
                             };
                             includes.push(&cx, name);
@@ -964,8 +964,8 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                                 partial, content, format, 1usize, 1usize, depth + 1usize);
                             let popped = includes.pop(&cx);
                             match part {
-                                Result::Ok(html) => { out = out.push_buffer(html); },
-                                Result::Err(message) => {
+                                Ok(html) => { out = out.push_buffer(html); },
+                                Err(message) => {
                                     out.destroy();
                                     return Result::Err.(template_error(&cx, file, source, pos, first_line, first_column,
                                         Buffer!::new().push_static("include ").push_bytes(&cx, message).save(&cx)));

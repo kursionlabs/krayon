@@ -24,8 +24,8 @@ fn main(args: Args) -> i32 {
     let exists 'k. cx = Domain!::new(hash_seed());
     var cx = cx;
     let command = match args.bytes(1usize) {
-        Option::Some(s) => Span::from_static(&cx, s),
-        Option::None => Span::from_static(&cx, ""),
+        Some(s) => Span::from_static(&cx, s),
+        None => Span::from_static(&cx, ""),
     };
     if !command.is(&cx, "build") && !command.is(&cx, "check")
         && !command.is(&cx, "routes") && !command.is(&cx, "init") && !command.is(&cx, "preview") {
@@ -42,8 +42,8 @@ fn main(args: Args) -> i32 {
         }
         if args.len() == 3usize {
             let argument = match args.bytes(2usize) {
-                Option::Some(s) => Span::from_static(&cx, s),
-                Option::None => Span::from_static(&cx, ""),
+                Some(s) => Span::from_static(&cx, s),
+                None => Span::from_static(&cx, ""),
             };
             if argument.is_empty() || argument.byte_or_zero(&cx, 0usize) == b'-' {
                 usage();
@@ -55,11 +55,11 @@ fn main(args: Args) -> i32 {
         let result = init(&cx, root);
         cx.destroy();
         return match result {
-            Result::Ok(nothing) => match print_buffer(Buffer!::new().push_static("Krayon site created\n")) {
-                Result::Ok(nothing) => 0i32,
-                Result::Err(e) => 1i32,
+            Ok(nothing) => match print_buffer(Buffer!::new().push_static("Krayon site created\n")) {
+                Ok(nothing) => 0i32,
+                Err(e) => 1i32,
             },
-            Result::Err(message) => { eprint_buffer(message); 1i32 },
+            Err(message) => { eprint_buffer(message); 1i32 },
         };
     }
     var have_root = false;
@@ -71,8 +71,8 @@ fn main(args: Args) -> i32 {
     var i = 2usize;
     while i < args.len() {
         let argument = match args.bytes(i) {
-            Option::Some(s) => Span::from_static(&cx, s),
-            Option::None => Span::from_static(&cx, ""),
+            Some(s) => Span::from_static(&cx, s),
+            None => Span::from_static(&cx, ""),
         };
         if argument.is(&cx, "--drafts") && !include_drafts { include_drafts = true; }
         else if argument.is(&cx, "--json") && command.is(&cx, "routes") && !json { json = true; }
@@ -95,8 +95,8 @@ fn main(args: Args) -> i32 {
                 return 2i32;
             }
             overlay = match args.bytes(i) {
-                Option::Some(s) => Span::from_static(&cx, s),
-                Option::None => Span::from_static(&cx, ""),
+                Some(s) => Span::from_static(&cx, s),
+                None => Span::from_static(&cx, ""),
             };
             if overlay.is_empty() || overlay.byte_or_zero(&cx, 0usize) == b'-' {
                 usage();
@@ -123,11 +123,11 @@ fn main(args: Args) -> i32 {
             else { routes_with_drafts(&cx, root, include_drafts) };
         cx.destroy();
         return match result {
-            Result::Ok(listing) => match print_buffer(listing) {
-                Result::Ok(nothing) => 0i32,
-                Result::Err(e) => { eprint_buffer(Buffer!::new().push_static("krayon: cannot write routes\n")); 1i32 },
+            Ok(listing) => match print_buffer(listing) {
+                Ok(nothing) => 0i32,
+                Err(e) => { eprint_buffer(Buffer!::new().push_static("krayon: cannot write routes\n")); 1i32 },
             },
-            Result::Err(message) => { eprint_buffer(message); 1i32 },
+            Err(message) => { eprint_buffer(message); 1i32 },
         };
     }
     let result = if command.is(&cx, "preview") {
@@ -140,7 +140,7 @@ fn main(args: Args) -> i32 {
         else { build_with_drafts(&cx, root, include_drafts) };
     cx.destroy();
     match result {
-        Result::Ok(nothing) => 0i32,
-        Result::Err(message) => { eprint_buffer(message); 1i32 },
+        Ok(nothing) => 0i32,
+        Err(message) => { eprint_buffer(message); 1i32 },
     }
 }

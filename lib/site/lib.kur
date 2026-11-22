@@ -106,8 +106,8 @@ fn markdown_excerpt_source(&cx: Domain!['k], source: Span['k]) -> Option[Span['k
     while pos < source.len() {
         let start = pos;
         let end = match source.find_byte(&cx, b'\n', pos) {
-            Option::Some(at) => at,
-            Option::None => source.len(),
+            Some(at) => at,
+            None => source.len(),
         };
         let line = source.slice(pos, end).trim_end(&cx);
         pos = if end < source.len() { end + 1usize } else { end };
@@ -159,24 +159,24 @@ fn report_generated(&cx: Domain!['k], source: SourcePage['k], rendered: Span['k]
 forall 'k.
 fn exists_path(&cx: Domain!['k], file: Span['k]) -> Result[bool, Buffer!] {
     match path_exists(&cx, file) {
-        Result::Ok(found) => Result::Ok.(found),
-        Result::Err(e) => Result::Err.(report(&cx, "cannot stat", file)),
+        Ok(found) => Result::Ok.(found),
+        Err(e) => Result::Err.(report(&cx, "cannot stat", file)),
     }
 }
 
 forall 'k.
 fn load(&cx: Domain!['k], file: Span['k]) -> Result[Span['k], Buffer!] {
     match read_to_arena(&cx, file) {
-        Result::Ok(text) => Result::Ok.(text),
-        Result::Err(e) => Result::Err.(report(&cx, "cannot read", file)),
+        Ok(text) => Result::Ok.(text),
+        Err(e) => Result::Err.(report(&cx, "cannot read", file)),
     }
 }
 
 forall 'k.
 fn ensure_dir(&cx: Domain!['k], directory: Span['k]) -> Result[(), Buffer!] {
     match create_dir_all(&cx, directory) {
-        Result::Ok(nothing) => Result::Ok.(()),
-        Result::Err(failure) => {
+        Ok(nothing) => Result::Ok.(()),
+        Err(failure) => {
             let { path, kind } = failure;
             let action = match kind {
                 CreateDirErrorKind::NotDirectory => "expected directory",
@@ -191,50 +191,50 @@ fn ensure_dir(&cx: Domain!['k], directory: Span['k]) -> Result[(), Buffer!] {
 forall 'k.
 fn save(&cx: Domain!['k], file: Span['k], contents: Buffer!) -> Result[(), Buffer!] {
     match ensure_dir(&cx, parent(&cx, file)) {
-        Result::Ok(nothing) => (),
-        Result::Err(message) => { contents.destroy(); return Result::Err.(message); },
+        Ok(nothing) => (),
+        Err(message) => { contents.destroy(); return Result::Err.(message); },
     }
     match write(&cx, file, contents) {
-        Result::Ok(nothing) => Result::Ok.(()),
-        Result::Err(e) => Result::Err.(report(&cx, "cannot write", file)),
+        Ok(nothing) => Result::Ok.(()),
+        Err(e) => Result::Err.(report(&cx, "cannot write", file)),
     }
 }
 
 forall 'k.
 fn init(&cx: Domain!['k], root: Span['k]) -> Result[(), Buffer!] {
     match metadata(&cx, root) {
-        Result::Ok(info) => {
+        Ok(info) => {
             match info.kind {
                 FileKind::Directory => (),
                 _ => return Result::Err.(report(&cx, "expected directory", root)),
             }
             let opened = match read_dir(&cx, root) {
-                Result::Ok(directory) => directory,
-                Result::Err(e) => return Result::Err.(report(&cx, "cannot list", root)),
+                Ok(directory) => directory,
+                Err(e) => return Result::Err.(report(&cx, "cannot list", root)),
             };
             var opened = opened;
             let first = &opened.next();
             match first {
-                Result::Err(e) => {
+                Err(e) => {
                     let closed = opened.close();
                     return Result::Err.(report(&cx, "cannot list", root));
                 },
-                Result::Ok(next) => match next {
-                    Option::Some(entry) => {
+                Ok(next) => match next {
+                    Some(entry) => {
                         let { name, is_directory } = entry;
                         name.destroy();
                         let closed = opened.close();
                         return Result::Err.(report(&cx, "directory is not empty", root));
                     },
-                    Option::None => (),
+                    None => (),
                 },
             }
             match opened.close() {
-                Result::Ok(nothing) => (),
-                Result::Err(e) => return Result::Err.(report(&cx, "cannot list", root)),
+                Ok(nothing) => (),
+                Err(e) => return Result::Err.(report(&cx, "cannot list", root)),
             }
         },
-        Result::Err(e) => {
+        Err(e) => {
             if e.errno != 2i32 { return Result::Err.(report(&cx, "cannot stat", root)); }
             ensure_dir(&cx, root)?;
         },
@@ -276,10 +276,10 @@ fn safe_path(&cx: Domain!['k], path: Span['k], absolute: bool) -> bool {
 forall 'k.
 fn config_string(&cx: Domain!['k], values: ArenaMap[Span['k], TomlValue['k], 'k], name: Slice[u8, 'static], fallback: Slice[u8, 'static]) -> Result[Span['k], Buffer!] {
     match values.get(&cx, lit(&cx, name)) {
-        Option::None => Result::Ok.(lit(&cx, fallback)),
-        Option::Some(value) => match value.as_string() {
-            Option::None => Result::Err.(Buffer!::new().push_static("krayon: config value must be a string: ").push_static(name).push_byte(b'\n')),
-            Option::Some(text) => if safe_path(&cx, text, false) { Result::Ok.(text) }
+        None => Result::Ok.(lit(&cx, fallback)),
+        Some(value) => match value.as_string() {
+            None => Result::Err.(Buffer!::new().push_static("krayon: config value must be a string: ").push_static(name).push_byte(b'\n')),
+            Some(text) => if safe_path(&cx, text, false) { Result::Ok.(text) }
                 else { Result::Err.(Buffer!::new().push_static("krayon: unsafe config path: ").push_static(name).push_byte(b'\n')) },
         },
     }
@@ -294,13 +294,13 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
     if !exists_path(&cx, file)? { return Result::Ok.(defaults); }
     let text = load(&cx, file)?;
     match parse(&cx, text) {
-        Result::Err(e) => Result::Err.(report_detail(&cx, file, lit(&cx, e.message))),
-        Result::Ok(values) => {
+        Err(e) => Result::Err.(report_detail(&cx, file, lit(&cx, e.message))),
+        Ok(values) => {
             var i = 0usize;
             while i < values.positions(&cx) {
                 match values.key_at(&cx, i) {
-                    Option::None => (),
-                    Option::Some(key) => {
+                    None => (),
+                    Some(key) => {
                         if !key.is(&cx, "input") && !key.is(&cx, "output") && !key.is(&cx, "layouts")
                             && !key.is(&cx, "data") && !key.is(&cx, "assets") && !key.is(&cx, "base_path")
                             && !key.is(&cx, "origin") && !key.is(&cx, "exclude") && !key.is(&cx, "fingerprint_assets")
@@ -312,10 +312,10 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                 i = i + 1usize;
             }
             let base_path = match values.get(&cx, lit(&cx, "base_path")) {
-                Option::None => lit(&cx, ""),
-                Option::Some(value) => match value.as_string() {
-                    Option::None => return Result::Err.(report(&cx, "base_path must be a string", file)),
-                    Option::Some(path) => {
+                None => lit(&cx, ""),
+                Some(value) => match value.as_string() {
+                    None => return Result::Err.(report(&cx, "base_path must be a string", file)),
+                    Some(path) => {
                         if path.is_empty() { path }
                         else if path.is(&cx, "/") { lit(&cx, "") }
                         else if !safe_path(&cx, path, true) || byte(&cx, path, path.len() - 1usize) == b'/' {
@@ -336,10 +336,10 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                 },
             };
             let origin = match values.get(&cx, lit(&cx, "origin")) {
-                Option::None => lit(&cx, ""),
-                Option::Some(value) => match value.as_string() {
-                    Option::None => return Result::Err.(report(&cx, "origin must be a string", file)),
-                    Option::Some(text) => {
+                None => lit(&cx, ""),
+                Some(value) => match value.as_string() {
+                    None => return Result::Err.(report(&cx, "origin must be a string", file)),
+                    Some(text) => {
                         let normalized = if text.is_empty() { text }
                             else if text.ends_with(&cx, lit(&cx, "/")) {
                                 text.slice(0usize, text.len() - 1usize)
@@ -352,32 +352,32 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                 },
             };
             let definitions = match values.get(&cx, lit(&cx, "collections")) {
-                Option::None => ArenaMap::new(&cx),
-                Option::Some(value) => match value.as_table() {
-                    Option::Some(table) => table,
-                    Option::None => return Result::Err.(report(&cx, "collections must be a table", file)),
+                None => ArenaMap::new(&cx),
+                Some(value) => match value.as_table() {
+                    Some(table) => table,
+                    None => return Result::Err.(report(&cx, "collections must be a table", file)),
                 },
             };
             let fingerprint_assets = match values.get(&cx, lit(&cx, "fingerprint_assets")) {
-                Option::None => false,
-                Option::Some(value) => match value {
+                None => false,
+                Some(value) => match value {
                     TomlValue::Boolean(enabled) => enabled,
                     _ => return Result::Err.(report(&cx, "fingerprint_assets must be a boolean", file)),
                 },
             };
             let exclude = ArenaVec::new(&cx);
             match values.get(&cx, lit(&cx, "exclude")) {
-                Option::None => (),
-                Option::Some(value) => {
+                None => (),
+                Some(value) => {
                     let rules = match value.as_array() {
-                        Option::Some(items) => items,
-                        Option::None => return Result::Err.(report(&cx, "exclude must be an array of paths", file)),
+                        Some(items) => items,
+                        None => return Result::Err.(report(&cx, "exclude must be an array of paths", file)),
                     };
                     var j = 0usize;
                     while j < rules.len(&cx) {
                         let rule = match rules.at(&cx, j).as_string() {
-                            Option::Some(path) => path,
-                            Option::None => return Result::Err.(report(&cx, "exclude entry must be a string path", file)),
+                            Some(path) => path,
+                            None => return Result::Err.(report(&cx, "exclude entry must be a string path", file)),
                         };
                         let path = if rule.ends_with(&cx, lit(&cx, "/")) {
                             rule.slice(0usize, rule.len() - 1usize)
@@ -413,8 +413,8 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
 forall 'k.
 fn claim(&cx: Domain!['k], build: Build['k], output: Span['k], source: Span['k]) -> Result[(), Buffer!] {
     match build.written.insert(&cx, output, source) {
-        Option::None => Result::Ok.(()),
-        Option::Some(previous) => Result::Err.(Buffer!::new().push_static("krayon: output collision: ")
+        None => Result::Ok.(()),
+        Some(previous) => Result::Err.(Buffer!::new().push_static("krayon: output collision: ")
             .push_bytes(&cx, previous).push_static(" and ").push_bytes(&cx, source).push_static(" -> ").push_bytes(&cx, output).push_byte(b'\n')),
     }
 }
@@ -478,10 +478,10 @@ forall 'k.
 fn add_aliases(&cx: Domain!['k], build: Build['k], file: Span['k],
     fields: ArenaMap[Span['k], TomlValue['k], 'k], canonical: Span['k]) -> Result[(), Buffer!] {
     let aliases = match fields.get(&cx, lit(&cx, "aliases")) {
-        Option::None => return Result::Ok.(()),
-        Option::Some(value) => match value.as_array() {
-            Option::Some(items) => items,
-            Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "aliases must be an array of URLs"))),
+        None => return Result::Ok.(()),
+        Some(value) => match value.as_array() {
+            Some(items) => items,
+            None => return Result::Err.(report_detail(&cx, file, lit(&cx, "aliases must be an array of URLs"))),
         },
     };
     var i = 0usize;
@@ -489,8 +489,8 @@ fn add_aliases(&cx: Domain!['k], build: Build['k], file: Span['k],
         let label = Buffer!::new().push_bytes(&cx, file).push_static(" [alias ")
             .push_usize(i + 1usize).push_static("]").save(&cx);
         let alias = match aliases.at(&cx, i).as_string() {
-            Option::Some(url) => url,
-            Option::None => return Result::Err.(report_detail(&cx, label, lit(&cx, "alias must be a string URL"))),
+            Some(url) => url,
+            None => return Result::Err.(report_detail(&cx, label, lit(&cx, "alias must be a string URL"))),
         };
         let destination = output_for_url(&cx, build.output, alias, label, TemplateFormat::Html)?;
         claim(&cx, build, destination, label)?;
@@ -538,10 +538,10 @@ fn write_redirects(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
 forall 'k.
 fn layout_name(&cx: Domain!['k], data: ArenaMap[Span['k], TomlValue['k], 'k]) -> Result[Option[Span['k]], Buffer!] {
     match data.get(&cx, lit(&cx, "layout")) {
-        Option::None => Result::Ok.(Option::None),
-        Option::Some(value) => match value.as_string() {
-            Option::None => Result::Err.(Buffer!::new().push_static("krayon: layout must be a string\n")),
-            Option::Some(name) => if name.is_empty() { Result::Ok.(Option::None) }
+        None => Result::Ok.(Option::None),
+        Some(value) => match value.as_string() {
+            None => Result::Err.(Buffer!::new().push_static("krayon: layout must be a string\n")),
+            Some(name) => if name.is_empty() { Result::Ok.(Option::None) }
                 else if safe_path(&cx, name, false) { Result::Ok.(Option::Some.(name)) }
                 else { Result::Err.(report(&cx, "unsafe layout name", name)) },
         },
@@ -554,19 +554,19 @@ fn site_value(&cx: Domain!['k], data: ArenaMap[Span['k], TomlValue['k], 'k], pat
     var remaining = path;
     while true {
         match remaining.find_byte(&cx, b'.', 0usize) {
-            Option::Some(dot) => {
+            Some(dot) => {
                 let name = remaining.slice(0usize, dot);
                 if name.is_empty() { return Option::None; }
                 table = match table.get(&cx, name) {
-                    Option::Some(value) => match value.as_table() {
-                        Option::Some(child) => child,
-                        Option::None => return Option::None,
+                    Some(value) => match value.as_table() {
+                        Some(child) => child,
+                        None => return Option::None,
                     },
-                    Option::None => return Option::None,
+                    None => return Option::None,
                 };
                 remaining = remaining.slice(dot + 1usize, remaining.len());
             },
-            Option::None => if remaining.is_empty() { return Option::None; }
+            None => if remaining.is_empty() { return Option::None; }
                 else { return table.get(&cx, remaining); },
         }
     }
@@ -576,10 +576,10 @@ fn site_value(&cx: Domain!['k], data: ArenaMap[Span['k], TomlValue['k], 'k], pat
 forall 'k.
 fn draft(&cx: Domain!['k], data: ArenaMap[Span['k], TomlValue['k], 'k], file: Span['k]) -> Result[bool, Buffer!] {
     match data.get(&cx, lit(&cx, "draft")) {
-        Option::None => Result::Ok.(false),
-        Option::Some(value) => match value.as_bool() {
-            Option::Some(flag) => Result::Ok.(flag),
-            Option::None => Result::Err.(report_detail(&cx, file, lit(&cx, "draft must be a boolean"))),
+        None => Result::Ok.(false),
+        Some(value) => match value.as_bool() {
+            Some(flag) => Result::Ok.(flag),
+            None => Result::Err.(report_detail(&cx, file, lit(&cx, "draft must be a boolean"))),
         },
     }
 }
@@ -592,20 +592,20 @@ fn permalink_pattern(&cx: Domain!['k], pattern: Span['k], record: ArenaMap[Span[
     var pos = 0usize;
     while pos < pattern.len() {
         let opening = match pattern.find(&cx, lit(&cx, "{{"), pos) {
-            Option::Some(at) => at,
-            Option::None => pattern.len(),
+            Some(at) => at,
+            None => pattern.len(),
         };
         match pattern.find(&cx, lit(&cx, "}}"), pos) {
-            Option::Some(at) => if at < opening {
+            Some(at) => if at < opening {
                 out.destroy(); return Result::Err.(lit(&cx, "unexpected }} in permalink pattern"));
             },
-            Option::None => (),
+            None => (),
         }
         out = out.push_bytes(&cx, pattern.slice(pos, opening));
         if opening == pattern.len() { return Result::Ok.(out.save(&cx)); }
         let closing = match pattern.find(&cx, lit(&cx, "}}"), opening + 2usize) {
-            Option::Some(at) => at,
-            Option::None => { out.destroy(); return Result::Err.(lit(&cx, "unclosed permalink placeholder")); },
+            Some(at) => at,
+            None => { out.destroy(); return Result::Err.(lit(&cx, "unclosed permalink placeholder")); },
         };
         let expression = pattern.slice(opening + 2usize, closing).trim(&cx);
         let prefix = lit(&cx, field_prefix);
@@ -614,8 +614,8 @@ fn permalink_pattern(&cx: Domain!['k], pattern: Span['k], record: ArenaMap[Span[
                 .push_static(field_prefix).push_static("<field>").save(&cx));
         }
         let value = match site_value(&cx, record, expression.slice(prefix.len(), expression.len())) {
-            Option::Some(value) => value,
-            Option::None => { out.destroy(); return Result::Err.(Buffer!::new().push_static("missing permalink field: ")
+            Some(value) => value,
+            None => { out.destroy(); return Result::Err.(Buffer!::new().push_static("missing permalink field: ")
                 .push_bytes(&cx, expression).save(&cx)); },
         };
         let text = match value {
@@ -638,11 +638,11 @@ fn generated_fields(&cx: Domain!['k], defaults: ArenaMap[Span['k], TomlValue['k]
     var i = 0usize;
     while i < defaults.positions(&cx) {
         match defaults.key_at(&cx, i) {
-            Option::None => (),
-            Option::Some(key) => if !key.is(&cx, "generate") && !key.is(&cx, "permalink_pattern") {
+            None => (),
+            Some(key) => if !key.is(&cx, "generate") && !key.is(&cx, "permalink_pattern") {
                 match defaults.get(&cx, key) {
-                    Option::None => (),
-                    Option::Some(value) => { let replaced = fields.insert(&cx, key, value); },
+                    None => (),
+                    Some(value) => { let replaced = fields.insert(&cx, key, value); },
                 }
             },
         }
@@ -651,10 +651,10 @@ fn generated_fields(&cx: Domain!['k], defaults: ArenaMap[Span['k], TomlValue['k]
     i = 0usize;
     while i < record.positions(&cx) {
         match record.key_at(&cx, i) {
-            Option::None => (),
-            Option::Some(key) => match record.get(&cx, key) {
-                Option::None => (),
-                Option::Some(value) => { let replaced = fields.insert(&cx, key, value); },
+            None => (),
+            Some(key) => match record.get(&cx, key) {
+                None => (),
+                Some(value) => { let replaced = fields.insert(&cx, key, value); },
             },
         }
         i = i + 1usize;
@@ -669,22 +669,22 @@ fn merge_defaults(&cx: Domain!['k], inherited: ArenaMap[Span['k], TomlValue['k],
     var i = 0usize;
     while i < inherited.positions(&cx) {
         match inherited.key_at(&cx, i) {
-            Option::Some(key) => match inherited.get(&cx, key) {
-                Option::Some(value) => { let replaced = fields.insert(&cx, key, value); },
-                Option::None => (),
+            Some(key) => match inherited.get(&cx, key) {
+                Some(value) => { let replaced = fields.insert(&cx, key, value); },
+                None => (),
             },
-            Option::None => (),
+            None => (),
         }
         i = i + 1usize;
     }
     i = 0usize;
     while i < local.positions(&cx) {
         match local.key_at(&cx, i) {
-            Option::Some(key) => match local.get(&cx, key) {
-                Option::Some(value) => { let replaced = fields.insert(&cx, key, value); },
-                Option::None => (),
+            Some(key) => match local.get(&cx, key) {
+                Some(value) => { let replaced = fields.insert(&cx, key, value); },
+                None => (),
             },
-            Option::None => (),
+            None => (),
         }
         i = i + 1usize;
     }
@@ -698,13 +698,13 @@ fn directory_defaults(&cx: Domain!['k], build: Build['k], relative: Span['k],
     if !exists_path(&cx, file)? { return Result::Ok.(inherited); }
     let source = load(&cx, file)?;
     let local = match parse(&cx, source) {
-        Result::Ok(fields) => fields,
-        Result::Err(error) => return Result::Err.(report_detail(&cx, file, lit(&cx, error.message))),
+        Ok(fields) => fields,
+        Err(error) => return Result::Err.(report_detail(&cx, file, lit(&cx, error.message))),
     };
     var i = 0usize;
     while i < local.positions(&cx) {
         match local.key_at(&cx, i) {
-            Option::Some(key) => if key.is(&cx, "permalink") || key.is(&cx, "generate")
+            Some(key) => if key.is(&cx, "permalink") || key.is(&cx, "generate")
                 || key.is(&cx, "paginate") || key.is(&cx, "page_size")
                 || key.is(&cx, "page_permalink") || key.is(&cx, "where")
                 || key.is(&cx, "sort_by") || key.is(&cx, "sort_order")
@@ -714,18 +714,18 @@ fn directory_defaults(&cx: Domain!['k], build: Build['k], relative: Span['k],
                 return Result::Err.(report_detail(&cx, file,
                     Buffer!::new().push_static("field cannot be a directory default: ").push_bytes(&cx, key).save(&cx)));
             },
-            Option::None => (),
+            None => (),
         }
         i = i + 1usize;
     }
     match local.get(&cx, lit(&cx, "permalink_pattern")) {
-        Option::Some(value) => match value.as_string() {
-            Option::Some(pattern) => if pattern.is_empty() {
+        Some(value) => match value.as_string() {
+            Some(pattern) => if pattern.is_empty() {
                 return Result::Err.(report_detail(&cx, file, lit(&cx, "permalink_pattern must not be empty")));
             },
-            Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "permalink_pattern must be a string"))),
+            None => return Result::Err.(report_detail(&cx, file, lit(&cx, "permalink_pattern must be a string"))),
         },
-        Option::None => (),
+        None => (),
     }
     Result::Ok.(merge_defaults(&cx, inherited, local))
 }
@@ -737,31 +737,31 @@ fn generate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
         return Result::Err.(report_detail(&cx, file, lit(&cx, "generate must name a site data array, such as site.products")));
     }
     let pattern = match template_page.data.get(&cx, lit(&cx, "permalink")) {
-        Option::None => Option::None,
-        Option::Some(value) => match value.as_string() {
-            Option::Some(text) => Option::Some.(text),
-            Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "permalink must be a string"))),
+        None => Option::None,
+        Some(value) => match value.as_string() {
+            Some(text) => Option::Some.(text),
+            None => return Result::Err.(report_detail(&cx, file, lit(&cx, "permalink must be a string"))),
         },
     };
     match draft(&cx, template_page.data, file) {
-        Result::Ok(flag) => (),
-        Result::Err(message) => return Result::Err.(message),
+        Ok(flag) => (),
+        Err(message) => return Result::Err.(message),
     }
     let value = match site_value(&cx, build.site_data, source.slice(5usize, source.len())) {
-        Option::Some(found) => found,
-        Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "generate source is missing"))),
+        Some(found) => found,
+        None => return Result::Err.(report_detail(&cx, file, lit(&cx, "generate source is missing"))),
     };
     let items = match value.as_array() {
-        Option::Some(array) => array,
-        Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "generate source must be an array"))),
+        Some(array) => array,
+        None => return Result::Err.(report_detail(&cx, file, lit(&cx, "generate source must be an array"))),
     };
     var i = 0usize;
     while i < items.len(&cx) {
         let label = Buffer!::new().push_bytes(&cx, file).push_static(" [item ")
             .push_usize(i + 1usize).push_static("]").save(&cx);
         let record = match items.at(&cx, i).as_table() {
-            Option::Some(table) => table,
-            Option::None => return Result::Err.(report_detail(&cx, label, lit(&cx, "generate item must be a table"))),
+            Some(table) => table,
+            None => return Result::Err.(report_detail(&cx, label, lit(&cx, "generate item must be a table"))),
         };
         let fields = generated_fields(&cx, template_page.data, record);
         if fields.contains(&cx, lit(&cx, "aliases")) {
@@ -770,16 +770,16 @@ fn generate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
         let is_draft = draft(&cx, fields, label)?;
         if build.include_drafts || !is_draft {
             let url = match record.get(&cx, lit(&cx, "url")) {
-                Option::Some(value) => match value.as_string() {
-                    Option::Some(text) => text,
-                    Option::None => return Result::Err.(report_detail(&cx, label, lit(&cx, "generate item url must be a string"))),
+                Some(value) => match value.as_string() {
+                    Some(text) => text,
+                    None => return Result::Err.(report_detail(&cx, label, lit(&cx, "generate item url must be a string"))),
                 },
-                Option::None => match pattern {
-                    Option::Some(text) => match permalink_pattern(&cx, text, record, "item.") {
-                        Result::Ok(url) => url,
-                        Result::Err(message) => return Result::Err.(report_detail(&cx, label, message)),
+                None => match pattern {
+                    Some(text) => match permalink_pattern(&cx, text, record, "item.") {
+                        Ok(url) => url,
+                        Err(message) => return Result::Err.(report_detail(&cx, label, message)),
                     },
-                    Option::None => return Result::Err.(report_detail(&cx, label, lit(&cx, "generate item needs a url or template permalink"))),
+                    None => return Result::Err.(report_detail(&cx, label, lit(&cx, "generate item needs a url or template permalink"))),
                 },
             };
             let destination = output_for_url(&cx, build.output, url, label, format)?;
@@ -799,9 +799,9 @@ forall 'k.
 fn pagination_url(&cx: Domain!['k], base: Span['k], pattern: Option[PaginationPattern['k]], number: usize) -> Span['k] {
     if number == 1usize { return base; }
     match pattern {
-        Option::Some(parts) => Buffer!::new().push_bytes(&cx, parts.prefix).push_usize(number)
+        Some(parts) => Buffer!::new().push_bytes(&cx, parts.prefix).push_usize(number)
             .push_bytes(&cx, parts.suffix).save(&cx),
-        Option::None => Buffer!::new().push_bytes(&cx, base).push_static("page/").push_usize(number)
+        None => Buffer!::new().push_bytes(&cx, base).push_static("page/").push_usize(number)
             .push_byte(b'/').save(&cx),
     }
 }
@@ -810,19 +810,19 @@ forall 'k.
 fn select_records(&cx: Domain!['k], all: ArenaVec[TomlValue['k], 'k],
     rules: ArenaMap[Span['k], TomlValue['k], 'k], file: Span['k]) -> Result[ArenaVec[TomlValue['k], 'k], Buffer!] {
     let all = match rules.get(&cx, lit(&cx, "where")) {
-        Option::None => all,
-        Option::Some(value) => {
+        None => all,
+        Some(value) => {
             let rule = match value.as_table() {
-                Option::Some(table) => table,
-                Option::None => return Result::Err.(report_detail(&cx, file,
+                Some(table) => table,
+                None => return Result::Err.(report_detail(&cx, file,
                     lit(&cx, "where must be a table with field and equals"))),
             };
             let field = match rule.get(&cx, lit(&cx, "field")) {
-                Option::Some(value) => match value.as_string() {
-                    Option::Some(text) => text,
-                    Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where.field must be a string"))),
+                Some(value) => match value.as_string() {
+                    Some(text) => text,
+                    None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where.field must be a string"))),
                 },
-                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where requires field"))),
+                None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where requires field"))),
             };
             let equals = rule.get(&cx, lit(&cx, "equals"));
             let contains = rule.get(&cx, lit(&cx, "contains"));
@@ -833,46 +833,46 @@ fn select_records(&cx: Domain!['k], all: ArenaVec[TomlValue['k], 'k],
             let membership = contains.is_some();
             let target_value = if membership { contains } else { equals };
             let target = match target_value {
-                Option::Some(value) => match scalar(&cx, value) {
-                    Option::Some(text) => text,
-                    Option::None => return Result::Err.(report_detail(&cx, file,
+                Some(value) => match scalar(&cx, value) {
+                    Some(text) => text,
+                    None => return Result::Err.(report_detail(&cx, file,
                         lit(&cx, "where value must be a string, integer, boolean, or date"))),
                 },
-                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where requires equals or contains"))),
+                None => return Result::Err.(report_detail(&cx, file, lit(&cx, "where requires equals or contains"))),
             };
             let filtered = if membership { filter_contains(&cx, all, field, target) }
                 else { filter_records(&cx, all, field, target) };
             match filtered {
-                Result::Ok(selected) => selected,
-                Result::Err(message) => return Result::Err.(report_detail(&cx, file,
+                Ok(selected) => selected,
+                Err(message) => return Result::Err.(report_detail(&cx, file,
                     Buffer!::new().push_static("where: ").push_static(message).save(&cx))),
             }
         },
     };
     let all = match rules.get(&cx, lit(&cx, "sort_by")) {
-        Option::None => {
+        None => {
             if rules.contains(&cx, lit(&cx, "sort_order")) {
                 return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_order requires sort_by")));
             }
             all
         },
-        Option::Some(value) => {
+        Some(value) => {
             let field = match value.as_string() {
-                Option::Some(text) => text,
-                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_by must be a string"))),
+                Some(text) => text,
+                None => return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_by must be a string"))),
             };
             let descending = match rules.get(&cx, lit(&cx, "sort_order")) {
-                Option::None => false,
-                Option::Some(value) => match value.as_string() {
-                    Option::Some(order) => if order.is(&cx, "desc") { true }
+                None => false,
+                Some(value) => match value.as_string() {
+                    Some(order) => if order.is(&cx, "desc") { true }
                         else if order.is(&cx, "asc") { false }
                         else { return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_order must be asc or desc"))); },
-                    Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_order must be asc or desc"))),
+                    None => return Result::Err.(report_detail(&cx, file, lit(&cx, "sort_order must be asc or desc"))),
                 },
             };
             match sort_records(&cx, all, field, descending) {
-                Result::Ok(sorted) => sorted,
-                Result::Err(message) => return Result::Err.(report_detail(&cx, file,
+                Ok(sorted) => sorted,
+                Err(message) => return Result::Err.(report_detail(&cx, file,
                     Buffer!::new().push_static("sort_by: ").push_static(message).save(&cx))),
             }
         },
@@ -889,12 +889,12 @@ fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
             lit(&cx, "paginate must name a site data array or collection")));
     }
     let page_size = match template_page.data.get(&cx, lit(&cx, "page_size")) {
-        Option::Some(value) => match value.as_integer() {
-            Option::Some(number) => if number > 0i64 { number as usize }
+        Some(value) => match value.as_integer() {
+            Some(number) => if number > 0i64 { number as usize }
                 else { return Result::Err.(report_detail(&cx, file, lit(&cx, "page_size must be a positive integer"))); },
-            Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "page_size must be a positive integer"))),
+            None => return Result::Err.(report_detail(&cx, file, lit(&cx, "page_size must be a positive integer"))),
         },
-        Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate requires page_size"))),
+        None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate requires page_size"))),
     };
     if template_page.data.contains(&cx, lit(&cx, "pagination")) {
         return Result::Err.(report_detail(&cx, file, lit(&cx, "pagination is a reserved page field")));
@@ -902,26 +902,26 @@ fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
     let is_draft = draft(&cx, template_page.data, file)?;
     if is_draft && !build.include_drafts { return Result::Ok.(()); }
     let base = match template_page.data.get(&cx, lit(&cx, "permalink")) {
-        Option::None => default_url,
-        Option::Some(value) => match value.as_string() {
-            Option::Some(text) => text,
-            Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "permalink must be a string"))),
+        None => default_url,
+        Some(value) => match value.as_string() {
+            Some(text) => text,
+            None => return Result::Err.(report_detail(&cx, file, lit(&cx, "permalink must be a string"))),
         },
     };
     if !safe_path(&cx, base, true) || !base.ends_with(&cx, lit(&cx, "/")) {
         return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate permalink must be a safe directory URL ending in /")));
     }
     let pattern = match template_page.data.get(&cx, lit(&cx, "page_permalink")) {
-        Option::None => Option::None,
-        Option::Some(value) => {
+        None => Option::None,
+        Some(value) => {
             let text = match value.as_string() {
-                Option::Some(text) => text,
-                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "page_permalink must be a string"))),
+                Some(text) => text,
+                None => return Result::Err.(report_detail(&cx, file, lit(&cx, "page_permalink must be a string"))),
             };
             let placeholder = lit(&cx, "{{ page.pagination.number }}");
             let at = match text.find(&cx, placeholder, 0usize) {
-                Option::Some(at) => at,
-                Option::None => return Result::Err.(report_detail(&cx, file,
+                Some(at) => at,
+                None => return Result::Err.(report_detail(&cx, file,
                     lit(&cx, "page_permalink must contain {{ page.pagination.number }}"))),
             };
             let prefix = text.slice(0usize, at);
@@ -941,18 +941,18 @@ fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
     };
     let value = if collection {
         match build.collections.get(&cx, source.slice(12usize, source.len())) {
-            Option::Some(found) => found,
-            Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate source is missing"))),
+            Some(found) => found,
+            None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate source is missing"))),
         }
     } else {
         match site_value(&cx, build.site_data, source.slice(5usize, source.len())) {
-            Option::Some(found) => found,
-            Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate source is missing"))),
+            Some(found) => found,
+            None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate source is missing"))),
         }
     };
     let all = match value.as_array() {
-        Option::Some(array) => array,
-        Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate source must be an array"))),
+        Some(array) => array,
+        None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate source must be an array"))),
     };
     let all = select_records(&cx, all, template_page.data, file)?;
     let count = all.len(&cx);
@@ -1006,17 +1006,17 @@ fn render_layout(&cx: Domain!['k], build: Build['k], page: Page['k], content: Sp
     let file = join(&cx, build.layouts, name);
     let source = load(&cx, file)?;
     let layout = match parse_page(&cx, source, page.url) {
-        Result::Ok(layout) => layout,
-        Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
+        Ok(layout) => layout,
+        Err(message) => return Result::Err.(report_detail(&cx, file, message)),
     };
     let rendered = match template(&cx, build.site_data, build.collections, page, build.layouts,
         file, layout.body, content, layout.body_line, format) {
-        Result::Ok(html) => html.save(&cx),
-        Result::Err(message) => return Result::Err.(report_template(&cx, message)),
+        Ok(html) => html.save(&cx),
+        Err(message) => return Result::Err.(report_template(&cx, message)),
     };
     match layout_name(&cx, layout.data)? {
-        Option::None => Result::Ok.(rendered),
-        Option::Some(outer) => render_layout(&cx, build, page, rendered, outer, format, depth + 1usize),
+        None => Result::Ok.(rendered),
+        Some(outer) => render_layout(&cx, build, page, rendered, outer, format, depth + 1usize),
     }
 }
 
@@ -1032,8 +1032,8 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k],
         _ => Buffer!::new().push_static("/").push_bytes(&cx, relative).save(&cx),
     };
     let parsed = match parse_page(&cx, source, url) {
-        Result::Ok(page) => page,
-        Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
+        Ok(page) => page,
+        Err(message) => return Result::Err.(report_detail(&cx, file, message)),
     };
     let parsed = Page.{ data: merge_defaults(&cx, defaults, parsed.data), source_urls: parsed.source_urls,
         url: parsed.url, body: parsed.body, body_line: parsed.body_line };
@@ -1042,8 +1042,8 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k],
         return Result::Err.(report_detail(&cx, file, lit(&cx, "aliases require an ordinary page")));
     }
     match parsed.data.get(&cx, lit(&cx, "paginate")) {
-        Option::None => (),
-        Option::Some(value) => {
+        None => (),
+        Some(value) => {
             if parsed.data.contains(&cx, lit(&cx, "generate")) {
                 return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate and generate cannot be combined")));
             }
@@ -1052,8 +1052,8 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k],
                 return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate requires an HTML template")));
             }
             let source = match value.as_string() {
-                Option::Some(text) => text,
-                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate must be a string"))),
+                Some(text) => text,
+                None => return Result::Err.(report_detail(&cx, file, lit(&cx, "paginate must be a string"))),
             };
             if source.starts_with(&cx, lit(&cx, "collections.")) {
                 build.pending_pagination.push(&cx, PendingPagination.{ file, page: parsed, source, default_url: url });
@@ -1063,12 +1063,12 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k],
         },
     }
     match parsed.data.get(&cx, lit(&cx, "generate")) {
-        Option::None => (),
-        Option::Some(value) => {
+        None => (),
+        Some(value) => {
             if is_markdown { return Result::Err.(report_detail(&cx, file, lit(&cx, "generate requires an HTML template"))); }
             let source = match value.as_string() {
-                Option::Some(text) => text,
-                Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "generate must be a string"))),
+                Some(text) => text,
+                None => return Result::Err.(report_detail(&cx, file, lit(&cx, "generate must be a string"))),
             };
             return generate_pages(&cx, build, file, parsed, source, format);
         },
@@ -1080,12 +1080,12 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k],
         return Result::Err.(report_detail(&cx, file, lit(&cx, "aliases require an HTML page")));
     }
     let url = match parsed.data.get(&cx, lit(&cx, "permalink")) {
-        Option::None => match parsed.data.get(&cx, lit(&cx, "permalink_pattern")) {
-            Option::None => url,
-            Option::Some(value) => {
+        None => match parsed.data.get(&cx, lit(&cx, "permalink_pattern")) {
+            None => url,
+            Some(value) => {
                 let pattern = match value.as_string() {
-                    Option::Some(text) => text,
-                    Option::None => return Result::Err.(report_detail(&cx, file, lit(&cx, "permalink_pattern must be a string"))),
+                    Some(text) => text,
+                    None => return Result::Err.(report_detail(&cx, file, lit(&cx, "permalink_pattern must be a string"))),
                 };
                 if pattern.is_empty() { url }
                 else {
@@ -1096,15 +1096,15 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k],
                         let replaced = parsed.data.insert(&cx, lit(&cx, "slug"), TomlValue::String.(slug));
                     }
                     match permalink_pattern(&cx, pattern, parsed.data, "page.") {
-                        Result::Ok(resolved) => resolved,
-                        Result::Err(message) => return Result::Err.(report_detail(&cx, file, message)),
+                        Ok(resolved) => resolved,
+                        Err(message) => return Result::Err.(report_detail(&cx, file, message)),
                     }
                 }
             },
         },
-        Option::Some(value) => match value.as_string() {
-            Option::Some(link) => link,
-            Option::None => return Result::Err.(report(&cx, "permalink must be a string", file)),
+        Some(value) => match value.as_string() {
+            Some(link) => link,
+            None => return Result::Err.(report(&cx, "permalink must be a string", file)),
         },
     };
     let removed = parsed.data.remove(&cx, lit(&cx, "permalink_pattern"));
@@ -1125,18 +1125,18 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
         return Result::Err.(report_detail(&cx, source.file, lit(&cx, "collection_navigation is a reserved page field")));
     }
     let page = match build.navigation.get(&cx, original.url) {
-        Option::Some(value) => {
+        Some(value) => {
             let fields = generated_fields(&cx, original.data, ArenaMap::new(&cx));
             let replaced = fields.insert(&cx, lit(&cx, "collection_navigation"), value);
             Page.{ data: fields, source_urls: original.source_urls,
                 url: original.url, body: original.body, body_line: original.body_line }
         },
-        Option::None => original,
+        None => original,
     };
     let relative = source.file.slice(build.source.len() + 1usize, source.file.len());
     let body = if source.is_markdown { match markdown(&cx, page.body, build.base_path, build.source_urls,
         build.asset_urls, build.fingerprint_assets, relative) {
-            Result::Ok(result) => {
+            Ok(result) => {
                 let (html, found) = result;
                 if page.data.contains(&cx, lit(&cx, "headings")) {
                     html.destroy();
@@ -1156,26 +1156,26 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
                 let replaced = page.data.insert(&cx, lit(&cx, "headings"), TomlValue::Array.(headings));
                 html.save(&cx)
             },
-            Result::Err(message) => return Result::Err.(report_detail(&cx, source.file, message)),
+            Err(message) => return Result::Err.(report_detail(&cx, source.file, message)),
         } }
         else { match template(&cx, build.site_data, build.collections, page, build.layouts,
             source.file, page.body, lit(&cx, ""), page.body_line, source.format) {
-            Result::Ok(html) => html.save(&cx),
-            Result::Err(message) => return Result::Err.(report_template(&cx, message)),
+            Ok(html) => html.save(&cx),
+            Err(message) => return Result::Err.(report_template(&cx, message)),
         } };
     let rendered = match layout_name(&cx, page.data)? {
-        Option::None => body,
-        Option::Some(name) => render_layout(&cx, build, page, body, name, source.format, 0usize)?,
+        None => body,
+        Some(name) => render_layout(&cx, build, page, body, name, source.format, 0usize)?,
     };
     match source.format {
         TemplateFormat::Json => match validate_json(&cx, rendered) {
-            Result::Ok(nothing) => (),
-            Result::Err(error) => return Result::Err.(report_generated(&cx, source, rendered,
+            Ok(nothing) => (),
+            Err(error) => return Result::Err.(report_generated(&cx, source, rendered,
                 "JSON", error.offset, error.message)),
         },
         TemplateFormat::Xml => match validate_xml_document(&cx, rendered) {
-            Result::Ok(nothing) => (),
-            Result::Err(error) => return Result::Err.(report_generated(&cx, source, rendered,
+            Ok(nothing) => (),
+            Err(error) => return Result::Err.(report_generated(&cx, source, rendered,
                 "XML", error.offset, error.message)),
         },
         _ => (),
@@ -1191,8 +1191,8 @@ fn valid_glob(&cx: Domain!['k], path: Span['k]) -> bool {
         if i == path.len() || byte(&cx, path, i) == b'/' {
             let segment = path.slice(start, i);
             match segment.find(&cx, lit(&cx, "**"), 0usize) {
-                Option::Some(at) => if !segment.is(&cx, "**") { return false; },
-                Option::None => (),
+                Some(at) => if !segment.is(&cx, "**") { return false; },
+                None => (),
             }
             start = i + 1usize;
         }
@@ -1216,8 +1216,8 @@ fn segment_glob(&cx: Domain!['k], pattern: Span['k], name: Span['k]) -> bool {
             p = p + 1usize;
         } else {
             match star {
-                Option::Some(at) => { retry = retry + 1usize; n = retry; p = at + 1usize; },
-                Option::None => return false,
+                Some(at) => { retry = retry + 1usize; n = retry; p = at + 1usize; },
+                None => return false,
             }
         }
     }
@@ -1298,17 +1298,17 @@ fn scan_pages(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usi
     let defaults = directory_defaults(&cx, build, relative, inherited)?;
     let directory = join(&cx, build.source, relative);
     let directory = match read_dir(&cx, directory) {
-        Result::Ok(directory) => directory,
-        Result::Err(e) => return Result::Err.(report(&cx, "cannot list", directory)),
+        Ok(directory) => directory,
+        Err(e) => return Result::Err.(report(&cx, "cannot list", directory)),
     };
     var directory = directory;
     var going = true;
     while going {
         match &directory.next() {
-            Result::Err(e) => { directory.close(); return Result::Err.(report(&cx, "cannot list", relative)); },
-            Result::Ok(next) => match next {
-                Option::None => { going = false; },
-                Option::Some(entry) => {
+            Err(e) => { directory.close(); return Result::Err.(report(&cx, "cannot list", relative)); },
+            Ok(next) => match next {
+                None => { going = false; },
+                Some(entry) => {
                     let { name, is_directory } = entry;
                     let child = join(&cx, relative, name.save(&cx));
                     if excluded(&cx, build.exclude, child, is_directory) {
@@ -1317,15 +1317,15 @@ fn scan_pages(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usi
                         // reserved source directories
                     } else if is_directory {
                         match scan_pages(&cx, build, child, depth + 1usize, defaults) {
-                            Result::Ok(nothing) => (),
-                            Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                            Ok(nothing) => (),
+                            Err(message) => { directory.close(); return Result::Err.(message); },
                         }
                     } else if child.ends_with(&cx, lit(&cx, ".md")) || child.ends_with(&cx, lit(&cx, ".html"))
                         || child.ends_with(&cx, lit(&cx, ".xml")) || child.ends_with(&cx, lit(&cx, ".json"))
                         || child.ends_with(&cx, lit(&cx, ".txt")) {
                         match collect_page(&cx, build, child, defaults) {
-                            Result::Ok(nothing) => (),
-                            Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                            Ok(nothing) => (),
+                            Err(message) => { directory.close(); return Result::Err.(message); },
                         }
                     }
                 },
@@ -1367,37 +1367,37 @@ fn scan_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: us
     if depth >= 64usize { return Result::Err.(report(&cx, "asset tree too deep", relative)); }
     let path = join(&cx, join(&cx, build.source, build.assets), relative);
     let opened = match read_dir(&cx, path) {
-        Result::Ok(directory) => directory,
-        Result::Err(e) => return Result::Err.(report(&cx, "cannot list", path)),
+        Ok(directory) => directory,
+        Err(e) => return Result::Err.(report(&cx, "cannot list", path)),
     };
     var opened = opened;
     var going = true;
     while going {
         match &opened.next() {
-            Result::Err(e) => { opened.close(); return Result::Err.(report(&cx, "cannot list", relative)); },
-            Result::Ok(next) => match next {
-                Option::None => { going = false; },
-                Option::Some(entry) => {
+            Err(e) => { opened.close(); return Result::Err.(report(&cx, "cannot list", relative)); },
+            Ok(next) => match next {
+                None => { going = false; },
+                Some(entry) => {
                     let { name, is_directory } = entry;
                     let child = join(&cx, relative, name.save(&cx));
                     if is_directory {
                         match scan_assets(&cx, build, child, depth + 1usize) {
-                            Result::Ok(nothing) => (),
-                            Result::Err(message) => { opened.close(); return Result::Err.(message); },
+                            Ok(nothing) => (),
+                            Err(message) => { opened.close(); return Result::Err.(message); },
                         }
                     } else {
                         let output_name = if build.fingerprint_assets && !child.ends_with(&cx, lit(&cx, ".css")) {
                             let source = join(&cx, join(&cx, build.source, build.assets), child);
                             let hash = match digest_file(&cx, source) {
-                                Result::Ok(value) => value,
-                                Result::Err(e) => { opened.close(); return Result::Err.(report(&cx, "cannot read", source)); },
+                                Ok(value) => value,
+                                Err(e) => { opened.close(); return Result::Err.(report(&cx, "cannot read", source)); },
                             };
                             fingerprint_name_hash(&cx, child, hash)
                         } else if build.fingerprint_assets {
                             let source = join(&cx, join(&cx, build.source, build.assets), child);
                             let contents = match load(&cx, source) {
-                                Result::Ok(value) => value,
-                                Result::Err(message) => { opened.close(); return Result::Err.(message); },
+                                Ok(value) => value,
+                                Err(message) => { opened.close(); return Result::Err.(message); },
                             };
                             fingerprint_name(&cx, child, contents)
                         } else { child };
@@ -1417,11 +1417,11 @@ fn fingerprint_stylesheet(&cx: Domain!['k], build: Build['k], url: Span['k],
     states: ArenaMap[Span['k], u8, 'k], depth: usize) -> Result[(), Buffer!] {
     if depth >= 64usize { return Result::Err.(report(&cx, "CSS dependency tree too deep", url)); }
     match states.get(&cx, url) {
-        Option::Some(state) => {
+        Some(state) => {
             if state == 1u8 { return Result::Err.(report(&cx, "CSS dependency cycle", url)); }
             if state == 2u8 { return Result::Ok.(()); }
         },
-        Option::None => (),
+        None => (),
     }
     let replaced = states.insert(&cx, url, 1u8);
     let source = join(&cx, build.source, url.slice(1usize, url.len()));
@@ -1447,8 +1447,8 @@ fn fingerprint_stylesheets(&cx: Domain!['k], build: Build['k]) -> Result[(), Buf
     var i = 0usize;
     while i < build.asset_urls.positions(&cx) {
         match build.asset_urls.key_at(&cx, i) {
-            Option::None => (),
-            Option::Some(url) => if url.ends_with(&cx, lit(&cx, ".css")) {
+            None => (),
+            Some(url) => if url.ends_with(&cx, lit(&cx, ".css")) {
                 fingerprint_stylesheet(&cx, build, url, states, 0usize)?;
             },
         }
@@ -1461,13 +1461,13 @@ forall 'k.
 fn stream_copy(&cx: Domain!['k], source: Span['k], destination: Span['k]) -> Result[(), Buffer!] {
     ensure_dir(&cx, parent(&cx, destination))?;
     let input = match File!::open_read(&cx, source) {
-        Result::Ok(file) => file,
-        Result::Err(e) => return Result::Err.(report(&cx, "cannot read", source)),
+        Ok(file) => file,
+        Err(e) => return Result::Err.(report(&cx, "cannot read", source)),
     };
     var input = input;
     let output = match File!::create(&cx, destination) {
-        Result::Ok(file) => file,
-        Result::Err(e) => {
+        Ok(file) => file,
+        Err(e) => {
             let closed = input.close();
             return Result::Err.(report(&cx, "cannot write", destination));
         },
@@ -1477,8 +1477,8 @@ fn stream_copy(&cx: Domain!['k], source: Span['k], destination: Span['k]) -> Res
     var going = true;
     while going {
         let count = match &input.read_exact(&chunk, 65536usize) {
-            Result::Ok(n) => n,
-            Result::Err(e) => {
+            Ok(n) => n,
+            Err(e) => {
                 chunk.destroy();
                 let closed = input.close();
                 let closed = output.close();
@@ -1491,8 +1491,8 @@ fn stream_copy(&cx: Domain!['k], source: Span['k], destination: Span['k]) -> Res
             let (tag, written) = &output.write_all(tag, bytes);
             chunk = restore.restore(tag).clear();
             match written {
-                Result::Ok(nothing) => (),
-                Result::Err(e) => {
+                Ok(nothing) => (),
+                Err(e) => {
                     chunk.destroy();
                     let closed = input.close();
                     let closed = output.close();
@@ -1506,12 +1506,12 @@ fn stream_copy(&cx: Domain!['k], source: Span['k], destination: Span['k]) -> Res
     let read_closed = input.close();
     let write_closed = output.close();
     match read_closed {
-        Result::Err(e) => return Result::Err.(report(&cx, "cannot read", source)),
-        Result::Ok(nothing) => (),
+        Err(e) => return Result::Err.(report(&cx, "cannot read", source)),
+        Ok(nothing) => (),
     }
     match write_closed {
-        Result::Err(e) => Result::Err.(report(&cx, "cannot write", destination)),
-        Result::Ok(nothing) => Result::Ok.(()),
+        Err(e) => Result::Err.(report(&cx, "cannot write", destination)),
+        Ok(nothing) => Result::Ok.(()),
     }
 }
 
@@ -1520,21 +1520,21 @@ fn stream_copy_hashed(&cx: Domain!['k], source: Span['k], destination: Span['k],
     hashed_destination: Span['k]) -> Result[Span['k], Buffer!] {
     ensure_dir(&cx, parent(&cx, destination))?;
     let input = match File!::open_read(&cx, source) {
-        Result::Ok(file) => file,
-        Result::Err(e) => return Result::Err.(report(&cx, "cannot read", source)),
+        Ok(file) => file,
+        Err(e) => return Result::Err.(report(&cx, "cannot read", source)),
     };
     var input = input;
     let output = match File!::create(&cx, destination) {
-        Result::Ok(file) => file,
-        Result::Err(e) => {
+        Ok(file) => file,
+        Err(e) => {
             let closed = input.close();
             return Result::Err.(report(&cx, "cannot write", destination));
         },
     };
     var output = output;
     let hashed = match File!::create(&cx, hashed_destination) {
-        Result::Ok(file) => file,
-        Result::Err(e) => {
+        Ok(file) => file,
+        Err(e) => {
             let closed = input.close();
             let closed = output.close();
             return Result::Err.(report(&cx, "cannot write", hashed_destination));
@@ -1546,8 +1546,8 @@ fn stream_copy_hashed(&cx: Domain!['k], source: Span['k], destination: Span['k],
     var going = true;
     while going {
         let count = match &input.read_exact(&chunk, 65536usize) {
-            Result::Ok(n) => n,
-            Result::Err(e) => {
+            Ok(n) => n,
+            Err(e) => {
                 chunk.destroy();
                 let closed = input.close();
                 let closed = output.close();
@@ -1590,46 +1590,46 @@ fn copy_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: us
     if depth >= 64usize { return Result::Err.(report(&cx, "asset tree too deep", relative)); }
     let directory = join(&cx, join(&cx, build.source, build.assets), relative);
     let directory = match read_dir(&cx, directory) {
-        Result::Ok(directory) => directory,
-        Result::Err(e) => return Result::Err.(report(&cx, "cannot list", directory)),
+        Ok(directory) => directory,
+        Err(e) => return Result::Err.(report(&cx, "cannot list", directory)),
     };
     var directory = directory;
     var going = true;
     while going {
         match &directory.next() {
-            Result::Err(e) => { directory.close(); return Result::Err.(report(&cx, "cannot list", relative)); },
-            Result::Ok(next) => match next {
-                Option::None => { going = false; },
-                Option::Some(entry) => {
+            Err(e) => { directory.close(); return Result::Err.(report(&cx, "cannot list", relative)); },
+            Ok(next) => match next {
+                None => { going = false; },
+                Some(entry) => {
                     let { name, is_directory } = entry;
                     let child = join(&cx, relative, name.save(&cx));
                     if is_directory {
                         match copy_assets(&cx, build, child, depth + 1usize) {
-                            Result::Ok(nothing) => (),
-                            Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                            Ok(nothing) => (),
+                            Err(message) => { directory.close(); return Result::Err.(message); },
                         }
                     } else {
                         let source = join(&cx, join(&cx, build.source, build.assets), child);
                         let destination = join(&cx, join(&cx, build.output, build.assets), child);
                         match claim(&cx, build, destination, source) {
-                            Result::Ok(nothing) => (),
-                            Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                            Ok(nothing) => (),
+                            Err(message) => { directory.close(); return Result::Err.(message); },
                         }
                         let url = asset_url(&cx, build, child);
                         let hashed_url = match build.asset_urls.get(&cx, url) {
-                            Option::Some(found) => found,
-                            Option::None => { directory.close(); return Result::Err.(report(&cx, "asset was not scanned", source)); },
+                            Some(found) => found,
+                            None => { directory.close(); return Result::Err.(report(&cx, "asset was not scanned", source)); },
                         };
                         if !child.ends_with(&cx, lit(&cx, ".css")) {
                             if build.fingerprint_assets {
                                 let hashed_destination = join(&cx, build.output, hashed_url.slice(1usize, hashed_url.len()));
                                 match claim(&cx, build, hashed_destination, source) {
-                                    Result::Ok(nothing) => (),
-                                    Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                                    Ok(nothing) => (),
+                                    Err(message) => { directory.close(); return Result::Err.(message); },
                                 }
                                 let hash = match stream_copy_hashed(&cx, source, destination, hashed_destination) {
-                                    Result::Ok(found) => found,
-                                    Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                                    Ok(found) => found,
+                                    Err(message) => { directory.close(); return Result::Err.(message); },
                                 };
                                 let current_url = asset_url(&cx, build, fingerprint_name_hash(&cx, child, hash));
                                 if !current_url.eq(&cx, hashed_url) {
@@ -1638,18 +1638,18 @@ fn copy_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: us
                                 }
                             } else {
                                 match stream_copy(&cx, source, destination) {
-                                    Result::Ok(nothing) => (),
-                                    Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                                    Ok(nothing) => (),
+                                    Err(message) => { directory.close(); return Result::Err.(message); },
                                 }
                             }
                         } else {
                             let contents = match load(&cx, source) {
-                                Result::Ok(found) => found,
-                                Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                                Ok(found) => found,
+                                Err(message) => { directory.close(); return Result::Err.(message); },
                             };
                             match save(&cx, destination, Buffer!::new().push_bytes(&cx, contents)) {
-                                Result::Ok(nothing) => (),
-                                Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                                Ok(nothing) => (),
+                                Err(message) => { directory.close(); return Result::Err.(message); },
                             }
                             if build.fingerprint_assets {
                                 let rewritten = rewrite_css(&cx, contents, url, build.base_path, build.asset_urls);
@@ -1660,12 +1660,12 @@ fn copy_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: us
                                 }
                                 let hashed_destination = join(&cx, build.output, hashed_url.slice(1usize, hashed_url.len()));
                                 match claim(&cx, build, hashed_destination, source) {
-                                    Result::Ok(nothing) => (),
-                                    Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                                    Ok(nothing) => (),
+                                    Err(message) => { directory.close(); return Result::Err.(message); },
                                 }
                                 match save(&cx, hashed_destination, Buffer!::new().push_bytes(&cx, rewritten)) {
-                                    Result::Ok(nothing) => (),
-                                    Result::Err(message) => { directory.close(); return Result::Err.(message); },
+                                    Ok(nothing) => (),
+                                    Err(message) => { directory.close(); return Result::Err.(message); },
                                 }
                                 build.stylesheets.push(&cx, Stylesheet.{ source, output: hashed_destination,
                                     url: hashed_url, css: rewritten });
@@ -1684,8 +1684,8 @@ fn copy_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: us
 forall 'k.
 fn real_path(&cx: Domain!['k], path: Span['k]) -> Result[Span['k], Buffer!] {
     match canonicalize(&cx, path) {
-        Result::Ok(found) => Result::Ok.(found.save(&cx)),
-        Result::Err(e) => Result::Err.(report(&cx, "cannot resolve", path)),
+        Ok(found) => Result::Ok.(found.save(&cx)),
+        Err(e) => Result::Err.(report(&cx, "cannot resolve", path)),
     }
 }
 
@@ -1696,39 +1696,39 @@ forall 'k.
 fn remove_tree_at(&cx: Domain!['k], root: Span['k], path: Span['k], relative: Span['k], depth: usize) -> Result[(), Buffer!] {
     if depth >= 64usize { return Result::Err.(report(&cx, "output tree too deep", path)); }
     let opened = match read_dir(&cx, path) {
-        Result::Ok(directory) => directory,
-        Result::Err(e) => return Result::Err.(report(&cx, "cannot list output", path)),
+        Ok(directory) => directory,
+        Err(e) => return Result::Err.(report(&cx, "cannot list output", path)),
     };
     var opened = opened;
     var going = true;
     while going {
         match &opened.next() {
-            Result::Err(e) => { opened.close(); return Result::Err.(report(&cx, "cannot list output", path)); },
-            Result::Ok(next) => match next {
-                Option::None => { going = false; },
-                Option::Some(entry) => {
+            Err(e) => { opened.close(); return Result::Err.(report(&cx, "cannot list output", path)); },
+            Ok(next) => match next {
+                None => { going = false; },
+                Some(entry) => {
                     let { name, is_directory } = entry;
                     let name = name.save(&cx);
                     let child = join(&cx, path, name);
                     let child_rel = join(&cx, relative, name);
                     let is_real_directory = match metadata(&cx, child) {
-                        Result::Ok(m) => match m.kind {
+                        Ok(m) => match m.kind {
                             FileKind::Directory => match real_path(&cx, child) {
-                                Result::Ok(actual) => actual.eq(&cx, join(&cx, root, child_rel)),
-                                Result::Err(message) => { message.destroy(); false },
+                                Ok(actual) => actual.eq(&cx, join(&cx, root, child_rel)),
+                                Err(message) => { message.destroy(); false },
                             },
                             _ => false,
                         },
-                        Result::Err(e) => false,
+                        Err(e) => false,
                     };
                     let removed = if is_real_directory { remove_tree_at(&cx, root, child, child_rel, depth + 1usize) }
                         else { match remove(&cx, child) {
-                            Result::Ok(nothing) => Result::Ok.(()),
-                            Result::Err(e) => Result::Err.(report(&cx, "cannot remove", child)),
+                            Ok(nothing) => Result::Ok.(()),
+                            Err(e) => Result::Err.(report(&cx, "cannot remove", child)),
                         } };
                     match removed {
-                        Result::Ok(nothing) => (),
-                        Result::Err(message) => { opened.close(); return Result::Err.(message); },
+                        Ok(nothing) => (),
+                        Err(message) => { opened.close(); return Result::Err.(message); },
                     }
                 },
             },
@@ -1736,8 +1736,8 @@ fn remove_tree_at(&cx: Domain!['k], root: Span['k], path: Span['k], relative: Sp
     }
     if !opened.close().is_ok() { return Result::Err.(report(&cx, "cannot close output", path)); }
     match remove(&cx, path) {
-        Result::Ok(nothing) => Result::Ok.(()),
-        Result::Err(e) => Result::Err.(report(&cx, "cannot remove", path)),
+        Ok(nothing) => Result::Ok.(()),
+        Err(e) => Result::Err.(report(&cx, "cannot remove", path)),
     }
 }
 
@@ -1758,8 +1758,8 @@ fn stage_paths(&cx: Domain!['k], output: Span['k]) -> Result[(Span['k], Span['k]
         let backup = Buffer!::new().push_bytes(&cx, base).push_static("-previous").save(&cx);
         if !exists_path(&cx, backup)? {
             match mkdir(&cx, stage) {
-                Result::Ok(nothing) => return Result::Ok.((stage, backup)),
-                Result::Err(e) => if e.errno != 17i32 { return Result::Err.(report(&cx, "cannot create staging directory", stage)); },
+                Ok(nothing) => return Result::Ok.((stage, backup)),
+                Err(e) => if e.errno != 17i32 { return Result::Err.(report(&cx, "cannot create staging directory", stage)); },
             }
         }
         attempt = attempt + 1usize;
@@ -1774,24 +1774,24 @@ fn copy_source_tree(&cx: Domain!['k], root: Span['k], source: Span['k], destinat
     relative: Span['k], depth: usize) -> Result[(), Buffer!] {
     if depth >= 64usize { return Result::Err.(report(&cx, "overlay tree too deep", source)); }
     let opened = match read_dir(&cx, source) {
-        Result::Ok(directory) => directory,
-        Result::Err(e) => return Result::Err.(report(&cx, "cannot list overlay source", source)),
+        Ok(directory) => directory,
+        Err(e) => return Result::Err.(report(&cx, "cannot list overlay source", source)),
     };
     var opened = opened;
     var going = true;
     while going {
         match &opened.next() {
-            Result::Err(e) => { opened.close(); return Result::Err.(report(&cx, "cannot list overlay source", source)); },
-            Result::Ok(next) => match next {
-                Option::None => { going = false; },
-                Option::Some(entry) => {
+            Err(e) => { opened.close(); return Result::Err.(report(&cx, "cannot list overlay source", source)); },
+            Ok(next) => match next {
+                None => { going = false; },
+                Some(entry) => {
                     let name = entry.name.save(&cx);
                     let child_rel = join(&cx, relative, name);
                     let child = join(&cx, source, name);
                     let target = join(&cx, destination, name);
                     let actual = match real_path(&cx, child) {
-                        Result::Ok(path) => path,
-                        Result::Err(message) => { opened.close(); return Result::Err.(message); },
+                        Ok(path) => path,
+                        Err(message) => { opened.close(); return Result::Err.(message); },
                     };
                     if !actual.eq(&cx, join(&cx, root, child_rel)) {
                         opened.close();
@@ -1799,27 +1799,27 @@ fn copy_source_tree(&cx: Domain!['k], root: Span['k], source: Span['k], destinat
                     }
                     let copied = if entry.is_directory {
                         match ensure_dir(&cx, target) {
-                            Result::Err(message) => Result::Err.(message),
-                            Result::Ok(nothing) => copy_source_tree(&cx, root, child, target, child_rel, depth + 1usize),
+                            Err(message) => Result::Err.(message),
+                            Ok(nothing) => copy_source_tree(&cx, root, child, target, child_rel, depth + 1usize),
                         }
                     } else {
                         let existing = match exists_path(&cx, target) {
-                            Result::Ok(found) => found,
-                            Result::Err(message) => { opened.close(); return Result::Err.(message); },
+                            Ok(found) => found,
+                            Err(message) => { opened.close(); return Result::Err.(message); },
                         };
                         if existing {
                             match metadata(&cx, target) {
-                                Result::Ok(info) => match info.kind {
+                                Ok(info) => match info.kind {
                                     FileKind::Directory => Result::Err.(report(&cx, "overlay file conflicts with directory", target)),
                                     _ => stream_copy(&cx, child, target),
                                 },
-                                Result::Err(e) => Result::Err.(report(&cx, "cannot stat overlay target", target)),
+                                Err(e) => Result::Err.(report(&cx, "cannot stat overlay target", target)),
                             }
                         } else { stream_copy(&cx, child, target) }
                     };
                     match copied {
-                        Result::Ok(nothing) => (),
-                        Result::Err(message) => { opened.close(); return Result::Err.(message); },
+                        Ok(nothing) => (),
+                        Err(message) => { opened.close(); return Result::Err.(message); },
                     }
                 },
             },
@@ -1840,8 +1840,8 @@ fn stage_overlay(&cx: Domain!['k], root: Span['k], source: Span['k], overlay: Sp
         return Result::Err.(report(&cx, "overlay must be outside input", overlay));
     }
     let overlay_info = match metadata(&cx, overlay) {
-        Result::Ok(info) => info,
-        Result::Err(e) => return Result::Err.(report(&cx, "cannot stat overlay", overlay)),
+        Ok(info) => info,
+        Err(e) => return Result::Err.(report(&cx, "cannot stat overlay", overlay)),
     };
     match overlay_info.kind {
         FileKind::Directory => (),
@@ -1849,12 +1849,12 @@ fn stage_overlay(&cx: Domain!['k], root: Span['k], source: Span['k], overlay: Sp
     }
     let (stage, backup) = stage_paths(&cx, join(&cx, root, lit(&cx, ".krayon-overlay")))?;
     match copy_source_tree(&cx, source_real, source, stage, lit(&cx, ""), 0usize) {
-        Result::Ok(nothing) => (),
-        Result::Err(message) => return Result::Err.(clean_after_error(&cx, stage, message)),
+        Ok(nothing) => (),
+        Err(message) => return Result::Err.(clean_after_error(&cx, stage, message)),
     }
     match copy_source_tree(&cx, overlay_real, overlay, stage, lit(&cx, ""), 0usize) {
-        Result::Ok(nothing) => Result::Ok.(stage),
-        Result::Err(message) => Result::Err.(clean_after_error(&cx, stage, message)),
+        Ok(nothing) => Result::Ok.(stage),
+        Err(message) => Result::Err.(clean_after_error(&cx, stage, message)),
     }
 }
 
@@ -1868,11 +1868,11 @@ fn check_output(&cx: Domain!['k], source: Span['k], output: Span['k]) -> Result[
     }
     if !exists_path(&cx, output)? { return Result::Ok.(false); }
     match metadata(&cx, output) {
-        Result::Ok(m) => match m.kind {
+        Ok(m) => match m.kind {
             FileKind::Directory => (),
             _ => return Result::Err.(report(&cx, "output is not a directory", output)),
         },
-        Result::Err(e) => return Result::Err.(report(&cx, "cannot stat output", output)),
+        Err(e) => return Result::Err.(report(&cx, "cannot stat output", output)),
     }
     let actual = real_path(&cx, output)?;
     let expected = join(&cx, parent_real, basename(&cx, output));
@@ -1887,18 +1887,18 @@ fn collection_item(&cx: Domain!['k], source: SourcePage['k]) -> TomlValue['k] {
     var i = 0usize;
     while i < page.data.positions(&cx) {
         match page.data.key_at(&cx, i) {
-            Option::None => (),
-            Option::Some(key) => match page.data.get(&cx, key) {
-                Option::None => (),
-                Option::Some(value) => { let replaced = fields.insert(&cx, key, value); },
+            None => (),
+            Some(key) => match page.data.get(&cx, key) {
+                None => (),
+                Some(value) => { let replaced = fields.insert(&cx, key, value); },
             },
         }
         i = i + 1usize;
     }
     let replaced = fields.insert(&cx, lit(&cx, "url"), TomlValue::String.(page.url));
     match source.excerpt {
-        Option::Some(html) => { let replaced = fields.insert(&cx, lit(&cx, "excerpt"), TomlValue::String.(html)); },
-        Option::None => (),
+        Some(html) => { let replaced = fields.insert(&cx, lit(&cx, "excerpt"), TomlValue::String.(html)); },
+        None => (),
     }
     TomlValue::Table.(fields)
 }
@@ -1909,8 +1909,8 @@ fn prepare_sources(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
     while i < build.pages.len(&cx) {
         let entry = build.pages.at(&cx, i);
         match entry.source_path {
-            Option::Some(relative) => { let replaced = build.source_urls.insert(&cx, relative, entry.page.url); },
-            Option::None => (),
+            Some(relative) => { let replaced = build.source_urls.insert(&cx, relative, entry.page.url); },
+            None => (),
         }
         i = i + 1usize;
     }
@@ -1918,13 +1918,13 @@ fn prepare_sources(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
     while i < build.pages.len(&cx) {
         let entry = build.pages.at(&cx, i);
         match entry.excerpt {
-            Option::None => (),
-            Option::Some(source) => {
+            None => (),
+            Some(source) => {
                 let relative = entry.file.slice(build.source.len() + 1usize, entry.file.len());
                 let html = match markdown(&cx, source, build.base_path, build.source_urls,
                     build.asset_urls, build.fingerprint_assets, relative) {
-                    Result::Ok(result) => { let (html, headings) = result; html.save(&cx) },
-                    Result::Err(message) => return Result::Err.(report_detail(&cx, entry.file, message)),
+                    Ok(result) => { let (html, headings) = result; html.save(&cx) },
+                    Err(message) => return Result::Err.(report_detail(&cx, entry.file, message)),
                 };
                 let previous = build.pages.replace(&cx, i, SourcePage.{ file: entry.file, source_path: entry.source_path, page: entry.page,
                     is_markdown: entry.is_markdown, format: entry.format, destination: entry.destination,
@@ -1969,38 +1969,38 @@ fn collection_name(&cx: Domain!['k], name: Span['k]) -> bool {
 forall 'k.
 fn publish_named_collections(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
     let pages = match build.collections.get(&cx, lit(&cx, "pages")) {
-        Option::Some(value) => match value.as_array() {
-            Option::Some(array) => array,
-            Option::None => return Result::Err.(report(&cx, "page collection is not an array", build.config_file)),
+        Some(value) => match value.as_array() {
+            Some(array) => array,
+            None => return Result::Err.(report(&cx, "page collection is not an array", build.config_file)),
         },
-        Option::None => return Result::Err.(report(&cx, "page collection is missing", build.config_file)),
+        None => return Result::Err.(report(&cx, "page collection is missing", build.config_file)),
     };
     var i = 0usize;
     while i < build.definitions.positions(&cx) {
         match build.definitions.key_at(&cx, i) {
-            Option::None => (),
-            Option::Some(name) => {
+            None => (),
+            Some(name) => {
                 if !collection_name(&cx, name) {
                     return Result::Err.(report_detail(&cx, build.config_file,
                         Buffer!::new().push_static("invalid collection name: ").push_bytes(&cx, name).save(&cx)));
                 }
                 let rules = match build.definitions.get(&cx, name) {
-                    Option::Some(value) => match value.as_table() {
-                        Option::Some(table) => table,
-                        Option::None => return Result::Err.(report_detail(&cx, build.config_file,
+                    Some(value) => match value.as_table() {
+                        Some(table) => table,
+                        None => return Result::Err.(report_detail(&cx, build.config_file,
                             Buffer!::new().push_static("collection must be a table: ").push_bytes(&cx, name).save(&cx))),
                     },
-                    Option::None => return Result::Err.(report(&cx, "collection definition is missing", build.config_file)),
+                    None => return Result::Err.(report(&cx, "collection definition is missing", build.config_file)),
                 };
                 var j = 0usize;
                 while j < rules.positions(&cx) {
                     match rules.key_at(&cx, j) {
-                        Option::Some(key) => if !key.is(&cx, "where") && !key.is(&cx, "sort_by")
+                        Some(key) => if !key.is(&cx, "where") && !key.is(&cx, "sort_by")
                             && !key.is(&cx, "sort_order") {
                             return Result::Err.(report_detail(&cx, build.config_file,
                                 Buffer!::new().push_static("unknown collection rule: ").push_bytes(&cx, key).save(&cx)));
                         },
-                        Option::None => (),
+                        None => (),
                     }
                     j = j + 1usize;
                 }
@@ -2018,28 +2018,28 @@ fn publish_collection_navigation(&cx: Domain!['k], build: Build['k]) -> () {
     var i = 0usize;
     while i < build.definitions.positions(&cx) {
         match build.definitions.key_at(&cx, i) {
-            Option::None => (),
-            Option::Some(name) => match build.collections.get(&cx, name) {
-                Option::None => (),
-                Option::Some(value) => match value.as_array() {
-                    Option::None => (),
-                    Option::Some(items) => {
+            None => (),
+            Some(name) => match build.collections.get(&cx, name) {
+                None => (),
+                Some(value) => match value.as_array() {
+                    None => (),
+                    Some(items) => {
                         var j = 0usize;
                         while j < items.len(&cx) {
                             let item = items.at(&cx, j);
                             match item.as_table() {
-                                Option::None => (),
-                                Option::Some(record) => match record.get(&cx, lit(&cx, "url")) {
-                                    Option::None => (),
-                                    Option::Some(url_value) => match url_value.as_string() {
-                                        Option::None => (),
-                                        Option::Some(url) => {
+                                None => (),
+                                Some(record) => match record.get(&cx, lit(&cx, "url")) {
+                                    None => (),
+                                    Some(url_value) => match url_value.as_string() {
+                                        None => (),
+                                        Some(url) => {
                                             let per_page = match build.navigation.get(&cx, url) {
-                                                Option::Some(value) => match value.as_table() {
-                                                    Option::Some(table) => table,
-                                                    Option::None => ArenaMap::new(&cx),
+                                                Some(value) => match value.as_table() {
+                                                    Some(table) => table,
+                                                    None => ArenaMap::new(&cx),
                                                 },
-                                                Option::None => ArenaMap::new(&cx),
+                                                None => ArenaMap::new(&cx),
                                             };
                                             let neighbors = ArenaMap::new(&cx);
                                             if j > 0usize {
@@ -2073,10 +2073,10 @@ fn discover_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
     var j = 0usize;
     while j < build.asset_urls.positions(&cx) {
         match build.asset_urls.key_at(&cx, j) {
-            Option::None => (),
-            Option::Some(url) => match build.asset_urls.get(&cx, url) {
-                Option::None => (),
-                Option::Some(fingerprinted) => {
+            None => (),
+            Some(url) => match build.asset_urls.get(&cx, url) {
+                None => (),
+                Some(fingerprinted) => {
                     let replaced = asset_values.insert(&cx, url, TomlValue::String.(fingerprinted));
                 },
             },
@@ -2123,8 +2123,8 @@ fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
             TemplateFormat::Xml => {
                 let rendered = load(&cx, source.destination)?;
                 let locations = match xml_locations(&cx, rendered) {
-                    Result::Ok(found) => found,
-                    Result::Err(error) => return Result::Err.(report_generated(&cx, source, rendered,
+                    Ok(found) => found,
+                    Err(error) => return Result::Err.(report_generated(&cx, source, rendered,
                         "XML", error.offset, error.message)),
                 };
                 let targets = ArenaVec::new(&cx);
@@ -2152,8 +2152,8 @@ fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
 forall 'k.
 fn clean_after_error(&cx: Domain!['k], stage: Span['k], message: Buffer!) -> Buffer! {
     match remove_tree(&cx, stage) {
-        Result::Ok(nothing) => message,
-        Result::Err(cleanup) => message.push_buffer(cleanup),
+        Ok(nothing) => message,
+        Err(cleanup) => message.push_buffer(cleanup),
     }
 }
 
@@ -2173,8 +2173,8 @@ fn read_site_data(&cx: Domain!['k], source: Span['k], config: Config['k])
     let site_data = if exists_path(&cx, site_file)? {
         let text = load(&cx, site_file)?;
         match parse(&cx, text) {
-            Result::Ok(data) => data,
-            Result::Err(e) => return Result::Err.(report_detail(&cx, site_file, lit(&cx, e.message))),
+            Ok(data) => data,
+            Err(e) => return Result::Err.(report_detail(&cx, site_file, lit(&cx, e.message))),
         }
     } else { ArenaMap::new(&cx) };
     if site_data.contains(&cx, lit(&cx, "base_path")) {
@@ -2236,18 +2236,18 @@ fn route_listing(&cx: Domain!['k], root: Span['k], overlay: Option[Span['k]], in
     check_config_output(&cx, config)?;
     let original = join(&cx, root, config.input);
     let source = match overlay {
-        Option::None => original,
-        Option::Some(path) => stage_overlay(&cx, root, original, path)?,
+        None => original,
+        Some(path) => stage_overlay(&cx, root, original, path)?,
     };
     let result = route_listing_source(&cx, root, config, source, include_drafts, json);
     match overlay {
-        Option::None => result,
-        Option::Some(path) => match result {
-            Result::Ok(listing) => match remove_tree(&cx, source) {
-                Result::Ok(nothing) => Result::Ok.(listing),
-                Result::Err(message) => { listing.destroy(); Result::Err.(message) },
+        None => result,
+        Some(path) => match result {
+            Ok(listing) => match remove_tree(&cx, source) {
+                Ok(nothing) => Result::Ok.(listing),
+                Err(message) => { listing.destroy(); Result::Err.(message) },
             },
-            Result::Err(message) => Result::Err.(clean_after_error(&cx, source, message)),
+            Err(message) => Result::Err.(clean_after_error(&cx, source, message)),
         },
     }
 }
@@ -2301,8 +2301,8 @@ fn route_listing_source(&cx: Domain!['k], root: Span['k], config: Config['k], so
     i = 0usize;
     while i < build.asset_urls.positions(&cx) {
         match build.asset_urls.key_at(&cx, i) {
-            Option::Some(url) => assets.push(&cx, url),
-            Option::None => (),
+            Some(url) => assets.push(&cx, url),
+            None => (),
         }
         i = i + 1usize;
     }
@@ -2312,7 +2312,7 @@ fn route_listing_source(&cx: Domain!['k], root: Span['k], config: Config['k], so
     while i < assets.len(&cx) {
         let original = assets.at(&cx, i);
         match build.asset_urls.get(&cx, original) {
-            Option::Some(preferred) => {
+            Some(preferred) => {
                 let source = original.slice(1usize, original.len());
                 let url = prefix(&cx, build.base_path, preferred);
                 listing = if json {
@@ -2329,7 +2329,7 @@ fn route_listing_source(&cx: Domain!['k], root: Span['k], config: Config['k], so
                 };
                 asset_count = asset_count + 1usize;
             },
-            Option::None => (),
+            None => (),
         }
         i = i + 1usize;
     }
@@ -2354,15 +2354,15 @@ fn check_with_optional_overlay(&cx: Domain!['k], root: Span['k], overlay: Option
     check_config_output(&cx, config)?;
     let original = join(&cx, root, config.input);
     let source = match overlay {
-        Option::None => original,
-        Option::Some(path) => stage_overlay(&cx, root, original, path)?,
+        None => original,
+        Some(path) => stage_overlay(&cx, root, original, path)?,
     };
     let result = check_source(&cx, root, config, source, include_drafts);
     match overlay {
-        Option::None => result,
-        Option::Some(path) => match result {
-            Result::Ok(nothing) => remove_tree(&cx, source),
-            Result::Err(message) => Result::Err.(clean_after_error(&cx, source, message)),
+        None => result,
+        Some(path) => match result {
+            Ok(nothing) => remove_tree(&cx, source),
+            Err(message) => Result::Err.(clean_after_error(&cx, source, message)),
         },
     }
 }
@@ -2377,8 +2377,8 @@ fn check_source(&cx: Domain!['k], root: Span['k], config: Config['k], source: Sp
     let (stage, backup) = stage_paths(&cx, output)?;
     let build = new_build(&cx, root, config, source, stage, include_drafts, site_data);
     match render_site(&cx, build) {
-        Result::Ok(nothing) => remove_tree(&cx, stage),
-        Result::Err(message) => Result::Err.(clean_after_error(&cx, stage, message)),
+        Ok(nothing) => remove_tree(&cx, stage),
+        Err(message) => Result::Err.(clean_after_error(&cx, stage, message)),
     }
 }
 
@@ -2397,8 +2397,8 @@ fn build_preview(&cx: Domain!['k], root: Span['k], workspace: Span['k],
         else { join(&cx, served, config.base_path.skip(1)) };
     ensure_dir(&cx, output)?;
     let source = match overlay {
-        Option::None => original,
-        Option::Some(path) => stage_overlay(&cx, workspace, original, path)?,
+        None => original,
+        Some(path) => stage_overlay(&cx, workspace, original, path)?,
     };
     let site_data = read_site_data(&cx, source, config)?;
     render_site(&cx, new_build(&cx, root, config, source, output, include_drafts, site_data))?;
@@ -2423,15 +2423,15 @@ fn build_with_optional_overlay(&cx: Domain!['k], root: Span['k], overlay: Option
     check_config_output(&cx, config)?;
     let original = join(&cx, root, config.input);
     let source = match overlay {
-        Option::None => original,
-        Option::Some(path) => stage_overlay(&cx, root, original, path)?,
+        None => original,
+        Some(path) => stage_overlay(&cx, root, original, path)?,
     };
     let result = build_source(&cx, root, config, source, include_drafts);
     match overlay {
-        Option::None => result,
-        Option::Some(path) => match result {
-            Result::Ok(nothing) => remove_tree(&cx, source),
-            Result::Err(message) => Result::Err.(clean_after_error(&cx, source, message)),
+        None => result,
+        Some(path) => match result {
+            Ok(nothing) => remove_tree(&cx, source),
+            Err(message) => Result::Err.(clean_after_error(&cx, source, message)),
         },
     }
 }
@@ -2446,23 +2446,23 @@ fn build_source(&cx: Domain!['k], root: Span['k], config: Config['k], source: Sp
     let (stage, backup) = stage_paths(&cx, output)?;
     let build = new_build(&cx, root, config, source, stage, include_drafts, site_data);
     match render_site(&cx, build) {
-        Result::Ok(nothing) => (),
-        Result::Err(message) => return Result::Err.(clean_after_error(&cx, stage, message)),
+        Ok(nothing) => (),
+        Err(message) => return Result::Err.(clean_after_error(&cx, stage, message)),
     }
     if previous {
         match rename(&cx, output, backup) {
-            Result::Ok(nothing) => (),
-            Result::Err(e) => return Result::Err.(clean_after_error(&cx, stage, report(&cx, "cannot move previous output", output))),
+            Ok(nothing) => (),
+            Err(e) => return Result::Err.(clean_after_error(&cx, stage, report(&cx, "cannot move previous output", output))),
         }
     }
     match rename(&cx, stage, output) {
-        Result::Ok(nothing) => (),
-        Result::Err(e) => {
+        Ok(nothing) => (),
+        Err(e) => {
             var message = report(&cx, "cannot install generated output", output);
             if previous {
                 match rename(&cx, backup, output) {
-                    Result::Ok(nothing) => (),
-                    Result::Err(e) => { message = message.push_buffer(report(&cx, "cannot restore previous output", backup)); },
+                    Ok(nothing) => (),
+                    Err(e) => { message = message.push_buffer(report(&cx, "cannot restore previous output", backup)); },
                 }
             }
             return Result::Err.(clean_after_error(&cx, stage, message));

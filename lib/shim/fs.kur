@@ -24,20 +24,20 @@ forall 'k.
 fn ensure_component(&cx: Domain!['k], path: Span['k]) -> Result[(), CreateDirError['k]] {
     if path.is_empty() { return Result::Ok.(()); }
     match metadata(&cx, path) {
-        Result::Ok(info) => match info.kind {
+        Ok(info) => match info.kind {
             FileKind::Directory => Result::Ok.(()),
             _ => Result::Err.(CreateDirError.{ path, kind: CreateDirErrorKind::NotDirectory }),
         },
-        Result::Err(e) => match e.kind() {
+        Err(e) => match e.kind() {
             ErrorKind::NotFound => match mkdir(&cx, path) {
-                Result::Ok(nothing) => Result::Ok.(()),
-                Result::Err(create_error) => match create_error.kind() {
+                Ok(nothing) => Result::Ok.(()),
+                Err(create_error) => match create_error.kind() {
                     ErrorKind::AlreadyExists => match metadata(&cx, path) {
-                        Result::Ok(info) => match info.kind {
+                        Ok(info) => match info.kind {
                             FileKind::Directory => Result::Ok.(()),
                             _ => Result::Err.(CreateDirError.{ path, kind: CreateDirErrorKind::NotDirectory }),
                         },
-                        Result::Err(stat_error) => Result::Err.(CreateDirError.{ path, kind: CreateDirErrorKind::Stat.(stat_error) }),
+                        Err(stat_error) => Result::Err.(CreateDirError.{ path, kind: CreateDirErrorKind::Stat.(stat_error) }),
                     },
                     _ => Result::Err.(CreateDirError.{ path, kind: CreateDirErrorKind::Create.(create_error) }),
                 },

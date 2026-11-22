@@ -42,12 +42,12 @@ fn xml_char(code: u32) -> bool {
 forall 'k.
 fn scalar(&cx: Domain!['k], text: Span['k], i: usize) -> Result[(u32, usize), Error] {
     match decode(&cx, text, i) {
-        Option::Some(pair) => {
+        Some(pair) => {
             let (code, next) = pair;
             if !xml_char(code) { return Result::Err.(fail(i, "invalid XML character")); }
             Result::Ok.((code, next))
         },
-        Option::None => Result::Err.(fail(i, "invalid UTF-8 in XML")),
+        None => Result::Err.(fail(i, "invalid UTF-8 in XML")),
     }
 }
 
@@ -133,8 +133,8 @@ fn reference(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Er
         return Result::Ok.(i + 1usize);
     }
     let (entity, end) = match name(&cx, text, i) {
-        Result::Ok(found) => found,
-        Result::Err(e) => return Result::Err.(fail(start, "invalid XML reference")),
+        Ok(found) => found,
+        Err(e) => return Result::Err.(fail(start, "invalid XML reference")),
     };
     if end >= text.len() || byte(&cx, text, end) != b';' {
         return Result::Err.(fail(start, "unterminated XML reference"));
@@ -339,8 +339,8 @@ fn validate(&cx: Domain!['k], text: Span['k]) -> Result[(), Error] {
         } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "</")) {
             let (tag, next) = end_tag(&cx, text, i)?;
             let expected = match open.pop(&cx) {
-                Option::Some(name) => name,
-                Option::None => return Result::Err.(fail(i, "closing tag without opening tag")),
+                Some(name) => name,
+                None => return Result::Err.(fail(i, "closing tag without opening tag")),
             };
             if !tag.eq(&cx, expected) { return Result::Err.(fail(i, "mismatched XML closing tag")); }
             i = next;
@@ -422,8 +422,8 @@ fn attribute_text(&cx: Domain!['k], raw: Span['k]) -> Result[Span['k], Error] {
     while i < raw.len() {
         if byte(&cx, raw, i) == b'&' {
             let next = match reference(&cx, raw, i) {
-                Result::Ok(next) => next,
-                Result::Err(error) => { out.destroy(); return Result::Err.(error); },
+                Ok(next) => next,
+                Err(error) => { out.destroy(); return Result::Err.(error); },
             };
             out = append_reference(&cx, out, raw, i, next);
             i = next;
@@ -466,8 +466,8 @@ fn atom_namespace(&cx: Domain!['k], text: Span['k], tag_start: usize, namespace:
     let attribute = if namespace.is_empty() { Span::from_static(&cx, "xmlns") }
         else { Buffer!::new().push_static("xmlns:").push_bytes(&cx, namespace).save(&cx) };
     match named_attribute(&cx, text, tag_start, attribute)? {
-        Option::Some(found) => Result::Ok.(found.value.is(&cx, "http://www.w3.org/2005/Atom")),
-        Option::None => Result::Ok.(false),
+        Some(found) => Result::Ok.(found.value.is(&cx, "http://www.w3.org/2005/Atom")),
+        None => Result::Ok.(false),
     }
 }
 
@@ -559,8 +559,8 @@ fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 
                 root_seen = true;
                 sitemap = sitemap_root(&cx, tag);
                 let colon = match tag.find_byte(&cx, b':', 0usize) {
-                    Option::Some(at) => at,
-                    Option::None => tag.len(),
+                    Some(at) => at,
+                    None => tag.len(),
                 };
                 if colon < tag.len() { namespace = tag.slice(0usize, colon); }
                 atom = xml_name(&cx, tag, namespace, "feed")
@@ -571,24 +571,24 @@ fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 
                 ((open.len(&cx) == 1usize && xml_name(&cx, open.at(&cx, 0usize), namespace, "feed")) ||
                  (open.len(&cx) == 2usize && xml_name(&cx, open.at(&cx, 1usize), namespace, "entry"))) {
                 match named_attribute(&cx, text, i, Span::from_static(&cx, "href"))? {
-                    Option::Some(location) => {
+                    Some(location) => {
                         let bases = ArenaVec::new(&cx);
                         var j = 0usize;
                         while j < base_stack.len(&cx) {
                             match base_stack.at(&cx, j) {
                                 Option::Some(base) => bases.push(&cx, base),
-                                Option::None => (),
+                                None => (),
                             }
                             j = j + 1usize;
                         }
                         match named_attribute(&cx, text, i, Span::from_static(&cx, "xml:base"))? {
-                            Option::Some(base) => bases.push(&cx, base.value),
-                            Option::None => (),
+                            Some(base) => bases.push(&cx, base.value),
+                            None => (),
                         }
                         found.push(&cx, Location.{ value: location.value, offset: location.offset,
                             bases: Option::Some.(bases) });
                     },
-                    Option::None => (),
+                    None => (),
                 }
             }
             if active { if !empty { depth = depth + 1usize; } }
@@ -612,8 +612,8 @@ fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 
                 open.push(&cx, tag);
                 if atom {
                     let base = match named_attribute(&cx, text, i, Span::from_static(&cx, "xml:base"))? {
-                        Option::Some(found) => Option::Some.(found.value),
-                        Option::None => Option::None,
+                        Some(found) => Option::Some.(found.value),
+                        None => Option::None,
                     };
                     base_stack.push(&cx, base);
                 }
