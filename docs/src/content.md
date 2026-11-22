@@ -98,9 +98,9 @@ Blank lines between list items or between paragraphs in an item make the list
 loose. Loose list items render their paragraphs with `<p>` tags; tight list
 items keep the existing compact markup.
 
-Indent fenced code blocks and blockquotes to the content column of a list item
-to keep them inside that item. Text following either block starts a new
-paragraph in the same item.
+Indent headings, tables, fenced code blocks, and blockquotes to the content
+column of a list item to keep them inside that item. Text following a block
+starts a new paragraph in the same item.
 
 Fenced `kursal` code receives token classes for keywords, types,
 strings, numbers, and comments. Other fence languages remain escaped plain

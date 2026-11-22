@@ -2947,6 +2947,34 @@ class BuildTests(unittest.TestCase):
                       '<pre><code class="language-other">&lt;tag&gt;\n</code></pre>\n'
                       '</li>\n<li>Sibling child</li>', html)
 
+    def test_headings_and_tables_inside_list_items(self):
+        page = self.site / "src/list-sections.md"
+        page.write_text(
+            '# Overview\n\n'
+            '- First section\n'
+            '  ## Details {#item-details}\n'
+            '  | Name | Value |\n'
+            '  | --- | --- |\n'
+            '  | alpha | one |\n'
+            '  - Nested section\n'
+            '    ### Details\n'
+            '- Second section\n\n'
+            '[Jump](#item-details)\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/list-sections/index.html").read_text()
+        self.assertIn('<li>First section<h2 id="item-details">Details</h2>\n'
+                      '<table>\n<thead>\n<tr>\n<th>Name</th>\n<th>Value</th>\n'
+                      '</tr>\n</thead>\n<tbody>\n<tr>\n<td>alpha</td>\n'
+                      '<td>one</td>\n</tr>\n</tbody>\n</table>\n'
+                      '<ul>\n<li>Nested section<h3 id="details">Details</h3>', html)
+        self.assertIn('<li>Second section</li>\n</ul>\n<p><a href="#item-details">Jump</a></p>', html)
+
+        page.write_text('- Parent\n  - [Missing](/missing/)\n')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('broken local link: /missing/ (line 2, column 5)', result.stderr)
+
     def test_image_uses_base_path_and_missing_image_fails(self):
         config = self.site / "krayon.toml"
         config.write_text(config.read_text() + 'base_path = "/docs"\n')
