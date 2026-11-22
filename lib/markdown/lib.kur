@@ -441,18 +441,40 @@ fn quote_line(&cx: Domain!['k], line: Span['k]) -> Option[Span['k]] {
     Option::Some.(line.slice(start, line.len()))
 }
 
+forall 'k.
+fn paragraph_text_line(&cx: Domain!['k], line: Span['k]) -> bool {
+    let text = line.trim(&cx);
+    !text.is_empty() && !list_marker(&cx, text).is_some() &&
+        !quote_line(&cx, text).is_some() && heading_level(&cx, text) == 0usize &&
+        !starts(&cx, text, "```") && !starts(&cx, text, "<") && !starts(&cx, text, "| ")
+}
+
+forall 'k.
+fn item_paragraph_line(&cx: Domain!['k], line: Span['k]) -> bool {
+    match list_marker(&cx, line) {
+        Some(parts) => {
+            let (indent, content_start, ordered) = parts;
+            paragraph_text_line(&cx, line.slice(content_start, line.len()))
+        },
+        None => paragraph_text_line(&cx, line),
+    }
+}
+
 // A blank line between items or between blocks in an item makes the whole
 // list loose, including items that precede the blank line.
 forall 'k.
 fn loose_list(&cx: Domain!['k], source: Span['k], next: usize,
-    indent: usize, content_indent: usize, ordered: bool) -> bool {
+    indent: usize, content_indent: usize, ordered: bool, first_content: Span['k]) -> bool {
     var pos = next;
     var blank = false;
-    var fenced = false;
+    var fenced = starts(&cx, first_content, "```");
+    var lazy_paragraph = item_paragraph_line(&cx, first_content);
     while pos < source.len() {
         let (line, after) = next_line(&cx, source, pos);
         pos = after;
-        if line.is_empty() { if !fenced { blank = true; } }
+        if line.is_empty() {
+            if !fenced { blank = true; lazy_paragraph = false; }
+        }
         else {
             var line_indent = 0usize;
             while at(&cx, line, line_indent) == b' ' { line_indent = line_indent + 1usize; }
@@ -469,11 +491,26 @@ fn loose_list(&cx: Domain!['k], source: Span['k], next: usize,
                     },
                     None => false,
                 };
-                if !same_item_level && line_indent < content_indent { return false; }
+                if !same_item_level && line_indent < content_indent {
+                    if blank || !lazy_paragraph || !paragraph_text_line(&cx, line) { return false; }
+                }
                 if blank { return true; }
                 blank = false;
+                let content = if same_item_level {
+                    match marker {
+                        Some(parts) => {
+                            let (item_indent, item_content, item_ordered) = parts;
+                            line.slice(item_content, line.len())
+                        },
+                        None => line,
+                    }
+                } else if line_indent >= content_indent { line.slice(content_indent, line.len()) }
+                else { line };
                 if line_indent >= content_indent && starts(&cx, line.slice(line_indent, line.len()), "```") {
                     fenced = true;
+                    lazy_paragraph = false;
+                } else {
+                    lazy_paragraph = item_paragraph_line(&cx, content);
                 }
             }
         }
@@ -490,7 +527,8 @@ fn render_list(&cx: Domain!['k], source: Span['k], start: usize, links: LinkCont
         Some(parts) => parts,
         None => return Result::Err.(lit(&cx, "invalid Markdown list marker")),
     };
-    let loose = loose_list(&cx, source, first_after, indent, content_indent, ordered);
+    let loose = loose_list(&cx, source, first_after, indent, content_indent, ordered,
+        first.slice(content_indent, first.len()));
     var out = Buffer!::new().push_static(if ordered { "<ol>\n" } else { "<ul>\n" });
     var pos = start;
     var gathering = true;
@@ -523,11 +561,14 @@ fn render_list(&cx: Domain!['k], source: Span['k], start: usize, links: LinkCont
             body = body.push_bytes(&cx, first_content).push_byte(b'\n');
             pos = after;
             var reading_item = true;
+            var fenced = starts(&cx, first_content, "```");
+            var lazy_paragraph = item_paragraph_line(&cx, first_content);
             while reading_item && pos < source.len() {
                 let (following, next) = next_line(&cx, source, pos);
                 if following.is_empty() {
                     body = body.push_byte(b'\n');
                     pos = next;
+                    if !fenced { lazy_paragraph = false; }
                 } else {
                     var following_indent = 0usize;
                     while at(&cx, following, following_indent) == b' ' { following_indent = following_indent + 1usize; }
@@ -539,15 +580,24 @@ fn render_list(&cx: Domain!['k], source: Span['k], start: usize, links: LinkCont
                         },
                         None => false,
                     };
-                    if next_item || following_indent < item_content { reading_item = false; }
+                    let lazy_line = following_indent < item_content && lazy_paragraph &&
+                        paragraph_text_line(&cx, following);
+                    if next_item || (following_indent < item_content && !lazy_line) { reading_item = false; }
                     else {
-                        let content = following.slice(item_content, following.len());
+                        let content = if lazy_line { following.trim(&cx) } else { following.slice(item_content, following.len()) };
                         match original_offset(&cx, links, content, 0usize) {
                             Some(offset) => segments.push(&cx, SourceSegment.{ start: &body.len(), length: content.len(), original: offset }),
                             None => (),
                         }
                         body = body.push_bytes(&cx, content).push_byte(b'\n');
                         pos = next;
+                        if fenced {
+                            if starts(&cx, content, "```") { fenced = false; }
+                            lazy_paragraph = false;
+                        } else if starts(&cx, content, "```") {
+                            fenced = true;
+                            lazy_paragraph = false;
+                        } else { lazy_paragraph = item_paragraph_line(&cx, content); }
                     }
                 }
             }

@@ -2975,6 +2975,62 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('broken local link: /missing/ (line 2, column 5)', result.stderr)
 
+    def test_lazy_list_paragraph_continuations(self):
+        page = self.site / "src/lazy-lists.md"
+        page.write_text(
+            '- First line\n'
+            'wrapped without indentation\n'
+            '- Parent\n'
+            '  - Nested first line\n'
+            'nested continuation\n'
+            '  - Nested sibling\n'
+            '- Final\n\n'
+            '1. Ordered first line\n'
+            '  partially indented continuation\n'
+            '2. Ordered second\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/lazy-lists/index.html").read_text()
+        self.assertIn('<li>First line wrapped without indentation</li>\n'
+                      '<li>Parent<ul>\n'
+                      '<li>Nested first line nested continuation</li>\n'
+                      '<li>Nested sibling</li>\n</ul>\n</li>\n'
+                      '<li>Final</li>', html)
+        self.assertIn('<ol>\n<li>Ordered first line partially indented continuation</li>\n'
+                      '<li>Ordered second</li>\n</ol>', html)
+
+        page.write_text('- First line\nwrapped\n\n- Second line\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/lazy-lists/index.html").read_text()
+        self.assertIn('<li><p>First line wrapped</p>\n</li>\n'
+                      '<li><p>Second line</p>\n</li>', html)
+
+    def test_lazy_list_lines_stop_at_block_boundaries(self):
+        page = self.site / "src/lazy-boundaries.md"
+        fence = chr(96) * 3
+        page.write_text(
+            '- First\n\n'
+            'Outside after blank.\n\n'
+            '- Second\n'
+            f'  {fence}\n'
+            '  code\n'
+            f'  {fence}\n'
+            'Outside after code.\n\n'
+            '- Third\n'
+            '# Outside heading\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/lazy-boundaries/index.html").read_text()
+        self.assertIn('<li>First</li>\n</ul>\n<p>Outside after blank.</p>', html)
+        self.assertIn('</code></pre>\n</li>\n</ul>\n<p>Outside after code.</p>', html)
+        self.assertIn('<li>Third</li>\n</ul>\n<h1 id="outside-heading">Outside heading</h1>', html)
+
+        page.write_text('- Parent\n[Missing](/missing/)\n')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('broken local link: /missing/ (line 2, column 1)', result.stderr)
+
     def test_image_uses_base_path_and_missing_image_fails(self):
         config = self.site / "krayon.toml"
         config.write_text(config.read_text() + 'base_path = "/docs"\n')
