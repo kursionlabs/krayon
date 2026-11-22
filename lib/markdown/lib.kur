@@ -12,6 +12,8 @@ struct ListFrame {
     indent: usize,
     content_indent: usize,
     ordered: bool,
+    loose: bool,
+    paragraph_open: bool,
 }
 
 forall 'k.
@@ -447,13 +449,49 @@ fn quote_line(&cx: Domain!['k], line: Span['k]) -> Option[Span['k]] {
     Option::Some.(line.slice(start, line.len()))
 }
 
+// A blank line between items or between blocks in an item makes the whole
+// list loose, including items that precede the blank line.
+forall 'k.
+fn loose_list(&cx: Domain!['k], source: Span['k], next: usize,
+    indent: usize, content_indent: usize, ordered: bool) -> bool {
+    var pos = next;
+    var blank = false;
+    while pos < source.len() {
+        let (line, after) = next_line(&cx, source, pos);
+        pos = after;
+        if line.is_empty() { blank = true; }
+        else {
+            let marker = list_marker(&cx, line);
+            let same_item_level = match marker {
+                Some(parts) => {
+                    let (item_indent, item_content, item_ordered) = parts;
+                    item_indent == indent && item_ordered == ordered
+                },
+                None => false,
+            };
+            var line_indent = 0usize;
+            while at(&cx, line, line_indent) == b' ' { line_indent = line_indent + 1usize; }
+            if !same_item_level && line_indent < content_indent { return false; }
+            if blank { return true; }
+            blank = false;
+        }
+    }
+    false
+}
+
+forall 'k.
+fn finish_item(&cx: Domain!['k], out: Buffer!, frame: ListFrame) -> Buffer! {
+    let out = if frame.paragraph_open { out.push_static("</p>\n") } else { out };
+    out.push_static("</li>\n")
+}
+
 forall 'k.
 fn close_lists(&cx: Domain!['k], out: Buffer!, lists: ArenaVec[ListFrame, 'k]) -> Buffer! {
     var out = out;
     while lists.len(&cx) > 0usize {
         match lists.pop(&cx) {
             Some(frame) => {
-                out = out.push_static("</li>\n").push_static(if frame.ordered { "</ol>\n" } else { "</ul>\n" });
+                out = finish_item(&cx, out, frame).push_static(if frame.ordered { "</ol>\n" } else { "</ul>\n" });
             },
             None => (),
         }
@@ -463,7 +501,8 @@ fn close_lists(&cx: Domain!['k], out: Buffer!, lists: ArenaVec[ListFrame, 'k]) -
 
 forall 'k.
 fn list_item(&cx: Domain!['k], out: Buffer!, lists: ArenaVec[ListFrame, 'k],
-    line: Span['k], indent: usize, content_start: usize, ordered: bool, links: LinkContext['k]) -> Buffer! {
+    line: Span['k], source: Span['k], next: usize, indent: usize, content_start: usize,
+    ordered: bool, links: LinkContext['k]) -> Buffer! {
     var out = out;
     var adjusting = true;
     while adjusting && lists.len(&cx) > 0usize {
@@ -471,7 +510,7 @@ fn list_item(&cx: Domain!['k], out: Buffer!, lists: ArenaVec[ListFrame, 'k],
         if indent < top.indent || (indent == top.indent && ordered != top.ordered) {
             match lists.pop(&cx) {
                 Some(frame) => {
-                    out = out.push_static("</li>\n").push_static(if frame.ordered { "</ol>\n" } else { "</ul>\n" });
+                    out = finish_item(&cx, out, frame).push_static(if frame.ordered { "</ol>\n" } else { "</ul>\n" });
                 },
                 None => (),
             }
@@ -482,16 +521,33 @@ fn list_item(&cx: Domain!['k], out: Buffer!, lists: ArenaVec[ListFrame, 'k],
         if indent > top.indent && indent < top.content_indent {
             return inline(&cx, out.push_byte(b' '), line.trim(&cx), links);
         }
-        if indent == top.indent { out = out.push_static("</li>\n"); }
+        if indent == top.indent { out = finish_item(&cx, out, top); }
         else {
+            if top.paragraph_open {
+                out = out.push_static("</p>\n");
+                let previous = lists.replace(&cx, lists.len(&cx) - 1usize,
+                    ListFrame.{ indent: top.indent, content_indent: top.content_indent,
+                        ordered: top.ordered, loose: top.loose, paragraph_open: false });
+            }
             out = out.push_static(if ordered { "<ol>\n" } else { "<ul>\n" });
-            lists.push(&cx, ListFrame.{ indent, content_indent: content_start, ordered });
+            lists.push(&cx, ListFrame.{ indent, content_indent: content_start, ordered,
+                loose: loose_list(&cx, source, next, indent, content_start, ordered), paragraph_open: false });
         }
     } else {
         out = out.push_static(if ordered { "<ol>\n" } else { "<ul>\n" });
-        lists.push(&cx, ListFrame.{ indent, content_indent: content_start, ordered });
+        lists.push(&cx, ListFrame.{ indent, content_indent: content_start, ordered,
+            loose: loose_list(&cx, source, next, indent, content_start, ordered), paragraph_open: false });
     }
-    inline(&cx, out.push_static("<li>"), line.slice(content_start, line.len()), links)
+    let top = lists.at(&cx, lists.len(&cx) - 1usize);
+    let content = line.slice(content_start, line.len());
+    out = out.push_static("<li>");
+    if top.loose && !content.is_empty() {
+        out = out.push_static("<p>");
+        let previous = lists.replace(&cx, lists.len(&cx) - 1usize,
+            ListFrame.{ indent: top.indent, content_indent: top.content_indent,
+                ordered: top.ordered, loose: top.loose, paragraph_open: true });
+    }
+    inline(&cx, out, content, links)
 }
 
 forall 'k.
@@ -506,6 +562,7 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
     var code_lang = empty(&cx);
     var table = false;
     var table_body = false;
+    var blank_in_list = false;
     while pos < source.len() {
         let (line, next) = next_line(&cx, source, pos);
         pos = next;
@@ -545,7 +602,7 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
         }
         else if line.is_empty() {
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
-            out = close_lists(&cx, out, lists);
+            if lists.len(&cx) > 0usize { blank_in_list = true; }
             if table { out = out.push_static("</tbody>\n</table>\n"); table = false; table_body = false; }
         } else if quoted.is_some() {
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
@@ -603,7 +660,8 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
             match marker {
                 Some(parts) => {
                     let (indent, content_start, ordered) = parts;
-                    out = list_item(&cx, out, lists, line, indent, content_start, ordered, links);
+                    out = list_item(&cx, out, lists, line, source, pos, indent, content_start, ordered, links);
+                    blank_in_list = false;
                 },
                 None => (),
             }
@@ -614,15 +672,39 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
             if starts(&cx, line, "| ---") { out = out.push_static("</thead>\n<tbody>\n"); table_body = true; }
             else { out = table_row(&cx, out, line, !table_body, links); }
         } else {
+            var line_indent = 0usize;
+            while at(&cx, line, line_indent) == b' ' { line_indent = line_indent + 1usize; }
+            var finding_item = true;
+            while finding_item && lists.len(&cx) > 1usize {
+                let top = lists.at(&cx, lists.len(&cx) - 1usize);
+                if line_indent < top.content_indent {
+                    match lists.pop(&cx) {
+                        Some(frame) => {
+                            out = finish_item(&cx, out, frame).push_static(if frame.ordered { "</ol>\n" } else { "</ul>\n" });
+                        },
+                        None => (),
+                    }
+                } else { finding_item = false; }
+            }
             let continuation = if lists.len(&cx) > 0usize {
                 let top = lists.at(&cx, lists.len(&cx) - 1usize);
-                var count = 0usize;
-                while at(&cx, line, count) == b' ' { count = count + 1usize; }
-                count >= top.content_indent
+                line_indent >= top.content_indent
             } else { false };
-            if continuation { out = inline(&cx, out.push_byte(b' '), line.trim(&cx), links); }
+            if continuation {
+                let top = lists.at(&cx, lists.len(&cx) - 1usize);
+                if blank_in_list && top.loose {
+                    if top.paragraph_open { out = out.push_static("</p>\n"); }
+                    out = out.push_static("<p>");
+                    let previous = lists.replace(&cx, lists.len(&cx) - 1usize,
+                        ListFrame.{ indent: top.indent, content_indent: top.content_indent,
+                            ordered: top.ordered, loose: top.loose, paragraph_open: true });
+                    out = inline(&cx, out, line.trim(&cx), links);
+                } else { out = inline(&cx, out.push_byte(b' '), line.trim(&cx), links); }
+                blank_in_list = false;
+            }
             else {
                 out = close_lists(&cx, out, lists);
+                blank_in_list = false;
                 if !paragraph { out = out.push_static("<p>"); paragraph = true; }
                 else { out = out.push_byte(b' '); }
                 out = inline(&cx, out, line, links);

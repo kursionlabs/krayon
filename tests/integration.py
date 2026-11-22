@@ -2888,6 +2888,31 @@ class BuildTests(unittest.TestCase):
         self.assertIn('<li>first<ol>\n<li>inner</li>\n</ol>\n</li>\n'
                       '<li>second</li>', html)
 
+    def test_loose_lists_and_paragraphs_inside_items(self):
+        (self.site / "src/lists.md").write_text(
+            '- First item\n\n'
+            '- Second item\n\n'
+            '  Second paragraph\n'
+            '  - nested item\n\n'
+            '  Third paragraph\n'
+            '- Third item\n\n'
+            'Outside paragraph.\n\n'
+            '1. tight first\n'
+            '2. tight second\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/lists/index.html").read_text()
+        self.assertIn(
+            '<ul>\n'
+            '<li><p>First item</p>\n</li>\n'
+            '<li><p>Second item</p>\n'
+            '<p>Second paragraph</p>\n'
+            '<ul>\n<li>nested item</li>\n</ul>\n'
+            '<p>Third paragraph</p>\n</li>\n'
+            '<li><p>Third item</p>\n</li>\n'
+            '</ul>\n<p>Outside paragraph.</p>\n'
+            '<ol>\n<li>tight first</li>\n<li>tight second</li>\n</ol>', html)
+
     def test_image_uses_base_path_and_missing_image_fails(self):
         config = self.site / "krayon.toml"
         config.write_text(config.read_text() + 'base_path = "/docs"\n')

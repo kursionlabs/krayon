@@ -91,8 +91,12 @@ again to restore the published version. `draft` must be a boolean.
 
 The current Markdown renderer supports ATX headings, paragraphs, links,
 images with optional titles, inline code, emphasis, strong text, fenced code
-blocks, blockquotes, tight nested ordered and unordered lists, and pipe tables.
+blocks, blockquotes, tight and loose nested ordered and unordered lists, and pipe tables.
 It is a documented subset, not a complete CommonMark implementation.
+
+Blank lines between list items or between paragraphs in an item make the list
+loose. Loose list items render their paragraphs with `<p>` tags; tight list
+items keep the existing compact markup.
 
 Fenced `kursal` code receives token classes for keywords, types,
 strings, numbers, and comments. Other fence languages remain escaped plain
