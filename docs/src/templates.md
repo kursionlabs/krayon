@@ -26,18 +26,20 @@ are available as `site.title`, `site.links.repository`, and other dotted keys.
 
 Templates use `{{ page.title }}` for escaped output and `{{ content | safe }}`
 for rendered page or layout HTML. The `| safe` filter writes a scalar value
-unchanged, including rendered Markdown excerpts. Templates support `or` with
-a quoted fallback,
-`{% if ... %}`, `{% else %}`, and `{% endif %}`. Conditions can test a value
-or compare it to a quoted string with `==`. Empty arrays and tables are false;
-nonempty arrays and tables are true. Scalar conditions keep their existing
-behavior: empty strings, `false`, and `0` are false. An HTML page can list all
-pages, ordered by URL, with `{% for entry in collections.pages %}` and
-`{% endfor %}`. Each entry has its front matter fields and a resolved `url`.
-Loops also work over arrays in site data and can be nested. Unknown
-substitutions fail the build. Markdown page bodies are rendered as Markdown;
-template expressions are evaluated in HTML pages and layouts. Raw HTML in
-Markdown is passed through deliberately.
+unchanged, including rendered Markdown excerpts.
+
+Use `or` with a quoted fallback, and `{% if ... %}`, `{% else %}`, and
+`{% endif %}` for conditional content. Conditions can test a value or compare
+it to a quoted string with `==`. Empty arrays and tables are false; nonempty
+arrays and tables are true. Empty strings, `false`, and `0` are also false.
+
+An HTML page can list all pages, ordered by URL, with
+`{% for entry in collections.pages %}` and `{% endfor %}`. Each entry has its
+front matter fields and a resolved `url`. Loops also work over arrays in site
+data and can be nested. Unknown substitutions fail the build.
+
+Markdown page bodies are rendered as Markdown. Template expressions are
+evaluated in HTML pages and layouts. Raw HTML in Markdown is passed through.
 
 ## Excerpts
 
@@ -62,6 +64,7 @@ Includes share the current page, site data, loop variables, and rendered
 `.html`. Missing files, paths that escape the layouts directory,
 and include cycles fail the build. An include in an inactive `if`
 branch is not loaded.
+
 Template errors report the source file, line, and column. Errors inside an
 include also show the include chain, with each call site's location.
 
@@ -72,6 +75,7 @@ in templates to prefix a root relative local URL. The filter leaves external,
 protocol relative, relative, and fragment URLs alone. Markdown links with root
 relative targets are prefixed automatically; raw HTML in Markdown is passed
 through as written.
+
 Markdown links to local `.md` source files resolve to the target page's
 generated URL, including a custom `permalink`. Relative paths are resolved
 from the linking source file; paths beginning with `/` are resolved from
@@ -80,6 +84,7 @@ the resolved URL. For example, `[Guide](../guide/index.md#setup)` can link to
 `/guide/` or any permalink set by that source page. Links to omitted drafts
 fail the local link check in a normal build. External links and raw HTML links
 keep their existing behavior. Markdown excerpts use the same resolution.
+
 Templates and layouts can resolve a page source path explicitly with
 `{{ "guide/index.md" | page_url }}`. The path is relative to `input`, with an
 optional leading `/` or `./`; the filter preserves a query or fragment and
@@ -89,6 +94,7 @@ template expression. Use `{{ "guide/index.md" | page_url | json }}` for a
 complete JSON string value. The filter works for ordinary Markdown, HTML,
 XML, JSON, and text page sources. Generated and paginated templates have no
 single URL, so their source paths cannot be resolved with `page_url`.
+
 With `origin` configured, `{{ page.url | absolute_url }}` produces a full URL
 including `base_path`. The filter leaves external, protocol relative,
 relative, and fragment URLs unchanged. It works in HTML, XML, and JSON
@@ -115,6 +121,7 @@ array. These relationships are explicit front matter; URL nesting has no
 effect. `where` compares a scalar field to a quoted value or template field;
 `contains` checks whether an array field has a matching scalar element. Both
 accept dotted field paths and skip missing or differently shaped fields.
+
 `group_by` preserves first-seen group order and produces records with `key`
 and `items`. `sort_by` accepts a field path and an optional `"asc"` or
 `"desc"` order; it preserves source order for equal keys. It compares

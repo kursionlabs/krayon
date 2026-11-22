@@ -31,15 +31,19 @@ record, including nested fields. Substituted fields must be strings or integers.
 A record can set an explicit string `url` to override the pattern. Each resolved
 URL must have the suffix for the template format (or end in `/` for HTML) and
 pass the usual path and collision checks.
+
 Record fields become `page.*` fields and override the template's front matter
 defaults; `page.permalink` is the resolved URL. A template can omit `permalink`
 when every record supplies `url`.
+
 The template itself produces no file. Generated HTML pages appear in
 `collections.pages`. Generated files support layouts and includes and pass
 the same output collision checks as ordinary files. `generate` accepts dotted
 site data paths such as `site.catalog.products`; it is available in HTML,
-XML, JSON, and text templates. A template or record can set `draft = true`;
-a record's value overrides the template default.
+XML, JSON, and text templates.
+
+A template or record can set `draft = true`; a record's value overrides the
+template default.
 
 ## Pagination
 
@@ -67,11 +71,13 @@ the base. The base must end in `/`. Set
 URLs for pages 2 and later. The pattern must contain that placeholder exactly
 once and resolve to safe HTML URLs; the generated pages pass the usual output
 collision checks. `previous` and `next` use the chosen URLs.
+
 `page.pagination` also exposes the one-based `number`, `total_pages`, and
 `total_items`. An empty array produces one page
 with no items. Pagination preserves array order and accepts any TOML array
 values. Paginated pages appear in `collections.pages`; the template does not
 produce an additional file. `paginate` and `generate` cannot be combined.
+
 The template's `draft` flag applies to all its pages. An optional `where` table
 selects records before sorting and slicing. Its `field` can be a dotted path;
 use either `equals` to match a scalar field or `contains` to match an element
@@ -79,6 +85,7 @@ of an array field. Both accept a string, integer, boolean, or TOML date. Like
 the template filters, comparisons use scalar text and skip records with a
 missing field or the wrong field shape; array items must be tables. For a tag
 archive, use `where = { field = "tags", contains = "kursal" }`.
+
 `sort_by` is optional and accepts a field path such as `author.name`;
 `sort_order` is `asc` by default or `desc`. Sorting happens before page
 slices are chosen.

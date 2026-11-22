@@ -26,7 +26,9 @@ Add `--drafts` to include drafts or `--overlay DIR` to merge generated sources.
 Use `--port PORT` to choose the loopback port. Omit it or pass `--port 0` to
 let the OS choose an available port. Kable serves preview output from a
 temporary directory.
+
 Press Ctrl+C to stop the server and remove the temporary files.
+
 Use `python3 scripts/build_docs.py --preview` to preview the Krayon guides with
 the generated API reference. It accepts the same `--port` option.
 
@@ -52,9 +54,10 @@ bin/krayon build my-site --overlay generated
 Overlay files replace files at the same relative path; other directories and
 files are merged. Krayon then discovers routes and validates the combined
 source using the site's configuration. The original input and overlay stay
-untouched, and a failed build leaves the previous output in place. Symlinks
-inside either source tree are rejected for an overlay build. The overlay
-directory must be outside the site's input directory.
+untouched, and a failed build leaves the previous output in place.
+
+Symlinks inside either source tree are rejected for an overlay build. The
+overlay directory must be outside the site's input directory.
 
 ## Inspect routes
 
@@ -64,14 +67,17 @@ lists pages as `page<TAB>source<TAB>URL`, redirects as
 `asset<TAB>source<TAB>preferred URL`. Rows are grouped in that order; each
 group is sorted by its URL or source path. URLs include `base_path`, and asset
 URLs use fingerprinted filenames when `fingerprint_assets` is enabled.
+
 Generated and paginated pages use their source template with an item or page
 number. Add `--drafts` to include drafts. Add `--json` for an object with
 `pages`, `aliases`, and `assets` arrays in the same order. Page and asset
 objects have `source` and `url` fields; alias objects have `url` and `target`.
+
 Page and alias objects also have an `output` path relative to the configured
 output directory. Each asset has an `outputs` array containing its ordinary
 copy, followed by its fingerprinted copy when fingerprinting is enabled.
 These paths omit `base_path`.
+
 For example, `bin/krayon routes --json` can feed a deployment script.
 `routes` checks source discovery and route collisions, but does not render
 pages, validate links, or write to the output directory.
