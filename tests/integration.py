@@ -2913,6 +2913,40 @@ class BuildTests(unittest.TestCase):
             '</ul>\n<p>Outside paragraph.</p>\n'
             '<ol>\n<li>tight first</li>\n<li>tight second</li>\n</ol>', html)
 
+    def test_fenced_code_and_blockquotes_inside_list_items(self):
+        fence = chr(96) * 3
+        (self.site / "src/list-blocks.md").write_text(
+            '- First\n'
+            f'  {fence}kursal\n'
+            '  fn answer() -> usize { 42 }\n'
+            '\n'
+            '  let value = answer()\n'
+            f'  {fence}\n'
+            '  After code\n'
+            '  > Quoted *line*\n'
+            '  > second line\n'
+            '  After quote\n'
+            '- Second\n'
+            '- Parent\n'
+            '  - Child\n'
+            '    > Nested quote\n'
+            f'    {fence}other\n'
+            '    <tag>\n'
+            f'    {fence}\n'
+            '  - Sibling child\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/list-blocks/index.html").read_text()
+        self.assertIn('<li>First<pre><code class="language-kursal">', html)
+        self.assertIn('<span class="tok-keyword">fn</span> answer()', html)
+        self.assertIn('\n\n<span class="tok-keyword">let</span> value = answer()\n'
+                      '</code></pre>\n<p>After code</p>\n', html)
+        self.assertIn('<blockquote>\n<p>Quoted <em>line</em> second line</p>\n'
+                      '</blockquote>\n<p>After quote</p>\n</li>\n<li>Second</li>', html)
+        self.assertIn('<li>Child<blockquote>\n<p>Nested quote</p>\n</blockquote>\n'
+                      '<pre><code class="language-other">&lt;tag&gt;\n</code></pre>\n'
+                      '</li>\n<li>Sibling child</li>', html)
+
     def test_image_uses_base_path_and_missing_image_fails(self):
         config = self.site / "krayon.toml"
         config.write_text(config.read_text() + 'base_path = "/docs"\n')
