@@ -81,7 +81,7 @@ forall 'k.
 fn paragraph_continues(&cx: Domain!['k], source: Span['k], pos: usize, depth: usize) -> bool {
     if pos >= source.len() { return false; }
     let (line, after) = next_line(&cx, source, pos);
-    if line.is_empty() || starts(&cx, line, "```") ||
+    if line.is_empty() || starts(&cx, line, "```") || thematic_break(&cx, line) ||
         (depth == 0usize && line.is(&cx, "<!-- more -->")) ||
         quote_line(&cx, line).is_some() || starts(&cx, line, "<") ||
         heading_level(&cx, line) > 0usize { return false; }
@@ -490,11 +490,30 @@ fn quote_line(&cx: Domain!['k], line: Span['k]) -> Option[Span['k]] {
 }
 
 forall 'k.
+fn thematic_break(&cx: Domain!['k], line: Span['k]) -> bool {
+    var indent = 0usize;
+    while at(&cx, line, indent) == b' ' { indent = indent + 1usize; }
+    if indent > 3usize { return false; }
+    let marker = at(&cx, line, indent);
+    if marker != b'-' && marker != b'*' && marker != b'_' { return false; }
+    var count = 0usize;
+    var pos = indent;
+    while pos < line.len() {
+        let c = at(&cx, line, pos);
+        if c == marker { count = count + 1usize; }
+        else if c != b' ' && c != b'\t' { return false; }
+        pos = pos + 1usize;
+    }
+    count >= 3usize
+}
+
+forall 'k.
 fn paragraph_text_line(&cx: Domain!['k], line: Span['k]) -> bool {
     let text = line.trim(&cx);
     !text.is_empty() && !list_marker(&cx, text).is_some() &&
         !quote_line(&cx, text).is_some() && heading_level(&cx, text) == 0usize &&
-        !starts(&cx, text, "```") && !starts(&cx, text, "<") && !starts(&cx, text, "| ")
+        !thematic_break(&cx, line) && !starts(&cx, text, "```") &&
+        !starts(&cx, text, "<") && !starts(&cx, text, "| ")
 }
 
 forall 'k.
@@ -727,6 +746,14 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
         } else if starts(&cx, line, "```") && code {
             out = out.push_static("</code></pre>\n"); code = false; code_lang = empty(&cx);
         } else if code { out = out.push_buffer(render_line(&cx, code_lang, line)).push_byte(b'\n'); }
+        else if thematic_break(&cx, line) {
+            if paragraph {
+                if !paragraph_compact { out = out.push_static("</p>\n"); }
+                paragraph = false;
+            }
+            compact_allowed = false;
+            out = out.push_static("<hr>\n");
+        }
         else if depth == 0usize && line.is(&cx, "<!-- more -->") {
             if paragraph {
                 if !paragraph_compact { out = out.push_static("</p>\n"); }

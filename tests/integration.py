@@ -3097,6 +3097,51 @@ class BuildTests(unittest.TestCase):
         self.assertIn(f'<p>At end{slash}</p>', html)
         self.assertNotIn('<br>', html)
 
+    def test_markdown_thematic_breaks_and_list_precedence(self):
+        (self.site / "src/thematic-breaks.md").write_text(
+            'Before\n'
+            '***\n'
+            'After\n\n'
+            '---\n'
+            '___\n'
+            ' - - - \n'
+            ' **  * ** *\n\n'
+            ' _\t_\t_ \n'
+            '- First\n'
+            '- * * *\n'
+            '- Third\n\n'
+            '> Quote first\n'
+            '> _ _ _\n'
+            '> Quote last\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/thematic-breaks/index.html").read_text()
+        self.assertIn('<p>Before</p>\n<hr>\n<p>After</p>\n'
+                      '<hr>\n<hr>\n<hr>\n<hr>\n<hr>', html)
+        self.assertIn('<ul>\n<li>First</li>\n<li><hr>\n</li>\n'
+                      '<li>Third</li>\n</ul>', html)
+        self.assertIn('<blockquote>\n<p>Quote first</p>\n<hr>\n'
+                      '<p>Quote last</p>\n</blockquote>', html)
+
+    def test_non_thematic_lines_and_fenced_markers_stay_text(self):
+        fence = chr(96) * 3
+        (self.site / "src/not-thematic.md").write_text(
+            '--\n'
+            '**\n'
+            '__\n'
+            '*-*\n'
+            '---a\n'
+            '    ***\n'
+            '+++\n\n'
+            f'{fence}\n'
+            '---\n'
+            f'{fence}\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/not-thematic/index.html").read_text()
+        self.assertNotIn('<hr>', html)
+        self.assertIn('<pre><code>---\n</code></pre>', html)
+
     def test_image_uses_base_path_and_missing_image_fails(self):
         config = self.site / "krayon.toml"
         config.write_text(config.read_text() + 'base_path = "/docs"\n')

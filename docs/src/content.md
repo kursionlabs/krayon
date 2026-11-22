@@ -94,6 +94,11 @@ images with optional titles, inline code, emphasis, strong text, fenced code
 blocks, blockquotes, tight and loose nested ordered and unordered lists, and pipe tables.
 It is a documented subset, not a complete CommonMark implementation.
 
+Three or more matching `-`, `*`, or `_` characters form a thematic break
+(`<hr>`). Spaces or tabs may separate the markers, with up to three leading
+spaces. Setext headings are not supported, so a dashed line after paragraph
+text is a thematic break.
+
 Ordered lists retain the first marker's number. For example, `3. Third` starts
 an HTML ordered list at 3; later item marker numbers do not reset the count.
 
