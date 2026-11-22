@@ -3329,13 +3329,35 @@ class BuildTests(unittest.TestCase):
         self.assertIn(f"{sheet}: broken local link: ../missing.png (line 3, column 3)",
                       result.stderr)
 
-    def test_markdown_link_location_is_labeled_as_generated_html(self):
+    def test_markdown_links_report_source_locations_and_leave_no_markers(self):
         page = self.site / "src/located.md"
-        page.write_text('# Title\n\n[Missing](/missing/)\n')
+        page.write_text('+++\ntitle = "Located"\nlayout = "base.html"\n+++\n'
+                        '# Title\n\n[Home](/)\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('krayon-md-link',
+                         (self.site / 'dist/located/index.html').read_text())
+
+        page.write_text('+++\ntitle = "Located"\nlayout = "base.html"\n+++\n'
+                        '# Title\n\né [Missing](/missing/)\n\n'
+                        '> [Quoted](/quoted/)\n> > [Nested](/nested/)\n\n'
+                        '- [Listed](/listed/)\n\n'
+                        '| Link |\n| --- |\n| [Table](/table/) |\n\n'
+                        '![Missing image](/assets/missing.png)\n')
         result = self.build()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn(f"{page}: broken local link: /missing/ "
-                      "(generated HTML line 2, column 13)", result.stderr)
+        for target, line, column in (('/missing/', 7, 3), ('/quoted/', 9, 3),
+                                     ('/nested/', 10, 5), ('/listed/', 12, 3),
+                                     ('/table/', 16, 3), ('/assets/missing.png', 18, 1)):
+            self.assertIn(f'{page}: broken local link: {target} '
+                          f'(line {line}, column {column})', result.stderr)
+
+        layout = self.site / 'src/_includes/base.html'
+        layout.write_text(layout.read_text() + '<a href="/layout-missing/">Missing</a>')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'{page}: broken local link: /layout-missing/ '
+                      '(generated HTML line ', result.stderr)
 
     def test_link_scanner_ignores_comments_and_script_text(self):
         layout = self.site / "src/_includes/base.html"

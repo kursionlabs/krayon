@@ -27,10 +27,11 @@ must match an HTML ID. Relative URLs, query strings, percent escapes, and
 origins are ignored.
 
 A broken link fails the build. Krayon reports every broken link with its source
-file, URL, line, and column. HTML documents use their first `<base href>` when
-resolving relative links, including fragments, `srcset`, and inline CSS URLs.
-HTML positions refer to generated HTML, since Markdown and layouts can change
-source positions; copied CSS positions refer to the stylesheet source.
+file, URL, line, and column. Links and images in a Markdown page body point to
+their source locations. Links introduced by layouts or raw HTML use generated
+HTML locations. HTML documents use their first `<base href>` when resolving
+relative links, including fragments, `srcset`, and inline CSS URLs. Copied CSS
+positions refer to the stylesheet source.
 
 Krayon also reports duplicate IDs in generated HTML, including IDs from
 layouts, raw HTML, and Markdown headings. Diagnostics show both occurrences

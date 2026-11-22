@@ -5,6 +5,7 @@ use std::collections::arena_vec::ArenaVec;
 use std::fs::{FileKind, canonicalize, metadata, path_exists, read_dir, read_to_arena, mkdir, remove, rename, write};
 use std::io::File!;
 use std::option::{Option, Result};
+use std::parse::parse_usize;
 use std::raw::Span;
 use std::slice::Slice;
 use toml::parse;
@@ -61,6 +62,7 @@ struct Build {
     pending_pagination: ArenaVec[PendingPagination['k], 'k],
     stylesheets: ArenaVec[Stylesheet['k], 'k],
     written: ArenaMap[Span['k], Span['k], 'k],
+    markdown_positions: ArenaMap[Span['k], ArenaMap[usize, usize, 'k], 'k],
 }
 
 forall 'k.
@@ -1119,6 +1121,35 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k],
 }
 
 forall 'k.
+fn strip_link_markers(&cx: Domain!['k], html: Span['k], body_len: usize)
+    -> (Span['k], ArenaMap[usize, usize, 'k]) {
+    let positions = ArenaMap::new(&cx);
+    var clean = Buffer!::new();
+    var i = 0usize;
+    while i < html.len() {
+        if html.slice(i, html.len()).starts_with(&cx, lit(&cx, "<!--krayon-md-link:")) {
+            var end = i + 19usize;
+            while end < html.len() && byte(&cx, html, end) >= b'0' && byte(&cx, html, end) <= b'9' {
+                end = end + 1usize;
+            }
+            let marker = if end > i + 19usize && html.slice(end, html.len()).starts_with(&cx, lit(&cx, "-->"))
+                && (html.slice(end + 3usize, html.len()).starts_with(&cx, lit(&cx, "<a "))
+                    || html.slice(end + 3usize, html.len()).starts_with(&cx, lit(&cx, "<img "))) {
+                parse_usize(&cx, html.slice(i + 19usize, end))
+            } else { Option::None };
+            match marker {
+                Some(number) => if number < body_len {
+                    positions.insert(&cx, &clean.len(), number);
+                    i = end + 3usize;
+                } else { clean = clean.push_byte(byte(&cx, html, i)); i = i + 1usize; },
+                None => { clean = clean.push_byte(byte(&cx, html, i)); i = i + 1usize; },
+            }
+        } else { clean = clean.push_byte(byte(&cx, html, i)); i = i + 1usize; }
+    }
+    (clean.save(&cx), positions)
+}
+
+forall 'k.
 fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Result[(), Buffer!] {
     let original = source.page;
     if original.data.contains(&cx, lit(&cx, "collection_navigation")) {
@@ -1135,7 +1166,7 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
     };
     let relative = source.file.slice(build.source.len() + 1usize, source.file.len());
     let body = if source.is_markdown { match markdown(&cx, page.body, build.base_path, build.source_urls,
-        build.asset_urls, build.fingerprint_assets, relative) {
+        build.asset_urls, build.fingerprint_assets, relative, true) {
             Ok(result) => {
                 let (html, found) = result;
                 if page.data.contains(&cx, lit(&cx, "headings")) {
@@ -1180,7 +1211,12 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
         },
         _ => (),
     }
-    save(&cx, source.destination, Buffer!::new().push_bytes(&cx, rendered))
+    let output = if source.is_markdown {
+        let (clean, positions) = strip_link_markers(&cx, rendered, page.body.len());
+        build.markdown_positions.insert(&cx, source.destination, positions);
+        clean
+    } else { rendered };
+    save(&cx, source.destination, Buffer!::new().push_bytes(&cx, output))
 }
 
 forall 'k.
@@ -1922,7 +1958,7 @@ fn prepare_sources(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
             Some(source) => {
                 let relative = entry.file.slice(build.source.len() + 1usize, entry.file.len());
                 let html = match markdown(&cx, source, build.base_path, build.source_urls,
-                    build.asset_urls, build.fingerprint_assets, relative) {
+                    build.asset_urls, build.fingerprint_assets, relative, false) {
                     Ok(result) => { let (html, headings) = result; html.save(&cx) },
                     Err(message) => return Result::Err.(report_detail(&cx, entry.file, message)),
                 };
@@ -2119,6 +2155,12 @@ fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
             TemplateFormat::Html => documents.push(&cx, Document.{
                 source: source.file, output: source.destination, url: source.page.url,
                 html: load(&cx, source.destination)?,
+                markdown_body: if source.is_markdown { Option::Some.(source.page.body) } else { Option::None },
+                body_line: source.page.body_line,
+                source_tags: match build.markdown_positions.get(&cx, source.destination) {
+                    Some(positions) => positions,
+                    None => ArenaMap::new(&cx),
+                },
             }),
             TemplateFormat::Xml => {
                 let rendered = load(&cx, source.destination)?;
@@ -2202,7 +2244,7 @@ fn new_build(&cx: Domain!['k], root: Span['k], config: Config['k], source: Span[
         collections: ArenaMap::new(&cx), navigation: ArenaMap::new(&cx),
         source_urls: ArenaMap::new(&cx), pages: ArenaVec::new(&cx), redirects: ArenaVec::new(&cx),
         pending_pagination: ArenaVec::new(&cx),
-        stylesheets: ArenaVec::new(&cx), written: ArenaMap::new(&cx) }
+        stylesheets: ArenaVec::new(&cx), written: ArenaMap::new(&cx), markdown_positions: ArenaMap::new(&cx) }
 }
 
 forall 'k.

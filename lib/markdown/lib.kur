@@ -28,7 +28,12 @@ struct LinkContext {
     asset_urls: ArenaMap[Span['k], Span['k], 'k],
     fingerprint_assets: bool,
     source: Span['k],
+    rendered_source: Span['k],
+    segments: Option[ArenaVec[SourceSegment, 'k]],
+    track_sources: bool,
 }
+
+struct SourceSegment { start: usize, length: usize, original: usize }
 
 forall 'k.
 fn empty(&cx: Domain!['k]) -> Span['k] { Span::from_static(&cx, "") }
@@ -148,6 +153,37 @@ fn html_escape(&cx: Domain!['k], out: Buffer!, s: Span['k]) -> Buffer! {
 }
 
 forall 'k.
+fn original_offset(&cx: Domain!['k], links: LinkContext['k], text: Span['k], index: usize) -> Option[usize] {
+    let start = links.rendered_source.address();
+    let address = text.address() + index;
+    if address < start || address >= start + links.rendered_source.len() { return Option::None; }
+    let offset = address - start;
+    match links.segments {
+        None => Option::Some.(offset),
+        Some(segments) => {
+            var i = 0usize;
+            while i < segments.len(&cx) {
+                let segment = segments.at(&cx, i);
+                if offset >= segment.start && offset < segment.start + segment.length {
+                    return Option::Some.(segment.original + offset - segment.start);
+                }
+                i = i + 1usize;
+            }
+            Option::None
+        },
+    }
+}
+
+forall 'k.
+fn mark_link(&cx: Domain!['k], out: Buffer!, text: Span['k], index: usize, links: LinkContext['k]) -> Buffer! {
+    if !links.track_sources { return out; }
+    match original_offset(&cx, links, text, index) {
+        Some(offset) => out.push_static("<!--krayon-md-link:").push_usize(offset).push_static("-->"),
+        None => out,
+    }
+}
+
+forall 'k.
 fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -> Buffer! {
     var out = out;
     var i = 0usize;
@@ -177,6 +213,7 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
                                     },
                                     None => (),
                                 }
+                                out = mark_link(&cx, out, s, i, links);
                                 out = html_escape(&cx, out.push_static("<img src=\""), asset_link(&cx, links, target))
                                     .push_static("\" alt=\"");
                                 out = html_escape(&cx, out, s.slice(i + 2usize, end)).push_static("\"");
@@ -198,6 +235,7 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
                     if at(&cx, s, end + 1usize) == b'(' {
                         match s.find_byte(&cx, b')', end + 2usize) {
                             Some(close) => {
+                                out = mark_link(&cx, out, s, i, links);
                                 out = html_escape(&cx, out.push_static("<a href=\""), source_link(&cx, links, s.slice(end + 2usize, close))).push_static("\">");
                                 out = inline(&cx, out, s.slice(i + 1usize, end), links).push_static("</a>");
                                 i = close + 1usize;
@@ -511,23 +549,38 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
         } else if quoted.is_some() {
             if paragraph { out = out.push_static("</p>\n"); paragraph = false; }
             out = close_lists(&cx, out, lists);
-            let quote = Buffer!::new();
-            var quote = match quoted {
-                Some(content) => quote.push_bytes(&cx, content).push_byte(b'\n'),
-                None => quote,
-            };
+            var quote = Buffer!::new();
+            let segments = ArenaVec::new(&cx);
+            match quoted {
+                Some(content) => {
+                    match original_offset(&cx, links, content, 0usize) {
+                        Some(offset) => segments.push(&cx, SourceSegment.{ start: &quote.len(), length: content.len(), original: offset }),
+                        None => (),
+                    }
+                    quote = quote.push_bytes(&cx, content).push_byte(b'\n');
+                },
+                None => (),
+            }
             var gathering = true;
             while gathering && pos < source.len() {
                 let (following, after) = next_line(&cx, source, pos);
                 match quote_line(&cx, following) {
                     Some(content) => {
+                        match original_offset(&cx, links, content, 0usize) {
+                            Some(offset) => segments.push(&cx, SourceSegment.{ start: &quote.len(), length: content.len(), original: offset }),
+                            None => (),
+                        }
                         quote = quote.push_bytes(&cx, content).push_byte(b'\n');
                         pos = after;
                     },
                     None => { gathering = false; },
                 }
             }
-            let inner = match render_blocks(&cx, quote.save(&cx), links, ids, headings, depth + 1usize) {
+            let quoted_source = quote.save(&cx);
+            let quote_links = LinkContext.{ base: links.base, urls: links.urls, asset_urls: links.asset_urls,
+                fingerprint_assets: links.fingerprint_assets, source: links.source,
+                rendered_source: quoted_source, segments: Option::Some.(segments), track_sources: links.track_sources };
+            let inner = match render_blocks(&cx, quoted_source, quote_links, ids, headings, depth + 1usize) {
                 Ok(html) => html,
                 Err(message) => { out.destroy(); return Result::Err.(message); },
             };
@@ -585,10 +638,11 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
 forall 'k.
 fn markdown(&cx: Domain!['k], source: Span['k], base: Span['k],
     urls: ArenaMap[Span['k], Span['k], 'k], asset_urls: ArenaMap[Span['k], Span['k], 'k],
-    fingerprint_assets: bool, current: Span['k])
+    fingerprint_assets: bool, current: Span['k], track_sources: bool)
     -> Result[(Buffer!, ArenaVec[Heading['k], 'k]), Span['k]] {
     let headings = ArenaVec::new(&cx);
-    let links = LinkContext.{ base, urls, asset_urls, fingerprint_assets, source: current };
+    let links = LinkContext.{ base, urls, asset_urls, fingerprint_assets, source: current,
+        rendered_source: source, segments: Option::None, track_sources };
     let html = render_blocks(&cx, source, links, ArenaMap::new(&cx), headings, 0usize)?;
     Result::Ok.((html, headings))
 }

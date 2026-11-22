@@ -13,6 +13,9 @@ exposed struct Document {
     output: Span['k],
     url: Span['k],
     html: Span['k],
+    markdown_body: Option[Span['k]],
+    body_line: usize,
+    source_tags: ArenaMap[usize, usize, 'k],
 }
 
 forall 'k.
@@ -43,6 +46,9 @@ struct Parsed {
     ids: ArenaMap[Span['k], usize, 'k],
     duplicate_ids: ArenaVec[DuplicateId['k], 'k],
     targets: ArenaVec[LinkTarget['k], 'k],
+    markdown_body: Option[Span['k]],
+    body_line: usize,
+    source_offsets: ArenaMap[usize, usize, 'k],
 }
 
 forall 'k.
@@ -257,14 +263,16 @@ fn scan_stylesheet(&cx: Domain!['k], sheet: Stylesheet['k]) -> Parsed['k] {
     scan_css(&cx, sheet.css, 0usize, false, targets);
     Parsed.{ source: sheet.source, output: sheet.output, url: sheet.url,
         text: sheet.css, generated: false, xml: false,
-        ids: ArenaMap::new(&cx), duplicate_ids: ArenaVec::new(&cx), targets }
+        ids: ArenaMap::new(&cx), duplicate_ids: ArenaVec::new(&cx), targets,
+        markdown_body: Option::None, body_line: 1usize, source_offsets: ArenaMap::new(&cx) }
 }
 
 forall 'k.
 fn scan_xml(&cx: Domain!['k], document: XmlDocument['k]) -> Parsed['k] {
     Parsed.{ source: document.source, output: document.output, url: document.url,
         text: document.xml, generated: true, xml: true,
-        ids: ArenaMap::new(&cx), duplicate_ids: ArenaVec::new(&cx), targets: document.targets }
+        ids: ArenaMap::new(&cx), duplicate_ids: ArenaVec::new(&cx), targets: document.targets,
+        markdown_body: Option::None, body_line: 1usize, source_offsets: ArenaMap::new(&cx) }
 }
 
 forall 'k.
@@ -272,6 +280,7 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
     let ids = ArenaMap::new(&cx);
     let duplicate_ids = ArenaVec::new(&cx);
     let targets = ArenaVec::new(&cx);
+    let source_offsets = ArenaMap::new(&cx);
     var base_href = Option::None;
     let html = document.html;
     var pos = 0usize;
@@ -301,6 +310,8 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
                 None => { pos = html.len(); },
             }
         } else {
+            let tag_start = pos;
+            let source_offset = document.source_tags.get(&cx, tag_start);
             var name_end = pos + 1usize;
             while name_byte(at(&cx, html, name_end)) { name_end = name_end + 1usize; }
             if name_end == pos + 1usize { pos = pos + 1usize; }
@@ -359,6 +370,10 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
                                 || (equal_ci(&cx, tag, "object") && equal_ci(&cx, name, "data")) {
                                 targets.push(&cx, LinkTarget.{ value, offset: value_start, raw_len: 0usize,
                                     bases: Option::None });
+                                match source_offset {
+                                    Some(original) => { source_offsets.insert(&cx, value_start, original); },
+                                    None => (),
+                                }
                             } else if equal_ci(&cx, name, "srcset") { scan_srcset(&cx, raw_value, value_start, targets); }
                             else if equal_ci(&cx, name, "style") { scan_css(&cx, raw_value, value_start, true, targets); }
                         }
@@ -387,7 +402,8 @@ fn scan(&cx: Domain!['k], document: Document['k]) -> Parsed['k] {
         },
     };
     Parsed.{ source: document.source, output: document.output, url: document.url,
-        text: html, generated: true, xml: false, ids, duplicate_ids, targets }
+        text: html, generated: true, xml: false, ids, duplicate_ids, targets,
+        markdown_body: document.markdown_body, body_line: document.body_line, source_offsets }
 }
 
 fn hex(c: u8) -> u8 {
@@ -783,6 +799,19 @@ fn location(&cx: Domain!['k], source: Span['k], offset: usize) -> (usize, usize)
 
 forall 'k.
 fn broken(&cx: Domain!['k], page: Parsed['k], target: LinkTarget['k]) -> Buffer! {
+    match page.source_offsets.get(&cx, target.offset) {
+        Some(original) => match page.markdown_body {
+            Some(body) => {
+                let (line, column) = location(&cx, body, original);
+                return Buffer!::new().push_static("krayon: ").push_bytes(&cx, page.source)
+                    .push_static(": broken local link: ").push_bytes(&cx, target.value)
+                    .push_static(" (line ").push_usize(page.body_line + line - 1usize)
+                    .push_static(", column ").push_usize(column).push_static(")\n");
+            },
+            None => (),
+        },
+        None => (),
+    }
     let (line, column) = location(&cx, page.text, target.offset);
     Buffer!::new().push_static("krayon: ").push_bytes(&cx, page.source)
         .push_static(": broken local link: ").push_bytes(&cx, target.value)
