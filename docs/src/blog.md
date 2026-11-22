@@ -5,15 +5,13 @@ layout = "base.html"
 # Blog walkthrough
 
 The repository's `examples/blog-site` is a standalone Krayon site. From the
-repository root, build it with:
+repository root, preview it with:
 
 ```sh
-bin/krayon build examples/blog-site
-python3 -m http.server 8000 --directory examples/blog-site/dist
+bin/krayon preview examples/blog-site
 ```
 
-Open `http://localhost:8000/` while the static server runs. The example has
-three published posts and one draft.
+Open the URL Krayon prints. The example has three published posts and one draft.
 
 ## How it fits together
 
@@ -29,10 +27,9 @@ three published posts and one draft.
    pages. Both use `absolute_url`, so the site's `origin` must be set before
    publishing. The sample origin is `https://example.com`.
 
-Run `bin/krayon build examples/blog-site --drafts` to include the draft, then
-run a normal build to restore the published output. For a site mounted under
-`/blog`, set `base_path = "/blog"` before `[collections.posts]` in
-`examples/blog-site/krayon.toml` and mount its output at `/blog`.
+Run `bin/krayon preview examples/blog-site --drafts` to include the draft.
+Set `base_path = "/blog"` before `[collections.posts]` in
+`examples/blog-site/krayon.toml` to preview the site under `/blog/`.
 
 Continue with [content](content.md), [generation](generation.md), and
 [templates](templates.md) for the full behavior.

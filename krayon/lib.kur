@@ -1,7 +1,9 @@
+use package::preview;
 use std::arena::Domain!;
 use std::buffer::Buffer!;
 use std::io::{eprint_buffer, print_buffer};
 use std::option::{Option, Result};
+use std::parse::parse_u64;
 use std::process::{Args, hash_seed};
 use std::raw::Span;
 use site::{build_with_drafts, build_with_overlay, check_with_drafts, check_with_overlay, init,
@@ -10,11 +12,12 @@ use site::{build_with_drafts, build_with_overlay, check_with_drafts, check_with_
 fn usage() -> () {
     eprint_buffer(Buffer!::new().push_static("usage: krayon <build|check|routes> [SITE_ROOT] [--drafts] [--overlay DIR]\n")
         .push_static("       krayon routes [SITE_ROOT] [--drafts] [--json] [--overlay DIR]\n")
+        .push_static("       krayon preview [SITE_ROOT] [--drafts] [--overlay DIR] [--port PORT]\n")
         .push_static("       krayon init [DIR]\n"));
 }
 
 fn main(args: Args) -> i32 {
-    if args.len() < 2usize || args.len() > 7usize {
+    if args.len() < 2usize || args.len() > 8usize {
         usage();
         return 2i32;
     }
@@ -25,7 +28,7 @@ fn main(args: Args) -> i32 {
         Option::None => Span::from_static(&cx, ""),
     };
     if !command.is(&cx, "build") && !command.is(&cx, "check")
-        && !command.is(&cx, "routes") && !command.is(&cx, "init") {
+        && !command.is(&cx, "routes") && !command.is(&cx, "init") && !command.is(&cx, "preview") {
         usage();
         cx.destroy();
         return 2i32;
@@ -62,6 +65,7 @@ fn main(args: Args) -> i32 {
     var have_root = false;
     var include_drafts = false;
     var json = false;
+    var port = Option::None;
     var have_overlay = false;
     var overlay = Span::from_static(&cx, "");
     var i = 2usize;
@@ -72,6 +76,17 @@ fn main(args: Args) -> i32 {
         };
         if argument.is(&cx, "--drafts") && !include_drafts { include_drafts = true; }
         else if argument.is(&cx, "--json") && command.is(&cx, "routes") && !json { json = true; }
+        else if argument.is(&cx, "--port") && command.is(&cx, "preview") && port.is_none() {
+            i = i + 1;
+            let value = Span::from_static(&cx, args.bytes(i).unwrap_or(""));
+            let number = parse_u64(&cx, value).unwrap_or(u64::MAX);
+            if number > u16::MAX as u64 {
+                eprint_buffer(f"krayon: --port expects a number from 0 to 65535\n");
+                cx.destroy();
+                return 2;
+            }
+            port = Option::Some.(number as u16);
+        }
         else if argument.is(&cx, "--overlay") && !have_overlay {
             i = i + 1usize;
             if i >= args.len() {
@@ -115,7 +130,10 @@ fn main(args: Args) -> i32 {
             Result::Err(message) => { eprint_buffer(message); 1i32 },
         };
     }
-    let result = if command.is(&cx, "check") {
+    let result = if command.is(&cx, "preview") {
+        let overlay = if have_overlay { Option::Some.(overlay) } else { Option::None };
+        preview::serve(&cx, root, include_drafts, overlay, port.unwrap_or(0))
+    } else if command.is(&cx, "check") {
         if have_overlay { check_with_overlay(&cx, root, overlay, include_drafts) }
             else { check_with_drafts(&cx, root, include_drafts) }
     } else if have_overlay { build_with_overlay(&cx, root, overlay, include_drafts) }

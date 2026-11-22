@@ -5,13 +5,17 @@ from html.parser import HTMLParser
 import hashlib
 import json
 import os
+import select
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+from urllib.error import HTTPError
 from urllib.parse import urljoin, urlsplit
+from urllib.request import urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -193,6 +197,102 @@ class BuildTests(unittest.TestCase):
         locations = {entry.text for entry in sitemap.findall("map:url/map:loc", sitemap_ns)}
         self.assertIn("https://example.com/journal/posts/next-idea/", locations)
         self.assertIn("https://example.com/journal/archive/page/2/", locations)
+
+    def test_preview_serves_drafts_and_overlay_without_replacing_output(self):
+        self.site = Path(self.temp.name) / "preview site"
+        (self.site / "src").mkdir(parents=True)
+        (self.site / "src/index.md").write_text("# Preview home\n")
+        (self.site / "krayon.toml").write_text('base_path = "/preview/blog"\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        dist = self.site / "dist"
+        published = (dist / "index.html").read_bytes()
+        (dist / "sentinel.txt").write_text("existing output")
+        (self.site / "src/draft.md").write_text(
+            '+++\ntitle = "Draft"\ndraft = true\n+++\nDraft preview text.\n')
+        overlay = Path(self.temp.name) / "generated pages"
+        overlay.mkdir()
+        (overlay / "generated.md").write_text("# Overlay page\n")
+        temporary = Path(self.temp.name) / "preview-workspaces"
+        temporary.mkdir()
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            port = reservation.getsockname()[1]
+        command = [str(KRAYON), "preview", str(self.site), "--drafts", "--overlay", str(overlay),
+                   "--port", str(port)]
+        env = os.environ | {"TMPDIR": str(temporary)}
+
+        with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True, env=env) as process:
+            try:
+                ready, _, _ = select.select([process.stdout], [], [], 10)
+                self.assertTrue(ready, "preview did not announce its address")
+                announcement = process.stdout.readline()
+                self.assertTrue(announcement.startswith("Preview at "), announcement)
+                url = announcement.removeprefix("Preview at ").strip()
+                self.assertEqual(urlsplit(url).hostname, "127.0.0.1")
+                self.assertEqual(urlsplit(url).port, port)
+                self.assertEqual(urlsplit(url).path, "/preview/blog/")
+                with urlopen(url, timeout=5) as response:
+                    self.assertEqual(response.headers.get("Accept-Ranges"), "bytes")
+                    self.assertEqual(response.read(), published)
+                for page, text in (("draft/", b"Draft preview text."),
+                                   ("generated/", b"Overlay page")):
+                    with urlopen(urljoin(url, page), timeout=5) as response:
+                        self.assertIn(text, response.read())
+                with self.assertRaises(HTTPError) as error:
+                    urlopen(urljoin(url, "/"), timeout=5)
+                with error.exception as response:
+                    self.assertEqual(response.code, 404)
+                self.assertFalse((dist / "draft").exists())
+                self.assertFalse((dist / "generated").exists())
+                self.assertEqual((dist / "sentinel.txt").read_text(), "existing output")
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                try:
+                    _, stderr = process.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate()
+                    raise
+            self.assertEqual(process.returncode, 0, stderr)
+        self.assertEqual(list(temporary.iterdir()), [])
+
+    def test_preview_rejects_invalid_ports(self):
+        for flags in (["--port"], ["--port", "-1"], ["--port", "65536"],
+                      ["--port", "abc"], ["--port", "0", "--port", "1"]):
+            with self.subTest(flags=flags):
+                result = subprocess.run([str(KRAYON), "preview", str(self.site), *flags],
+                                        text=True, capture_output=True, timeout=5)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("--port", result.stderr)
+
+    def test_preview_reports_occupied_port(self):
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            reservation.listen()
+            port = reservation.getsockname()[1]
+            result = subprocess.run([str(KRAYON), "preview", str(self.site), "--port", str(port)],
+                                    text=True, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn(f"cannot bind preview on port {port}", result.stderr)
+
+    def test_preview_validation_failure_cleans_up(self):
+        temporary = Path(self.temp.name) / "preview-workspaces"
+        temporary.mkdir()
+        home = self.site / "src/index.md"
+        home.write_text(home.read_text() + "\n[Broken preview link](/missing/)\n")
+        result = subprocess.run([str(KRAYON), "preview", str(self.site)],
+                                env=os.environ | {"TMPDIR": str(temporary)},
+                                text=True, capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("/missing/", result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertFalse((self.site / "dist").exists())
+        self.assertEqual(list(temporary.iterdir()), [])
 
     def test_documentation_site_builds_with_base_path(self):
         docs = Path(self.temp.name) / "docs"

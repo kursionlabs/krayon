@@ -36,6 +36,7 @@ Run `python3 scripts/build_docs.py` to generate the API reference from the
 Krayon library packages and place it under `docs/dist/api` beside the guides.
 The focused shim checks build with `../kursal/bin/kursal build tests/shim -o bin/shim-test`
 and run with a temporary directory containing a file and a directory symlink.
-CI bootstraps Kursal from its `main` branch, builds Krayon, and runs these checks.
-If the Kursal repository is private, set the `KURSAL_REPO_TOKEN` Actions secret
-to a token with read access to that repository.
+CI checks out Kursal and Kable alongside Krayon, installs libuv and llhttp,
+and bootstraps Kursal before building Krayon. For private dependencies, use
+`KURSAL_REPO_TOKEN` and `KABLE_REPO_TOKEN` with read access to their respective
+repositories.

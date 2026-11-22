@@ -17,6 +17,19 @@ HTML layout, and a `.gitignore` for `dist`.
 `bin/krayon build [SITE_ROOT]` renders the site and writes its configured output.
 The site root defaults to the current directory.
 
+## Preview locally
+
+Run `bin/krayon preview [SITE_ROOT]` to build once and serve the result on
+loopback. Open the URL it prints. The URL includes `base_path` when configured.
+Add `--drafts` to include drafts or `--overlay DIR` to merge generated sources.
+
+Use `--port PORT` to choose the loopback port. Omit it or pass `--port 0` to
+let the OS choose an available port. Kable serves preview output from a
+temporary directory.
+Press Ctrl+C to stop the server and remove the temporary files.
+Use `python3 scripts/build_docs.py --preview` to preview the Krayon guides with
+the generated API reference. It accepts the same `--port` option.
+
 ## Check without installing output
 
 Run `bin/krayon check [SITE_ROOT]` to render and validate a site without

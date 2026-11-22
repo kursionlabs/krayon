@@ -9,3 +9,6 @@ path="../../kursal/lib/std"
 
 [dependencies.site]
 path="../lib/site"
+
+[dependencies.server]
+path="../../kable/lib/server"

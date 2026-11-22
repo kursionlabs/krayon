@@ -1,0 +1,79 @@
+//! Builds a private local preview and serves it until the listener joins.
+use server::{Server!, static_files};
+use site::{build_preview, clean_after_error, real_path, remove_tree};
+use std::arena::Domain!;
+use std::buffer::Buffer!;
+use std::env::variable;
+use std::io::print_buffer;
+use std::option::{Option, Result};
+use std::ptr::is_null;
+use std::raw::Span;
+
+extern "C" fn mkdtemp(template: *u8) -> *u8;
+extern "C" fn uv_chdir(path: *u8) -> i32;
+
+forall 'k.
+fn workspace(&cx: Domain!['k]) -> Result[Span['k], Buffer!] {
+    let fallback = Span::from_static(&cx, "/tmp");
+    let directory = match variable(&cx, Span::from_static(&cx, "TMPDIR")) {
+        Option::Some(value) => {
+            let path = value.save(&cx);
+            if path.is_empty() { fallback } else { path }
+        },
+        Option::None => fallback,
+    };
+    let parent = real_path(&cx, directory)?;
+    let template = Buffer!::new().push_bytes(&cx, parent).push_static("/krayon-preview-XXXXXX").push_byte(0);
+    let len = &template.len() - 1;
+    let path = unsafe mkdtemp(unsafe &template.as_ptr());
+    if is_null(path) {
+        template.destroy();
+        return Result::Err.(f"krayon: cannot create preview workspace\n");
+    }
+    Result::Ok.(template.truncate(len).save(&cx))
+}
+
+forall 'k.
+fn run_server(&cx: Domain!['k], server: Server!, temporary: Span['k],
+    base: Span['k]) -> Result[(), Buffer!] {
+    let directory = Buffer!::new().push_bytes(&cx, temporary).push_static("/site").push_byte(0);
+    let status = unsafe uv_chdir(unsafe &directory.as_ptr());
+    directory.destroy();
+    if status < 0 {
+        server.stop();
+        return Result::Err.(f"krayon: cannot enter preview output (libuv error {status})\n");
+    }
+    let port = &server.port();
+    let announcement = Buffer!::new().push_static("Preview at http://127.0.0.1:")
+        .push_u64(port as u64).push_bytes(&cx, base).push_static("/\n");
+    if !print_buffer(announcement).is_ok() {
+        server.stop();
+        return Result::Err.(f"krayon: cannot write preview URL\n");
+    }
+    match server.run() {
+        Result::Ok(nothing) => Result::Ok.(()),
+        Result::Err(code) => Result::Err.(f"krayon: preview stopped (libuv error {code})\n"),
+    }
+}
+
+forall 'k.
+fn serve(&cx: Domain!['k], root: Span['k], include_drafts: bool,
+    overlay: Option[Span['k]], port: u16) -> Result[(), Buffer!] {
+    // Bind first so Kable can receive shutdown signals during the build.
+    let server = match Server!::bind(port, static_files::serve_from_cwd) {
+        Result::Ok(server) => server,
+        Result::Err(code) => return Result::Err.(f"krayon: cannot bind preview on port {port} (libuv error {code})\n"),
+    };
+    let temporary = match workspace(&cx) {
+        Result::Ok(path) => path,
+        Result::Err(message) => { server.stop(); return Result::Err.(message); },
+    };
+    let result = match build_preview(&cx, root, temporary, overlay, include_drafts) {
+        Result::Ok(base) => run_server(&cx, server, temporary, base),
+        Result::Err(message) => { server.stop(); Result::Err.(message) },
+    };
+    match result {
+        Result::Ok(nothing) => remove_tree(&cx, temporary),
+        Result::Err(message) => Result::Err.(clean_after_error(&cx, temporary, message)),
+    }
+}

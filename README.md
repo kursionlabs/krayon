@@ -6,7 +6,8 @@ assets for any static host.
 
 ## Build Krayon
 
-Bootstrap the adjacent `../kursal` repository first, and rerun its bootstrap
+Keep `../kursal` and `../kable` beside this checkout and install the libuv and
+llhttp development libraries. Bootstrap Kursal first, and rerun its bootstrap
 after updating Kursal so `bin/kursal` matches its source. Then run:
 
 ```sh
@@ -29,6 +30,10 @@ planned URLs. See the [quickstart](docs/src/start.md) and
 Use `--overlay DIR` with `build`, `check`, or `routes` to merge externally
 generated source into a site for one command.
 
+To preview a site locally, run `bin/krayon preview my-site` and open the
+URL it prints. Kable serves a temporary build on loopback.
+Pass `--drafts` to preview draft pages.
+
 ## Examples
 
 - [`examples/hello-site`](examples/hello-site) is a small independent site.
@@ -45,6 +50,8 @@ with the API reference generated from Krayon's library source:
 bin/krayon check docs
 python3 scripts/build_docs.py
 ```
+
+Add `--preview` to serve the guides and generated API on loopback.
 
 The script runs `kursal doc`, filters its output to Krayon's libraries, adds
 the layouts and assets from `docs/api-theme` to a source overlay, and builds

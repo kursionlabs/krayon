@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 from urllib.parse import urljoin, urlsplit
@@ -108,6 +109,20 @@ def add_api_layouts(site, theme_root):
     shutil.copytree(theme / "assets", site / "assets/api")
 
 
+def run_preview(command):
+    with subprocess.Popen(command, start_new_session=True) as server:
+        def stop(signum, frame):
+            server.terminate()
+
+        previous = {sig: signal.signal(sig, stop)
+                    for sig in (signal.SIGINT, signal.SIGTERM)}
+        try:
+            return server.wait()
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--site", type=Path, default=ROOT / "docs",
@@ -117,7 +132,14 @@ def main():
     parser.add_argument("--kursal", type=Path,
                         default=ROOT.parent / "kursal/bin/kursal",
                         help="Kursal compiler")
+    parser.add_argument("--preview", action="store_true", help="serve the complete docs locally")
+    parser.add_argument("--port", type=int, help="loopback port for preview")
     args = parser.parse_args()
+    if args.port is not None:
+        if not args.preview:
+            parser.error("--port requires --preview")
+        if not 0 <= args.port <= 65535:
+            parser.error("--port expects a number from 0 to 65535")
 
     site = args.site.resolve()
     packages = {path.parent.name for path in (ROOT / "lib").glob("*/kur.toml")}
@@ -130,8 +152,13 @@ def main():
                         "-o", api_root], check=True)
         prepare_api_source(api_root, packages)
         add_api_layouts(overlay, site / "api-theme")
-        subprocess.run([args.krayon.resolve(), "build", site,
-                        "--overlay", overlay], check=True)
+        command = "preview" if args.preview else "build"
+        command = [args.krayon.resolve(), command, site, "--overlay", overlay]
+        if args.preview:
+            if args.port is not None:
+                command.extend(["--port", str(args.port)])
+            raise SystemExit(run_preview(command))
+        subprocess.run(command, check=True)
 
     print(f"Documentation built for {site}")
 
