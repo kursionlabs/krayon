@@ -529,7 +529,15 @@ fn render_list(&cx: Domain!['k], source: Span['k], start: usize, links: LinkCont
     };
     let loose = loose_list(&cx, source, first_after, indent, content_indent, ordered,
         first.slice(content_indent, first.len()));
-    var out = Buffer!::new().push_static(if ordered { "<ol>\n" } else { "<ul>\n" });
+    var out = Buffer!::new();
+    if ordered {
+        out = out.push_static("<ol");
+        let start_number = first.slice(indent, content_indent - 2usize);
+        if !start_number.is(&cx, "1") {
+            out = out.push_static(" start=\"").push_bytes(&cx, start_number).push_static("\"");
+        }
+        out = out.push_static(">\n");
+    } else { out = out.push_static("<ul>\n"); }
     var pos = start;
     var gathering = true;
     while gathering && pos < source.len() {

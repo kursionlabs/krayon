@@ -94,6 +94,9 @@ images with optional titles, inline code, emphasis, strong text, fenced code
 blocks, blockquotes, tight and loose nested ordered and unordered lists, and pipe tables.
 It is a documented subset, not a complete CommonMark implementation.
 
+Ordered lists retain the first marker's number. For example, `3. Third` starts
+an HTML ordered list at 3; later item marker numbers do not reset the count.
+
 Blank lines between list items or between paragraphs in an item make the list
 loose. Loose list items render their paragraphs with `<p>` tags; tight list
 items keep the existing compact markup.

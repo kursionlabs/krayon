@@ -3031,6 +3031,26 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('broken local link: /missing/ (line 2, column 1)', result.stderr)
 
+    def test_ordered_lists_preserve_start_numbers(self):
+        (self.site / "src/numbered-lists.md").write_text(
+            '3. Third\n'
+            '4. Fourth\n'
+            '   10. Tenth\n'
+            '   11. Eleventh\n\n'
+            'Between lists.\n\n'
+            '0. Zero\n\n'
+            'Between again.\n\n'
+            '1. First\n'
+            '2. Second\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/numbered-lists/index.html").read_text()
+        self.assertIn('<ol start="3">\n<li>Third</li>\n'
+                      '<li>Fourth<ol start="10">\n'
+                      '<li>Tenth</li>\n<li>Eleventh</li>\n</ol>', html)
+        self.assertIn('<ol start="0">\n<li>Zero</li>\n</ol>', html)
+        self.assertIn('<ol>\n<li>First</li>\n<li>Second</li>\n</ol>', html)
+
     def test_image_uses_base_path_and_missing_image_fails(self):
         config = self.site / "krayon.toml"
         config.write_text(config.read_text() + 'base_path = "/docs"\n')
