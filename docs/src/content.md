@@ -108,6 +108,11 @@ Indent headings, tables, fenced code blocks, and blockquotes to the content
 column of a list item to keep them inside that item. Text following a block
 starts a new paragraph in the same item.
 
+Within a paragraph, two or more trailing spaces or a trailing backslash make
+a hard line break (`<br>`) when another paragraph line follows. Ordinary line
+wraps join with a space. Break markers at the end of a paragraph do not add a
+break.
+
 Fenced `kursal` code receives token classes for keywords, types,
 strings, numbers, and comments. Other fence languages remain escaped plain
 text.

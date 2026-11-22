@@ -52,6 +52,54 @@ fn next_line(&cx: Domain!['k], source: Span['k], start: usize) -> (Span['k], usi
 }
 
 forall 'k.
+fn raw_line(&cx: Domain!['k], source: Span['k], start: usize, next: usize) -> Span['k] {
+    let end = if at(&cx, source, next - 1usize) == b'\n' { next - 1usize } else { next };
+    source.slice(start, end)
+}
+
+forall 'k.
+fn paragraph_line(&cx: Domain!['k], raw: Span['k], continues: bool) -> (Span['k], bool) {
+    let end = if raw.len() > 0usize && at(&cx, raw, raw.len() - 1usize) == b'\r' {
+        raw.len() - 1usize
+    } else { raw.len() };
+    let content = raw.slice(0usize, end).trim_end(&cx);
+    if !continues { return (content, false); }
+    var spaces = 0usize;
+    while spaces < end && at(&cx, raw, end - spaces - 1usize) == b' ' { spaces = spaces + 1usize; }
+    if spaces >= 2usize { return (content, true); }
+    if spaces == 0usize && content.len() == end {
+        var slashes = 0usize;
+        while slashes < content.len() && at(&cx, content, content.len() - slashes - 1usize) == b'\\' {
+            slashes = slashes + 1usize;
+        }
+        if slashes % 2usize == 1usize { return (content.slice(0usize, content.len() - 1usize), true); }
+    }
+    (content, false)
+}
+
+forall 'k.
+fn paragraph_continues(&cx: Domain!['k], source: Span['k], pos: usize, depth: usize) -> bool {
+    if pos >= source.len() { return false; }
+    let (line, after) = next_line(&cx, source, pos);
+    if line.is_empty() || starts(&cx, line, "```") ||
+        (depth == 0usize && line.is(&cx, "<!-- more -->")) ||
+        quote_line(&cx, line).is_some() || starts(&cx, line, "<") ||
+        heading_level(&cx, line) > 0usize { return false; }
+    match list_marker(&cx, line) {
+        Some(parts) => {
+            let (indent, content_start, ordered) = parts;
+            if indent <= 3usize { return false; }
+        },
+        None => (),
+    }
+    if starts(&cx, line, "| ") && after < source.len() {
+        let (following, next) = next_line(&cx, source, after);
+        if starts(&cx, following, "| ---") { return false; }
+    }
+    true
+}
+
+forall 'k.
 fn source_path(&cx: Domain!['k], source: Span['k], path: Span['k]) -> Option[Span['k]] {
     let absolute = at(&cx, path, 0usize) == b'/';
     let parts: ArenaVec[Span['k], 'k] = ArenaVec::new(&cx);
@@ -561,7 +609,8 @@ fn render_list(&cx: Domain!['k], source: Span['k], start: usize, links: LinkCont
             };
             var body = Buffer!::new();
             let segments = ArenaVec::new(&cx);
-            let first_content = line.slice(item_content, line.len());
+            let first_raw = raw_line(&cx, source, pos, after);
+            let first_content = first_raw.slice(item_content, first_raw.len());
             match original_offset(&cx, links, first_content, 0usize) {
                 Some(offset) => segments.push(&cx, SourceSegment.{ start: 0usize, length: first_content.len(), original: offset }),
                 None => (),
@@ -592,7 +641,9 @@ fn render_list(&cx: Domain!['k], source: Span['k], start: usize, links: LinkCont
                         paragraph_text_line(&cx, following);
                     if next_item || (following_indent < item_content && !lazy_line) { reading_item = false; }
                     else {
-                        let content = if lazy_line { following.trim(&cx) } else { following.slice(item_content, following.len()) };
+                        let following_raw = raw_line(&cx, source, pos, next);
+                        let content = if lazy_line { following_raw.slice(following_indent, following_raw.len()) }
+                            else { following_raw.slice(item_content, following_raw.len()) };
                         match original_offset(&cx, links, content, 0usize) {
                             Some(offset) => segments.push(&cx, SourceSegment.{ start: &body.len(), length: content.len(), original: offset }),
                             None => (),
@@ -634,6 +685,7 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
     var paragraph = false;
     var paragraph_compact = false;
     var compact_allowed = tight_item;
+    var pending_break = false;
     var code = false;
     var code_lang = empty(&cx);
     var table = false;
@@ -642,6 +694,7 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
         let line_start = pos;
         let (line, next) = next_line(&cx, source, pos);
         pos = next;
+        let raw = raw_line(&cx, source, line_start, next);
         if table && !starts(&cx, line, "| ") {
             out = out.push_static("</tbody>\n</table>\n");
             table = false;
@@ -652,7 +705,7 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
             starts(&cx, following, "| ---")
         } else { false };
         let marker = list_marker(&cx, line);
-        let quoted = quote_line(&cx, line);
+        let quoted = quote_line(&cx, raw);
         let use_marker = match marker {
             Some(parts) => {
                 let (indent, content_start, ordered) = parts;
@@ -708,7 +761,8 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
             var gathering = true;
             while gathering && pos < source.len() {
                 let (following, after) = next_line(&cx, source, pos);
-                match quote_line(&cx, following) {
+                let following_raw = raw_line(&cx, source, pos, after);
+                match quote_line(&cx, following_raw) {
                     Some(content) => {
                         match original_offset(&cx, links, content, 0usize) {
                             Some(offset) => segments.push(&cx, SourceSegment.{ start: &quote.len(), length: content.len(), original: offset }),
@@ -775,8 +829,12 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
                 if !paragraph_compact { out = out.push_static("<p>"); }
                 paragraph = true;
                 compact_allowed = false;
-            } else { out = out.push_byte(b' '); }
-            out = inline(&cx, out, line, links);
+            } else if pending_break { out = out.push_static("<br>\n"); }
+            else { out = out.push_byte(b' '); }
+            let (content, hard_break) = paragraph_line(&cx, raw,
+                paragraph_continues(&cx, source, pos, depth));
+            out = inline(&cx, out, content, links);
+            pending_break = hard_break;
         }
     }
     if paragraph && !paragraph_compact { out = out.push_static("</p>\n"); }

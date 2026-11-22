@@ -3051,6 +3051,52 @@ class BuildTests(unittest.TestCase):
         self.assertIn('<ol start="0">\n<li>Zero</li>\n</ol>', html)
         self.assertIn('<ol>\n<li>First</li>\n<li>Second</li>\n</ol>', html)
 
+    def test_markdown_hard_breaks_in_paragraphs_lists_and_quotes(self):
+        slash = chr(92)
+        (self.site / "src/hard-breaks.md").write_text(
+            'First  \n'
+            'Second\n'
+            f'Third{slash}\n'
+            'Fourth\n\n'
+            '[Home](/)  \n'
+            'linked line\n\n'
+            '- List first  \n'
+            '  list second\n'
+            f'- List third{slash}\n'
+            'lazy fourth\n\n'
+            '> Quote first  \n'
+            f'> quote second{slash}\n'
+            '> quote third\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/hard-breaks/index.html").read_text()
+        self.assertIn('<p>First<br>\nSecond Third<br>\nFourth</p>', html)
+        self.assertIn('<p><a href="/">Home</a><br>\nlinked line</p>', html)
+        self.assertIn('<li>List first<br>\nlist second</li>\n'
+                      '<li>List third<br>\nlazy fourth</li>', html)
+        self.assertIn('<blockquote>\n<p>Quote first<br>\n'
+                      'quote second<br>\nquote third</p>\n</blockquote>', html)
+
+    def test_hard_break_markers_at_block_ends_stay_literal_or_disappear(self):
+        slash = chr(92)
+        fence = chr(96) * 3
+        (self.site / "src/break-boundaries.md").write_text(
+            'Before blank  \n\n'
+            f'Before heading{slash}\n'
+            '# Heading\n\n'
+            f'{fence}\n'
+            'code  \n'
+            f'{fence}\n\n'
+            f'At end{slash}\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/break-boundaries/index.html").read_text()
+        self.assertIn('<p>Before blank</p>', html)
+        self.assertIn(f'<p>Before heading{slash}</p>\n<h1 id="heading">Heading</h1>', html)
+        self.assertIn('<pre><code>code\n</code></pre>', html)
+        self.assertIn(f'<p>At end{slash}</p>', html)
+        self.assertNotIn('<br>', html)
+
     def test_image_uses_base_path_and_missing_image_fails(self):
         config = self.site / "krayon.toml"
         config.write_text(config.read_text() + 'base_path = "/docs"\n')
