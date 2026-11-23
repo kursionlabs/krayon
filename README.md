@@ -40,6 +40,15 @@ Pass `--drafts` to preview draft pages.
 - [`examples/blog-site`](examples/blog-site) has Markdown posts, excerpts,
   collection navigation, a paginated archive, an Atom feed, and a sitemap.
   Its [README](examples/blog-site/README.md) explains how to build and preview it.
+- [`examples/portfolio-site`](examples/portfolio-site) generates project pages
+  from TOML data and groups project cards by category.
+- [`examples/handbook-site`](examples/handbook-site) uses directory defaults and
+  page queries to keep a Markdown guide's sidebar in sync with its pages.
+
+Each example is a standalone site. Build one with
+`bin/krayon build examples/portfolio-site`, or use `bin/krayon preview` with
+the same path to browse it locally. Each example has a README with its main
+features and deployment notes.
 
 ## Documentation
 

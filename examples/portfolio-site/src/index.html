@@ -1,0 +1,17 @@
++++
+title = "Selected work"
+layout = "base.html"
++++
+<section class="hero">
+  <p class="eyebrow">Independent design and development</p>
+  <h1>Useful things, made with care.</h1>
+  <p>{{ site.description }} Browse the work below or <a href="{{ "/about/" | url }}">meet the studio</a>.</p>
+</section>
+{% for group in site.projects | group_by: "category" %}
+<section class="work-group" aria-labelledby="group-{{ group.key }}">
+  <h2 id="group-{{ group.key }}">{{ group.key }}</h2>
+  <div class="project-grid">
+    {% for project in group.items %}{% include "project-card.html" %}{% endfor %}
+  </div>
+</section>
+{% endfor %}

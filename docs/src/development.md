@@ -18,6 +18,8 @@ layout = "base.html"
 - `lib/shim/` — stdlib overlay with path helpers and recursive directory creation
 - `examples/hello-site/` — independent site example
 - `examples/blog-site/` — blog example with feeds and pagination
+- `examples/portfolio-site/` — data-driven portfolio with generated project pages
+- `examples/handbook-site/` — Markdown guide with shared page-query navigation
 - `docs/` — documentation site built with Krayon
 - `docs/api-theme/` — layouts and assets for the generated library API reference
 - `scripts/build_docs.py` — filters generated API source and builds the complete docs site

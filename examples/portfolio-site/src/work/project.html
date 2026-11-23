@@ -1,0 +1,13 @@
++++
+generate = "site.projects"
+layout = "base.html"
++++
+<article class="project-detail">
+  <p class="eyebrow">{{ page.category }} · {{ page.year }}</p>
+  <h1>{{ page.title }}</h1>
+  <p class="lead">{{ page.summary }}</p>
+  <p>{{ page.details }}</p>
+  <h2>Made with</h2>
+  <ul>{% for tool in page.stack %}<li>{{ tool }}</li>{% endfor %}</ul>
+  <p><a href="{{ "/" | url }}">← All work</a></p>
+</article>

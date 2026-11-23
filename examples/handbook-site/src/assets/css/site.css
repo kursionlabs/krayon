@@ -1,0 +1,26 @@
+:root { color-scheme: light; font-family: system-ui, sans-serif; background: #faf9f5; color: #272d27; }
+* { box-sizing: border-box; }
+body { max-width: 76rem; margin: 0 auto; padding: 0 1.5rem; line-height: 1.7; }
+a { color: #27634d; }
+a:hover { color: #17452f; }
+.site-header, footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1.4rem 0; }
+.site-header { border-bottom: 1px solid #dfe3d7; }
+.brand { color: inherit; font-weight: 800; text-decoration: none; }
+main > h1, main > p { max-width: 46rem; }
+main > h1 { font-size: clamp(2.3rem, 6vw, 4rem); line-height: 1.1; margin-top: 4rem; }
+.guide-shell { display: grid; grid-template-columns: 14rem minmax(0, 1fr); gap: 3rem; padding: 2.5rem 0 4rem; }
+.sidebar { border-right: 1px solid #dfe3d7; }
+.sidebar nav { display: grid; gap: .25rem; padding-right: 1.5rem; }
+.sidebar a { border-radius: .35rem; padding: .35rem .6rem; text-decoration: none; }
+.sidebar a:hover { background: #e9efe5; }
+.sidebar-label { color: #557264; font-size: .75rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.guide-content { max-width: 48rem; min-width: 0; }
+.guide-content h1 { font-size: clamp(2rem, 5vw, 3.2rem); line-height: 1.12; margin-top: .2rem; }
+.guide-content h2 { border-top: 1px solid #dfe3d7; margin-top: 2rem; padding-top: 1rem; }
+.guide-content code { background: #e9efe5; border-radius: .2rem; padding: .1rem .25rem; }
+.guide-content pre { overflow-x: auto; background: #24352e; color: #f2f8ee; border-radius: .5rem; padding: 1rem; }
+.guide-content pre code { background: none; padding: 0; }
+.guide-content table { border-collapse: collapse; width: 100%; }
+.guide-content th, .guide-content td { border-bottom: 1px solid #dfe3d7; padding: .5rem; text-align: left; }
+footer { border-top: 1px solid #dfe3d7; color: #557264; font-size: .9rem; }
+@media (max-width: 44rem) { .guide-shell { grid-template-columns: 1fr; gap: 1rem; } .sidebar { border-right: 0; border-bottom: 1px solid #dfe3d7; padding-bottom: 1rem; } }

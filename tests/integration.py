@@ -198,6 +198,51 @@ class BuildTests(unittest.TestCase):
         self.assertIn("https://example.com/journal/posts/next-idea/", locations)
         self.assertIn("https://example.com/journal/archive/page/2/", locations)
 
+    def test_portfolio_example_generates_project_pages(self):
+        portfolio = Path(self.temp.name) / "portfolio"
+        shutil.copytree(ROOT / "examples/portfolio-site", portfolio,
+                        ignore=shutil.ignore_patterns("dist"))
+        config = portfolio / "krayon.toml"
+        config.write_text('base_path = "/studio"\n' + config.read_text())
+        result = subprocess.run([str(KRAYON), "build", str(portfolio)],
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        home = (portfolio / "dist/index.html").read_text()
+        self.assertIn('href="/studio/work/field-guide/"', home)
+        self.assertIn('href="/studio/work/open-shelf/"', home)
+        self.assertIn('href="/studio/work/signal-notes/"', home)
+        self.assertLess(home.index('id="group-Web"'), home.index('id="group-Writing"'))
+        detail = (portfolio / "dist/work/field-guide/index.html").read_text()
+        self.assertIn('<h1>Field Guide</h1>', detail)
+        self.assertIn('<li>Kursal</li>', detail)
+        self.assertIn('href="/studio/"', detail)
+        self.assertIn('href="/studio/assets/css/site.css"', detail)
+
+    def test_handbook_example_queries_navigation_and_builds_alias(self):
+        handbook = Path(self.temp.name) / "handbook"
+        shutil.copytree(ROOT / "examples/handbook-site", handbook,
+                        ignore=shutil.ignore_patterns("dist"))
+        config = handbook / "krayon.toml"
+        config.write_text('base_path = "/handbook"\n' + config.read_text())
+        result = subprocess.run([str(KRAYON), "build", str(handbook)],
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        setup = (handbook / "dist/guide/setup/index.html").read_text()
+        self.assertLess(setup.index('>Set up a project</a>'),
+                        setup.index('>Write pages</a>'))
+        self.assertLess(setup.index('>Write pages</a>'),
+                        setup.index('>Publish the site</a>'))
+        self.assertIn('<h1 id="setup" class="guide-heading">Set up a project</h1>', setup)
+        self.assertIn('href="/handbook/guide/writing/"', setup)
+        self.assertIn('<pre><code>input = &quot;src&quot;\noutput = &quot;dist&quot;\n</code></pre>', setup)
+        writing = (handbook / "dist/guide/writing/index.html").read_text()
+        self.assertIn('<table>\n<thead>\n<tr>\n<th align="left">Source</th>', writing)
+        self.assertIn('<td align="left"><code>guide/writing.md</code></td>', writing)
+        alias = (handbook / "dist/start/index.html").read_text()
+        self.assertIn('/handbook/guide/setup/', alias)
+        home = (handbook / "dist/index.html").read_text()
+        self.assertIn('href="/handbook/guide/"', home)
+
     def test_preview_serves_drafts_and_overlay_without_replacing_output(self):
         self.site = Path(self.temp.name) / "preview site"
         (self.site / "src").mkdir(parents=True)

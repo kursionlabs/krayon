@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if page.title %}{{ page.title }} · {% endif %}{{ site.title }}</title>
+  <meta name="description" content="{{ site.description }}">
+  <link rel="stylesheet" href="{{ "/assets/css/site.css" | url }}">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="{{ "/" | url }}">{{ site.title }}</a>
+    <a href="{{ "/guide/" | url }}">Read the guide →</a>
+  </header>
+  <main>{{ content | safe }}</main>
+  <footer>{{ site.description }}</footer>
+</body>
+</html>

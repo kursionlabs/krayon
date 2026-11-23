@@ -1,0 +1,32 @@
+title = "North Studio"
+description = "A small portfolio built with Krayon."
+
+[[projects]]
+title = "Field Guide"
+slug = "field-guide"
+url = "/work/field-guide/"
+category = "Web"
+year = 2026
+summary = "A compact reference for exploring local trails."
+details = "A searchable guide with clear routes, readable maps, and a calm layout."
+stack = ["Krayon", "Kursal"]
+
+[[projects]]
+title = "Open Shelf"
+slug = "open-shelf"
+url = "/work/open-shelf/"
+category = "Web"
+year = 2025
+summary = "A public catalog for a neighborhood library."
+details = "A simple catalog that puts availability and opening hours first."
+stack = ["Krayon", "HTML"]
+
+[[projects]]
+title = "Signal Notes"
+slug = "signal-notes"
+url = "/work/signal-notes/"
+category = "Writing"
+year = 2024
+summary = "Short field reports about making useful software."
+details = "A collection of practical notes written for small teams."
+stack = ["Markdown", "Krayon"]
