@@ -2680,6 +2680,62 @@ class BuildTests(unittest.TestCase):
         self.assertIn('headings is a reserved Markdown page field', result.stderr)
         self.assertEqual((self.site / "dist/toc/index.html").read_text(), html)
 
+    def test_setext_headings_share_ids_and_heading_metadata(self):
+        (self.site / "src/target.md").write_text('# Target\n')
+        (self.site / "src/_includes/setext-toc.html").write_text(
+            '<nav>{% for heading in page.headings %}'
+            '<a href="#{{ heading.id }}">{{ heading.level }}:{{ heading.text }}</a>'
+            '{% endfor %}</nav>{{ content | safe }}')
+        (self.site / "src/setext.md").write_text(
+            '+++\nlayout = "setext-toc.html"\n+++\n'
+            'Hello *Krayon*\n'
+            '===\n\n'
+            'First line\n'
+            '[second line](/target/) {#custom .special}\n'
+            '---\n\n'
+            '# Hello Krayon\n\n'
+            '> Quoted title\n'
+            '> ===\n\n'
+            '- List title\n'
+            '  ---\n\n'
+            '[Jump](#custom)\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/setext/index.html").read_text()
+        self.assertIn('<h1 id="hello-krayon">Hello <em>Krayon</em></h1>', html)
+        self.assertIn('<h2 id="custom" class="special">First line '
+                      '<a href="/target/">second line</a></h2>', html)
+        self.assertIn('<h1 id="hello-krayon-2">Hello Krayon</h1>', html)
+        self.assertIn('<blockquote>\n<h1 id="quoted-title">Quoted title</h1>', html)
+        self.assertIn('<li><h2 id="list-title">List title</h2>\n</li>', html)
+        self.assertIn('<a href="#hello-krayon">1:Hello Krayon</a>', html)
+        self.assertIn('<a href="#custom">2:First line second line</a>', html)
+        self.assertIn('<a href="#hello-krayon-2">1:Hello Krayon</a>', html)
+        self.assertIn('<a href="#quoted-title">1:Quoted title</a>', html)
+        self.assertIn('<a href="#list-title">2:List title</a>', html)
+
+    def test_setext_underline_precedes_thematic_break_and_keeps_source_locations(self):
+        page = self.site / "src/setext.md"
+        page.write_text('Title\n---\n\n---\n\nFirst\nsecond\n===\n\n'
+                        'Short one\n=\n\nShort two\n  --\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/setext/index.html").read_text()
+        self.assertIn('<h2 id="title">Title</h2>\n<hr>\n'
+                      '<h1 id="first-second">First second</h1>', html)
+        self.assertIn('<h1 id="short-one">Short one</h1>\n'
+                      '<h2 id="short-two">Short two</h2>', html)
+
+        page.write_text('First\n[Missing](/missing/)\n---\n')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('broken local link: /missing/ (line 2, column 1)', result.stderr)
+
+        page.write_text('Title {#same}\n---\n# Other {#same}\n')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('duplicate heading ID', result.stderr)
+
     def test_duplicate_heading_id_is_an_error(self):
         (self.site / "src/heading.md").write_text("# One {#same}\n## Two {#same}\n")
         result = self.build()

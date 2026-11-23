@@ -397,10 +397,10 @@ fn heading_slug(&cx: Domain!['k], text: Span['k]) -> Span['k] {
 }
 
 forall 'k.
-fn heading(&cx: Domain!['k], out: Buffer!, line: Span['k], level: usize,
+fn heading(&cx: Domain!['k], out: Buffer!, content: Span['k], mark: Span['k], level: usize,
     ids: ArenaMap[Span['k], bool, 'k], headings: ArenaVec[Heading['k], 'k], links: LinkContext['k]) -> Result[Buffer!, Span['k]] {
     var out = out;
-    var text = line.slice(level + 1usize, line.len());
+    var text = content;
     var id = empty(&cx);
     var classes = Buffer!::new();
     var has_class = false;
@@ -450,7 +450,7 @@ fn heading(&cx: Domain!['k], out: Buffer!, line: Span['k], level: usize,
     }
     ids.insert(&cx, id, true);
     headings.push(&cx, Heading.{ level, text: plain, id });
-    out = mark_source(&cx, out, line, 0usize, links);
+    out = mark_source(&cx, out, mark, 0usize, links);
     out = out.push_static("<h").push_usize(level);
     out = out.push_static(" id=\"").push_bytes(&cx, id).push_static("\"");
     let class_text = classes.save(&cx);
@@ -514,6 +514,36 @@ fn paragraph_text_line(&cx: Domain!['k], line: Span['k]) -> bool {
         !quote_line(&cx, text).is_some() && heading_level(&cx, text) == 0usize &&
         !thematic_break(&cx, line) && !starts(&cx, text, "```") &&
         !starts(&cx, text, "<") && !starts(&cx, text, "| ")
+}
+
+forall 'k.
+fn setext_level(&cx: Domain!['k], line: Span['k]) -> usize {
+    var indent = 0usize;
+    while at(&cx, line, indent) == b' ' { indent = indent + 1usize; }
+    if indent > 3usize { return 0usize; }
+    let marker = at(&cx, line, indent);
+    if marker != b'=' && marker != b'-' { return 0usize; }
+    var pos = indent;
+    while at(&cx, line, pos) == marker { pos = pos + 1usize; }
+    while pos < line.len() {
+        let c = at(&cx, line, pos);
+        if c != b' ' && c != b'\t' { return 0usize; }
+        pos = pos + 1usize;
+    }
+    if marker == b'=' { 1usize } else { 2usize }
+}
+
+forall 'k.
+fn setext_after(&cx: Domain!['k], source: Span['k], next: usize) -> Option[(usize, usize, usize)] {
+    var pos = next;
+    while pos < source.len() {
+        let (line, after) = next_line(&cx, source, pos);
+        let level = setext_level(&cx, line);
+        if level > 0usize { return Option::Some.((level, pos, after)); }
+        if !paragraph_text_line(&cx, line) { return Option::None; }
+        pos = after;
+    }
+    Option::None
 }
 
 forall 'k.
@@ -824,7 +854,8 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
             }
             compact_allowed = false;
             let level = heading_level(&cx, line);
-            out = match heading(&cx, out, line, level, ids, headings, links) {
+            out = match heading(&cx, out, line.slice(level + 1usize, line.len()), line,
+                level, ids, headings, links) {
                 Ok(html) => html,
                 Err(message) => return Result::Err.(message),
             };
@@ -851,17 +882,50 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
             if starts(&cx, line, "| ---") { out = out.push_static("</thead>\n<tbody>\n"); table_body = true; }
             else { out = table_row(&cx, out, line, !table_body, links); }
         } else {
-            if !paragraph {
-                paragraph_compact = compact_allowed;
-                if !paragraph_compact { out = out.push_static("<p>"); }
-                paragraph = true;
-                compact_allowed = false;
-            } else if pending_break { out = out.push_static("<br>\n"); }
-            else { out = out.push_byte(b' '); }
-            let (content, hard_break) = paragraph_line(&cx, raw,
-                paragraph_continues(&cx, source, pos, depth));
-            out = inline(&cx, out, content, links);
-            pending_break = hard_break;
+            let setext = if !paragraph { setext_after(&cx, source, pos) } else { Option::None };
+            match setext {
+                Some(parts) => {
+                    let (level, underline_start, underline_after) = parts;
+                    var joined = Buffer!::new();
+                    let segments = ArenaVec::new(&cx);
+                    var scan = line_start;
+                    while scan < underline_start {
+                        let (part, after) = next_line(&cx, source, scan);
+                        let content = raw_line(&cx, source, scan, after).trim(&cx);
+                        if scan > line_start { joined = joined.push_byte(b' '); }
+                        match original_offset(&cx, links, content, 0usize) {
+                            Some(offset) => segments.push(&cx, SourceSegment.{ start: &joined.len(), length: content.len(), original: offset }),
+                            None => (),
+                        }
+                        joined = joined.push_bytes(&cx, content);
+                        scan = after;
+                    }
+                    let heading_source = joined.save(&cx);
+                    let heading_links = LinkContext.{ base: links.base, urls: links.urls, asset_urls: links.asset_urls,
+                        fingerprint_assets: links.fingerprint_assets, source: links.source,
+                        rendered_source: heading_source, segments: Option::Some.(segments), track_sources: links.track_sources };
+                    out = match heading(&cx, out, heading_source, heading_source, level,
+                        ids, headings, heading_links) {
+                        Ok(html) => html,
+                        Err(message) => return Result::Err.(message),
+                    };
+                    pos = underline_after;
+                    compact_allowed = false;
+                },
+                None => {
+                    if !paragraph {
+                        paragraph_compact = compact_allowed;
+                        if !paragraph_compact { out = out.push_static("<p>"); }
+                        paragraph = true;
+                        compact_allowed = false;
+                    } else if pending_break { out = out.push_static("<br>\n"); }
+                    else { out = out.push_byte(b' '); }
+                    let (content, hard_break) = paragraph_line(&cx, raw,
+                        paragraph_continues(&cx, source, pos, depth));
+                    out = inline(&cx, out, content, links);
+                    pending_break = hard_break;
+                },
+            }
         }
     }
     if paragraph && !paragraph_compact { out = out.push_static("</p>\n"); }

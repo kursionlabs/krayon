@@ -89,15 +89,17 @@ again to restore the published version. `draft` must be a boolean.
 
 ## Markdown and headings
 
-The current Markdown renderer supports ATX headings, paragraphs, links,
+The current Markdown renderer supports ATX and Setext headings, paragraphs, links,
 images with optional titles, inline code, emphasis, strong text, fenced code
 blocks, blockquotes, tight and loose nested ordered and unordered lists, and pipe tables.
 It is a documented subset, not a complete CommonMark implementation.
 
 Three or more matching `-`, `*`, or `_` characters form a thematic break
 (`<hr>`). Spaces or tabs may separate the markers, with up to three leading
-spaces. Setext headings are not supported, so a dashed line after paragraph
-text is a thematic break.
+spaces. A line of one or more `=` or `-` markers under paragraph text is a
+Setext heading (level 1 or 2); without preceding text, `---` is a thematic
+break. Setext headings use the same IDs, classes, and `page.headings` entries
+as ATX headings.
 
 Ordered lists retain the first marker's number. For example, `3. Third` starts
 an HTML ordered list at 3; later item marker numbers do not reset the count.
