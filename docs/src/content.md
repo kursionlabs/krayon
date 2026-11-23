@@ -146,6 +146,10 @@ Single-line code spans can use matching runs of one or more backticks. A longer
 delimiter lets the code contain shorter backtick runs. One surrounding space
 is removed when the content begins and ends with a space but is not all spaces.
 
+Use `*text*` or `_text_` for emphasis, and `**text**` or `__text__` for strong
+text. Underscores within words remain literal, so `file_name` and
+`snake_case_name` render as written. Escaped underscores also remain literal.
+
 Fenced code blocks use at least three backticks or tildes. The closing fence
 must use the same marker and be at least as long; shorter runs and lines with
 text after the markers remain code. Fences may have up to three leading spaces,

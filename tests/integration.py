@@ -3274,6 +3274,25 @@ class BuildTests(unittest.TestCase):
         self.assertIn(f'<p><code>a{slash}*b</code></p>', html)
         self.assertIn('<p># Not a heading</p>\n<p>- Not a list</p>', html)
 
+    def test_underscore_emphasis_preserves_identifiers_and_heading_text(self):
+        slash = chr(92)
+        (self.site / "src/underscores.md").write_text(
+            '# _Readable_ file_name and __bold__\n\n'
+            '_emphasis_ __strong__ (__punctuation__)\n\n'
+            'file_name snake_case_name a__b__c _a_b_\n\n'
+            '__strong with _emphasis_ inside__\n\n'
+            f'{slash}_escaped{slash}_ and _open and __open\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/underscores/index.html").read_text()
+        self.assertIn('<h1 id="readable-file-name-and-bold"><em>Readable</em> '
+                      'file_name and <strong>bold</strong></h1>', html)
+        self.assertIn('<p><em>emphasis</em> <strong>strong</strong> '
+                      '(<strong>punctuation</strong>)</p>', html)
+        self.assertIn('<p>file_name snake_case_name a__b__c <em>a_b</em></p>', html)
+        self.assertIn('<p><strong>strong with <em>emphasis</em> inside</strong></p>', html)
+        self.assertIn('<p>_escaped_ and _open and __open</p>', html)
+
     def test_escaped_link_image_and_table_delimiters(self):
         slash = chr(92)
         (self.site / "src/assets/diagram.svg").write_text('<svg/>\n')

@@ -229,6 +229,44 @@ fn find_unescaped_strong(&cx: Domain!['k], s: Span['k], start: usize) -> Option[
     Option::None
 }
 
+fn underscore_word(c: u8) -> bool {
+    (c >= b'a' && c <= b'z') || (c >= b'A' && c <= b'Z') ||
+        (c >= b'0' && c <= b'9') || c >= 128u8
+}
+
+fn underscore_space(c: u8) -> bool {
+    c == 0u8 || c == b' ' || c == b'\t' || c == b'\r' || c == b'\n'
+}
+
+forall 'k.
+fn underscore_run(&cx: Domain!['k], s: Span['k], start: usize) -> usize {
+    var end = start;
+    while at(&cx, s, end) == b'_' { end = end + 1usize; }
+    end - start
+}
+
+forall 'k.
+fn underscore_open(&cx: Domain!['k], s: Span['k], start: usize, width: usize) -> bool {
+    let previous = if start == 0usize { 0u8 } else { at(&cx, s, start - 1usize) };
+    width <= 2usize && !underscore_word(previous) &&
+        !underscore_space(at(&cx, s, start + width))
+}
+
+forall 'k.
+fn underscore_close(&cx: Domain!['k], s: Span['k], start: usize, width: usize) -> Option[usize] {
+    var pos = start;
+    while pos < s.len() {
+        if at(&cx, s, pos) == b'_' {
+            let run = underscore_run(&cx, s, pos);
+            let previous = if pos == 0usize { 0u8 } else { at(&cx, s, pos - 1usize) };
+            if run == width && !escaped_at(&cx, s, pos) && !underscore_space(previous) &&
+                !underscore_word(at(&cx, s, pos + width)) { return Option::Some.(pos); }
+            pos = pos + run;
+        } else { pos = pos + 1usize; }
+    }
+    Option::None
+}
+
 forall 'k.
 fn unescape_punctuation(&cx: Domain!['k], s: Span['k]) -> Span['k] {
     var out = Buffer!::new();
@@ -394,6 +432,19 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
                 },
                 None => { out = out.push_byte(c); i = i + 1usize; },
             }
+        } else if c == b'_' {
+            let width = underscore_run(&cx, s, i);
+            if underscore_open(&cx, s, i, width) {
+                match underscore_close(&cx, s, i + width, width) {
+                    Some(end) => {
+                        out = inline(&cx, out.push_static(if width == 2usize { "<strong>" } else { "<em>" }),
+                            s.slice(i + width, end), links)
+                            .push_static(if width == 2usize { "</strong>" } else { "</em>" });
+                        i = end + width;
+                    },
+                    None => { out = out.push_bytes(&cx, s.slice(i, i + width)); i = i + width; },
+                }
+            } else { out = out.push_bytes(&cx, s.slice(i, i + width)); i = i + width; }
         } else if c == b'&' || c == b'<' || c == b'>' {
             out = html_escape(&cx, out, s.slice(i, i + 1usize));
             i = i + 1usize;
@@ -542,6 +593,18 @@ fn heading_text(&cx: Domain!['k], source: Span['k]) -> Span['k] {
                 None => { out = out.push_byte(c); i = i + 1usize; },
             }
         } else if c == b'*' { i = i + 1usize; }
+        else if c == b'_' {
+            let width = underscore_run(&cx, source, i);
+            if underscore_open(&cx, source, i, width) {
+                match underscore_close(&cx, source, i + width, width) {
+                    Some(end) => {
+                        out = out.push_bytes(&cx, heading_text(&cx, source.slice(i + width, end)));
+                        i = end + width;
+                    },
+                    None => { out = out.push_bytes(&cx, source.slice(i, i + width)); i = i + width; },
+                }
+            } else { out = out.push_bytes(&cx, source.slice(i, i + width)); i = i + width; }
+        }
         else { out = out.push_byte(c); i = i + 1usize; }
     }
     out.save(&cx)
