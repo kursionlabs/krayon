@@ -3237,6 +3237,43 @@ class BuildTests(unittest.TestCase):
                       'title="Diagram &quot; details">', html)
         self.assertIn('<th>A|B</th>\n<th>C</th>', html)
 
+    def test_inline_code_spans_match_backtick_run_lengths(self):
+        tick = chr(96)
+        (self.site / "src/code-spans.md").write_text(
+            f'{tick}simple{tick} {tick * 2} code {tick} inside {tick * 2} '
+            f'{tick * 3}two {tick * 2} inside{tick * 3}\n\n'
+            f'{tick}<a&b>{tick} {tick} {tick} {tick * 2}  {tick * 2}\n\n'
+            f'{tick * 2}unmatched{tick}\n\n'
+            f'[Label {tick * 2}a{tick}b{tick * 2}](/)\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/code-spans/index.html").read_text()
+        self.assertIn('<code>simple</code> <code>code ` inside</code> '
+                      '<code>two `` inside</code>', html)
+        self.assertIn('<code>&lt;a&amp;b&gt;</code> <code> </code> '
+                      '<code>  </code>', html)
+        self.assertIn('<p>``unmatched`</p>', html)
+        self.assertIn('<a href="/">Label <code>a`b</code></a>', html)
+
+    def test_inline_code_spans_keep_heading_text_and_escapes(self):
+        tick = chr(96)
+        slash = chr(92)
+        (self.site / "src/_includes/code-toc.html").write_text(
+            '{% for heading in page.headings %}{{ heading.text }}|{{ heading.id }}{% endfor %}'
+            '{{ content | safe }}')
+        (self.site / "src/code-heading.md").write_text(
+            '+++\nlayout = "code-toc.html"\n+++\n'
+            f'# Show {tick * 2}a{tick}b{tick * 2} and {tick}*x*{tick}\n\n'
+            f'{slash}{tick}literal{slash}{tick} '
+            f'{tick}a{slash}*b{tick}\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/code-heading/index.html").read_text()
+        self.assertIn('Show a`b and *x*|show-ab-and-x', html)
+        self.assertIn('<h1 id="show-ab-and-x">Show <code>a`b</code> '
+                      'and <code>*x*</code></h1>', html)
+        self.assertIn(f'<p>{tick}literal{tick} <code>a{slash}*b</code></p>', html)
+
     def test_image_uses_base_path_and_missing_image_fails(self):
         config = self.site / "krayon.toml"
         config.write_text(config.read_text() + 'base_path = "/docs"\n')

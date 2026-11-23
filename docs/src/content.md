@@ -124,6 +124,10 @@ Backslash-escape ASCII punctuation to show it literally, such as `\*literal\*`
 or `\[not a link]`. Escapes work in headings, link and image text, destinations,
 and table cells. Code spans and fenced code keep backslashes as written.
 
+Single-line code spans can use matching runs of one or more backticks. A longer
+delimiter lets the code contain shorter backtick runs. One surrounding space
+is removed when the content begins and ends with a space but is not all spaces.
+
 Fenced `kursal` code receives token classes for keywords, types,
 strings, numbers, and comments. Other fence languages remain escaped plain
 text.

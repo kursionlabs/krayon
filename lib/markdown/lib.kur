@@ -246,6 +246,35 @@ fn unescape_punctuation(&cx: Domain!['k], s: Span['k]) -> Span['k] {
 }
 
 forall 'k.
+fn backtick_run(&cx: Domain!['k], s: Span['k], start: usize) -> usize {
+    var end = start;
+    while at(&cx, s, end) == b'`' { end = end + 1usize; }
+    end - start
+}
+
+forall 'k.
+fn code_close(&cx: Domain!['k], s: Span['k], start: usize, width: usize) -> Option[usize] {
+    var pos = start;
+    while pos < s.len() {
+        if at(&cx, s, pos) == b'`' {
+            let run = backtick_run(&cx, s, pos);
+            if run == width { return Option::Some.(pos); }
+            pos = pos + run;
+        } else { pos = pos + 1usize; }
+    }
+    Option::None
+}
+
+forall 'k.
+fn code_content(&cx: Domain!['k], s: Span['k]) -> Span['k] {
+    if s.len() < 2usize || at(&cx, s, 0usize) != b' ' ||
+        at(&cx, s, s.len() - 1usize) != b' ' { return s; }
+    var pos = 0usize;
+    while pos < s.len() && at(&cx, s, pos) == b' ' { pos = pos + 1usize; }
+    if pos == s.len() { s } else { s.slice(1usize, s.len() - 1usize) }
+}
+
+forall 'k.
 fn original_offset(&cx: Domain!['k], links: LinkContext['k], text: Span['k], index: usize) -> Option[usize] {
     let start = links.rendered_source.address();
     let address = text.address() + index;
@@ -286,12 +315,14 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
             out = html_escape(&cx, out, s.slice(i + 1usize, i + 2usize));
             i = i + 2usize;
         } else if c == b'`' {
-            match s.find_byte(&cx, b'`', i + 1usize) {
+            let width = backtick_run(&cx, s, i);
+            match code_close(&cx, s, i + width, width) {
                 Some(end) => {
-                    out = html_escape(&cx, out.push_static("<code>"), s.slice(i + 1usize, end)).push_static("</code>");
-                    i = end + 1usize;
+                    out = html_escape(&cx, out.push_static("<code>"),
+                        code_content(&cx, s.slice(i + width, end))).push_static("</code>");
+                    i = end + width;
                 },
-                None => { out = out.push_static("`"); i = i + 1usize; },
+                None => { out = out.push_bytes(&cx, s.slice(i, i + width)); i = i + width; },
             }
         } else if c == b'!' && at(&cx, s, i + 1usize) == b'[' {
             match find_unescaped(&cx, s, b']', i + 2usize) {
@@ -412,16 +443,27 @@ forall 'k.
 fn heading_text(&cx: Domain!['k], source: Span['k]) -> Span['k] {
     var out = Buffer!::new();
     var i = 0usize;
-    var code = false;
     while i < source.len() {
         let c = at(&cx, source, i);
         let opening = if c == b'!' && at(&cx, source, i + 1usize) == b'[' { i + 1usize } else { i };
-        if c == b'`' { code = !code; i = i + 1usize; }
-        else if !code && c == b'\\' && ascii_punctuation(at(&cx, source, i + 1usize)) {
+        if c == b'`' {
+            let width = backtick_run(&cx, source, i);
+            match code_close(&cx, source, i + width, width) {
+                Some(end) => {
+                    out = out.push_bytes(&cx, code_content(&cx, source.slice(i + width, end)));
+                    i = end + width;
+                },
+                None => {
+                    out = out.push_bytes(&cx, source.slice(i, i + width));
+                    i = i + width;
+                },
+            }
+        }
+        else if c == b'\\' && ascii_punctuation(at(&cx, source, i + 1usize)) {
             out = out.push_byte(at(&cx, source, i + 1usize));
             i = i + 2usize;
         }
-        else if !code && at(&cx, source, opening) == b'[' {
+        else if at(&cx, source, opening) == b'[' {
             match find_unescaped(&cx, source, b']', opening + 1usize) {
                 Some(end) => if at(&cx, source, end + 1usize) == b'(' {
                     match find_unescaped(&cx, source, b')', end + 2usize) {
@@ -434,7 +476,7 @@ fn heading_text(&cx: Domain!['k], source: Span['k]) -> Span['k] {
                 } else { out = out.push_byte(c); i = i + 1usize; },
                 None => { out = out.push_byte(c); i = i + 1usize; },
             }
-        } else if !code && c == b'*' { i = i + 1usize; }
+        } else if c == b'*' { i = i + 1usize; }
         else { out = out.push_byte(c); i = i + 1usize; }
     }
     out.save(&cx)
