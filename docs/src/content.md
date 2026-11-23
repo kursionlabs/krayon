@@ -90,9 +90,15 @@ again to restore the published version. `draft` must be a boolean.
 ## Markdown and headings
 
 The current Markdown renderer supports ATX and Setext headings, paragraphs, links,
-images with optional titles, inline code, emphasis, strong text, fenced code
+images with optional titles, inline code, emphasis, strong text, fenced and indented code
 blocks, blockquotes, tight and loose nested ordered and unordered lists, and pipe tables.
 It is a documented subset, not a complete CommonMark implementation.
+
+Indent a line by four spaces to start a code block. Krayon removes those four
+spaces and preserves any additional indentation, trailing spaces, and blank
+lines within the block. The block ends at the next nonblank line with less
+indentation. In a list item, add four spaces after the item's content column.
+An indented line directly after paragraph text remains part of that paragraph.
 
 Pipe tables use a header row followed by a delimiter row with one or more
 hyphens per column. Outer pipes are optional. Add a colon to the left, right,

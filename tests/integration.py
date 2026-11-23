@@ -3334,6 +3334,48 @@ class BuildTests(unittest.TestCase):
         self.assertIn('Name | Value', html)
         self.assertIn('One | Two', html)
 
+    def test_markdown_indented_code_blocks_preserve_content_and_boundaries(self):
+        (self.site / "src/indented-code.md").write_text(
+            'Before.\n'
+            '    still paragraph\n\n'
+            '    <tag> & value  \n'
+            '      extra indent\n'
+            '\n'
+            '    after blank\n'
+            '\n'
+            'After.\n\n'
+            '    final line\n'
+            '\n'
+            '    A | B\n'
+            '    --- | ---\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/indented-code/index.html").read_text()
+        self.assertIn('<p>Before.     still paragraph</p>', html)
+        self.assertIn('<pre><code>&lt;tag&gt; &amp; value  \n'
+                      '  extra indent\n\nafter blank\n</code></pre>', html)
+        self.assertIn('</code></pre>\n<p>After.</p>\n'
+                      '<pre><code>final line\n\nA | B\n--- | ---\n</code></pre>', html)
+        self.assertEqual(html.count('<pre><code>'), 2)
+
+    def test_markdown_indented_code_blocks_in_lists_and_quotes(self):
+        (self.site / "src/nested-indented-code.md").write_text(
+            '- Item\n\n'
+            '      let x = 1\n'
+            '      <value>\n'
+            '- Next\n\n'
+            '> Quote\n'
+            '>\n'
+            '>     <quoted>\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/nested-indented-code/index.html").read_text()
+        self.assertIn('<li><p>Item</p>\n<pre><code>let x = 1\n'
+                      '&lt;value&gt;\n</code></pre>\n</li>', html)
+        self.assertIn('<li><p>Next</p>\n</li>', html)
+        self.assertIn('<blockquote>\n<p>Quote</p>\n'
+                      '<pre><code>&lt;quoted&gt;\n</code></pre>\n</blockquote>', html)
+
     def test_inline_code_spans_match_backtick_run_lengths(self):
         tick = chr(96)
         (self.site / "src/code-spans.md").write_text(

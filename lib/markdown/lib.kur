@@ -94,7 +94,7 @@ fn paragraph_continues(&cx: Domain!['k], source: Span['k], pos: usize, depth: us
     }
     if after < source.len() {
         let (following, next) = next_line(&cx, source, after);
-        if table_delimiter(&cx, line, following).is_some() { return false; }
+        if !indented_code(&cx, line) && table_delimiter(&cx, line, following).is_some() { return false; }
     }
     true
 }
@@ -704,6 +704,13 @@ fn fence_content(&cx: Domain!['k], line: Span['k], indent: usize) -> Span['k] {
 }
 
 forall 'k.
+fn indented_code(&cx: Domain!['k], line: Span['k]) -> bool {
+    line.len() >= 4usize && at(&cx, line, 0usize) == b' ' &&
+        at(&cx, line, 1usize) == b' ' && at(&cx, line, 2usize) == b' ' &&
+        at(&cx, line, 3usize) == b' ' && !line.trim(&cx).is_empty()
+}
+
+forall 'k.
 fn thematic_break(&cx: Domain!['k], line: Span['k]) -> bool {
     var indent = 0usize;
     while at(&cx, line, indent) == b' ' { indent = indent + 1usize; }
@@ -1012,7 +1019,7 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
             out = out.push_static("</tbody>\n</table>\n");
             table = false;
         }
-        let table_start = if !table && pos < source.len() {
+        let table_start = if !table && !indented_code(&cx, raw) && pos < source.len() {
             let (following, after) = next_line(&cx, source, pos);
             match table_delimiter(&cx, line, following) {
                 Some(aligns) => Option::Some.((aligns, after)),
@@ -1047,6 +1054,32 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
             out = out.push_static("<pre><code");
             if !code_lang.is_empty() { out = html_escape(&cx, out.push_static(" class=\"language-"), code_lang).push_static("\""); }
             out = out.push_static(">"); code = true;
+        } else if !paragraph && !table && indented_code(&cx, raw) {
+            compact_allowed = false;
+            out = html_escape(&cx, out.push_static("<pre><code>"),
+                fence_content(&cx, raw.slice(4usize, raw.len()), 0usize)).push_byte(b'\n');
+            var pending_blank = 0usize;
+            var gathering = true;
+            while gathering && pos < source.len() {
+                let (following, after) = next_line(&cx, source, pos);
+                if following.is_empty() {
+                    pending_blank = pending_blank + 1usize;
+                    pos = after;
+                } else {
+                    let following_raw = raw_line(&cx, source, pos, after);
+                    if indented_code(&cx, following_raw) {
+                        while pending_blank > 0usize {
+                            out = out.push_byte(b'\n');
+                            pending_blank = pending_blank - 1usize;
+                        }
+                        out = html_escape(&cx, out,
+                            fence_content(&cx, following_raw.slice(4usize, following_raw.len()), 0usize))
+                            .push_byte(b'\n');
+                        pos = after;
+                    } else { gathering = false; }
+                }
+            }
+            out = out.push_static("</code></pre>\n");
         } else if thematic_break(&cx, line) {
             if paragraph {
                 if !paragraph_compact { out = out.push_static("</p>\n"); }
