@@ -194,6 +194,57 @@ fn html_escape(&cx: Domain!['k], out: Buffer!, s: Span['k]) -> Buffer! {
     out
 }
 
+fn ascii_punctuation(c: u8) -> bool {
+    (c >= b'!' && c <= b'/') || (c >= b':' && c <= b'@') ||
+        (c >= b'[' && c <= b'`') || (c >= b'{' && c <= b'~')
+}
+
+forall 'k.
+fn escaped_at(&cx: Domain!['k], s: Span['k], index: usize) -> bool {
+    var count = 0usize;
+    while count < index && at(&cx, s, index - count - 1usize) == b'\\' {
+        count = count + 1usize;
+    }
+    count % 2usize == 1usize
+}
+
+forall 'k.
+fn find_unescaped(&cx: Domain!['k], s: Span['k], target: u8, start: usize) -> Option[usize] {
+    var pos = start;
+    while pos < s.len() {
+        if at(&cx, s, pos) == target && !escaped_at(&cx, s, pos) { return Option::Some.(pos); }
+        pos = pos + 1usize;
+    }
+    Option::None
+}
+
+forall 'k.
+fn find_unescaped_strong(&cx: Domain!['k], s: Span['k], start: usize) -> Option[usize] {
+    var pos = start;
+    while pos + 1usize < s.len() {
+        if at(&cx, s, pos) == b'*' && at(&cx, s, pos + 1usize) == b'*' &&
+            !escaped_at(&cx, s, pos) { return Option::Some.(pos); }
+        pos = pos + 1usize;
+    }
+    Option::None
+}
+
+forall 'k.
+fn unescape_punctuation(&cx: Domain!['k], s: Span['k]) -> Span['k] {
+    var out = Buffer!::new();
+    var pos = 0usize;
+    while pos < s.len() {
+        if at(&cx, s, pos) == b'\\' && ascii_punctuation(at(&cx, s, pos + 1usize)) {
+            out = out.push_byte(at(&cx, s, pos + 1usize));
+            pos = pos + 2usize;
+        } else {
+            out = out.push_byte(at(&cx, s, pos));
+            pos = pos + 1usize;
+        }
+    }
+    out.save(&cx)
+}
+
 forall 'k.
 fn original_offset(&cx: Domain!['k], links: LinkContext['k], text: Span['k], index: usize) -> Option[usize] {
     let start = links.rendered_source.address();
@@ -231,7 +282,10 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
     var i = 0usize;
     while i < s.len() {
         let c = at(&cx, s, i);
-        if c == b'`' {
+        if c == b'\\' && ascii_punctuation(at(&cx, s, i + 1usize)) {
+            out = html_escape(&cx, out, s.slice(i + 1usize, i + 2usize));
+            i = i + 2usize;
+        } else if c == b'`' {
             match s.find_byte(&cx, b'`', i + 1usize) {
                 Some(end) => {
                     out = html_escape(&cx, out.push_static("<code>"), s.slice(i + 1usize, end)).push_static("</code>");
@@ -240,10 +294,10 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
                 None => { out = out.push_static("`"); i = i + 1usize; },
             }
         } else if c == b'!' && at(&cx, s, i + 1usize) == b'[' {
-            match s.find_byte(&cx, b']', i + 2usize) {
+            match find_unescaped(&cx, s, b']', i + 2usize) {
                 Some(end) => {
                     if at(&cx, s, end + 1usize) == b'(' {
-                        match s.find_byte(&cx, b')', end + 2usize) {
+                        match find_unescaped(&cx, s, b')', end + 2usize) {
                             Some(close) => {
                                 let destination = s.slice(end + 2usize, close).trim(&cx);
                                 var target = destination;
@@ -256,11 +310,14 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
                                     None => (),
                                 }
                                 out = mark_source(&cx, out, s, i, links);
-                                out = html_escape(&cx, out.push_static("<img src=\""), asset_link(&cx, links, target))
+                                out = html_escape(&cx, out.push_static("<img src=\""),
+                                    asset_link(&cx, links, unescape_punctuation(&cx, target)))
                                     .push_static("\" alt=\"");
-                                out = html_escape(&cx, out, s.slice(i + 2usize, end)).push_static("\"");
+                                out = html_escape(&cx, out, unescape_punctuation(&cx, s.slice(i + 2usize, end)))
+                                    .push_static("\"");
                                 if !title.is_empty() {
-                                    out = html_escape(&cx, out.push_static(" title=\""), title).push_static("\"");
+                                    out = html_escape(&cx, out.push_static(" title=\""),
+                                        unescape_punctuation(&cx, title)).push_static("\"");
                                 }
                                 out = out.push_static(">");
                                 i = close + 1usize;
@@ -272,13 +329,15 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
                 None => { out = out.push_byte(c); i = i + 1usize; },
             }
         } else if c == b'[' {
-            match s.find_byte(&cx, b']', i + 1usize) {
+            match find_unescaped(&cx, s, b']', i + 1usize) {
                 Some(end) => {
                     if at(&cx, s, end + 1usize) == b'(' {
-                        match s.find_byte(&cx, b')', end + 2usize) {
+                        match find_unescaped(&cx, s, b')', end + 2usize) {
                             Some(close) => {
                                 out = mark_source(&cx, out, s, i, links);
-                                out = html_escape(&cx, out.push_static("<a href=\""), source_link(&cx, links, s.slice(end + 2usize, close))).push_static("\">");
+                                out = html_escape(&cx, out.push_static("<a href=\""),
+                                    source_link(&cx, links, unescape_punctuation(&cx, s.slice(end + 2usize, close))))
+                                    .push_static("\">");
                                 out = inline(&cx, out, s.slice(i + 1usize, end), links).push_static("</a>");
                                 i = close + 1usize;
                             },
@@ -289,7 +348,7 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
                 None => { out = out.push_byte(c); i = i + 1usize; },
             }
         } else if c == b'*' && at(&cx, s, i + 1usize) == b'*' {
-            match s.find(&cx, lit(&cx, "**"), i + 2usize) {
+            match find_unescaped_strong(&cx, s, i + 2usize) {
                 Some(end) => {
                     out = inline(&cx, out.push_static("<strong>"), s.slice(i + 2usize, end), links).push_static("</strong>");
                     i = end + 2usize;
@@ -297,7 +356,7 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
                 None => { out = out.push_byte(c); i = i + 1usize; },
             }
         } else if c == b'*' {
-            match s.find_byte(&cx, b'*', i + 1usize) {
+            match find_unescaped(&cx, s, b'*', i + 1usize) {
                 Some(end) => {
                     out = inline(&cx, out.push_static("<em>"), s.slice(i + 1usize, end), links).push_static("</em>");
                     i = end + 1usize;
@@ -318,7 +377,7 @@ fn table_row(&cx: Domain!['k], out: Buffer!, line: Span['k], header: bool, links
     var cell_start = 1usize;
     var j = 1usize;
     while j < line.len() {
-        if at(&cx, line, j) == b'|' {
+        if at(&cx, line, j) == b'|' && !escaped_at(&cx, line, j) {
             out = out.push_static(if header { "<th>" } else { "<td>" });
             out = inline(&cx, out, line.slice(cell_start, j).trim(&cx), links);
             out = out.push_static(if header { "</th>\n" } else { "</td>\n" });
@@ -353,13 +412,19 @@ forall 'k.
 fn heading_text(&cx: Domain!['k], source: Span['k]) -> Span['k] {
     var out = Buffer!::new();
     var i = 0usize;
+    var code = false;
     while i < source.len() {
         let c = at(&cx, source, i);
         let opening = if c == b'!' && at(&cx, source, i + 1usize) == b'[' { i + 1usize } else { i };
-        if at(&cx, source, opening) == b'[' {
-            match source.find_byte(&cx, b']', opening + 1usize) {
+        if c == b'`' { code = !code; i = i + 1usize; }
+        else if !code && c == b'\\' && ascii_punctuation(at(&cx, source, i + 1usize)) {
+            out = out.push_byte(at(&cx, source, i + 1usize));
+            i = i + 2usize;
+        }
+        else if !code && at(&cx, source, opening) == b'[' {
+            match find_unescaped(&cx, source, b']', opening + 1usize) {
                 Some(end) => if at(&cx, source, end + 1usize) == b'(' {
-                    match source.find_byte(&cx, b')', end + 2usize) {
+                    match find_unescaped(&cx, source, b')', end + 2usize) {
                         Some(close) => {
                             out = out.push_bytes(&cx, heading_text(&cx, source.slice(opening + 1usize, end)));
                             i = close + 1usize;
@@ -369,7 +434,7 @@ fn heading_text(&cx: Domain!['k], source: Span['k]) -> Span['k] {
                 } else { out = out.push_byte(c); i = i + 1usize; },
                 None => { out = out.push_byte(c); i = i + 1usize; },
             }
-        } else if c == b'*' || c == b'`' { i = i + 1usize; }
+        } else if !code && c == b'*' { i = i + 1usize; }
         else { out = out.push_byte(c); i = i + 1usize; }
     }
     out.save(&cx)

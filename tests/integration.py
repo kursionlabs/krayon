@@ -3198,6 +3198,45 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn('<hr>', html)
         self.assertIn('<pre><code>---\n</code></pre>', html)
 
+    def test_backslash_escapes_inline_punctuation_and_heading_text(self):
+        slash = chr(92)
+        tick = chr(96)
+        (self.site / "src/escapes.md").write_text(
+            f'# {slash}*Literal{slash}* and {slash}[bracket{slash}]\n\n'
+            f'{slash}*literal{slash}* {slash}[not a link](/missing/) '
+            f'{slash}& {slash}< {slash}A\n\n'
+            f'*one{slash}* two* **bold{slash}** text**\n\n'
+            f'{tick}a{slash}*b{tick}\n\n'
+            f'{slash}# Not a heading\n\n'
+            f'{slash}- Not a list\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/escapes/index.html").read_text()
+        self.assertIn('<h1 id="literal-and-bracket">*Literal* and [bracket]</h1>', html)
+        self.assertIn('<p>*literal* [not a link](/missing/) &amp; &lt; '
+                      f'{slash}A</p>', html)
+        self.assertIn('<p><em>one* two</em> <strong>bold** text</strong></p>', html)
+        self.assertIn(f'<p><code>a{slash}*b</code></p>', html)
+        self.assertIn('<p># Not a heading</p>\n<p>- Not a list</p>', html)
+
+    def test_escaped_link_image_and_table_delimiters(self):
+        slash = chr(92)
+        (self.site / "src/assets/diagram.svg").write_text('<svg/>\n')
+        (self.site / "src/escaped-delimiters.md").write_text(
+            f'[la{slash}]bel](/) [site](https://example.org/a{slash})b)\n\n'
+            f'![A{slash}]B](/assets/diagram.svg "Diagram {slash}" details")\n\n'
+            f'| A{slash}|B | C |\n'
+            '| --- | --- |\n'
+            '| one | two |\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/escaped-delimiters/index.html").read_text()
+        self.assertIn('<a href="/">la]bel</a>', html)
+        self.assertIn('<a href="https://example.org/a)b">site</a>', html)
+        self.assertIn('<img src="/assets/diagram.svg" alt="A]B" '
+                      'title="Diagram &quot; details">', html)
+        self.assertIn('<th>A|B</th>\n<th>C</th>', html)
+
     def test_image_uses_base_path_and_missing_image_fails(self):
         config = self.site / "krayon.toml"
         config.write_text(config.read_text() + 'base_path = "/docs"\n')

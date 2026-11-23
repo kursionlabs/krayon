@@ -120,6 +120,10 @@ a hard line break (`<br>`) when another paragraph line follows. Ordinary line
 wraps join with a space. Break markers at the end of a paragraph do not add a
 break.
 
+Backslash-escape ASCII punctuation to show it literally, such as `\*literal\*`
+or `\[not a link]`. Escapes work in headings, link and image text, destinations,
+and table cells. Code spans and fenced code keep backslashes as written.
+
 Fenced `kursal` code receives token classes for keywords, types,
 strings, numbers, and comments. Other fence languages remain escaped plain
 text.
