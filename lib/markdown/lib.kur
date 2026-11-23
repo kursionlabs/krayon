@@ -92,9 +92,9 @@ fn paragraph_continues(&cx: Domain!['k], source: Span['k], pos: usize, depth: us
         },
         None => (),
     }
-    if starts(&cx, line, "| ") && after < source.len() {
+    if after < source.len() {
         let (following, next) = next_line(&cx, source, after);
-        if starts(&cx, following, "| ---") { return false; }
+        if table_delimiter(&cx, line, following).is_some() { return false; }
     }
     true
 }
@@ -403,18 +403,83 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
 }
 
 forall 'k.
-fn table_row(&cx: Domain!['k], out: Buffer!, line: Span['k], header: bool, links: LinkContext['k]) -> Buffer! {
-    var out = out.push_static("<tr>\n");
-    var cell_start = 1usize;
-    var j = 1usize;
-    while j < line.len() {
-        if at(&cx, line, j) == b'|' && !escaped_at(&cx, line, j) {
-            out = out.push_static(if header { "<th>" } else { "<td>" });
-            out = inline(&cx, out, line.slice(cell_start, j).trim(&cx), links);
-            out = out.push_static(if header { "</th>\n" } else { "</td>\n" });
-            cell_start = j + 1usize;
+fn table_cells(&cx: Domain!['k], line: Span['k]) -> (ArenaVec[Span['k], 'k], bool) {
+    let text = line.trim(&cx);
+    let cells = ArenaVec::new(&cx);
+    var start = 0usize;
+    var end = text.len();
+    var has_pipe = false;
+    if at(&cx, text, 0usize) == b'|' { start = 1usize; has_pipe = true; }
+    if end > start && at(&cx, text, end - 1usize) == b'|' && !escaped_at(&cx, text, end - 1usize) {
+        end = end - 1usize;
+        has_pipe = true;
+    }
+    var cell_start = start;
+    var pos = start;
+    while pos < end {
+        if at(&cx, text, pos) == b'`' {
+            let width = backtick_run(&cx, text, pos);
+            match code_close(&cx, text, pos + width, width) {
+                Some(close) => { pos = close + width; },
+                None => { pos = pos + width; },
+            }
+        } else if at(&cx, text, pos) == b'|' && !escaped_at(&cx, text, pos) {
+            cells.push(&cx, text.slice(cell_start, pos).trim(&cx));
+            has_pipe = true;
+            cell_start = pos + 1usize;
+            pos = pos + 1usize;
+        } else { pos = pos + 1usize; }
+    }
+    cells.push(&cx, text.slice(cell_start, end).trim(&cx));
+    (cells, has_pipe)
+}
+
+forall 'k.
+fn table_delimiter(&cx: Domain!['k], header: Span['k], delimiter: Span['k])
+    -> Option[ArenaVec[u8, 'k]] {
+    let (headers, header_pipe) = table_cells(&cx, header);
+    let (markers, marker_pipe) = table_cells(&cx, delimiter);
+    if !header_pipe && !marker_pipe { return Option::None; }
+    if headers.len(&cx) != markers.len(&cx) { return Option::None; }
+    let aligns: ArenaVec[u8, 'k] = ArenaVec::new(&cx);
+    var i = 0usize;
+    while i < markers.len(&cx) {
+        let cell = markers.at(&cx, i);
+        var start = 0usize;
+        var end = cell.len();
+        let left = at(&cx, cell, start) == b':';
+        if left { start = start + 1usize; }
+        let right = end > start && at(&cx, cell, end - 1usize) == b':';
+        if right { end = end - 1usize; }
+        if start >= end { return Option::None; }
+        var pos = start;
+        while pos < end {
+            if at(&cx, cell, pos) != b'-' { return Option::None; }
+            pos = pos + 1usize;
         }
-        j = j + 1usize;
+        aligns.push(&cx, if left && right { b'c' } else if left { b'l' }
+            else if right { b'r' } else { 0u8 });
+        i = i + 1usize;
+    }
+    Option::Some.(aligns)
+}
+
+forall 'k.
+fn table_row(&cx: Domain!['k], out: Buffer!, line: Span['k], header: bool,
+    aligns: ArenaVec[u8, 'k], links: LinkContext['k]) -> Buffer! {
+    var out = out.push_static("<tr>\n");
+    let (cells, has_pipe) = table_cells(&cx, line);
+    var i = 0usize;
+    while i < aligns.len(&cx) {
+        out = out.push_static(if header { "<th" } else { "<td" });
+        let align = aligns.at(&cx, i);
+        if align == b'l' { out = out.push_static(" align=\"left\""); }
+        else if align == b'r' { out = out.push_static(" align=\"right\""); }
+        else if align == b'c' { out = out.push_static(" align=\"center\""); }
+        out = out.push_static(">");
+        if i < cells.len(&cx) { out = inline(&cx, out, cells.at(&cx, i), links); }
+        out = out.push_static(if header { "</th>\n" } else { "</td>\n" });
+        i = i + 1usize;
     }
     out.push_static("</tr>\n")
 }
@@ -925,21 +990,12 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
     var code_width = 0usize;
     var code_indent = 0usize;
     var table = false;
-    var table_body = false;
+    var table_aligns: ArenaVec[u8, 'k] = ArenaVec::new(&cx);
     while pos < source.len() {
         let line_start = pos;
         let (line, next) = next_line(&cx, source, pos);
         pos = next;
         let raw = raw_line(&cx, source, line_start, next);
-        if table && !starts(&cx, line, "| ") {
-            out = out.push_static("</tbody>\n</table>\n");
-            table = false;
-            table_body = false;
-        }
-        let table_start = if starts(&cx, line, "| ") && !table && pos < source.len() {
-            let (following, after) = next_line(&cx, source, pos);
-            starts(&cx, following, "| ---")
-        } else { false };
         let marker = list_marker(&cx, line);
         let quoted = quote_line(&cx, raw);
         let opening = fence_open(&cx, line);
@@ -950,6 +1006,19 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
             },
             None => false,
         };
+        if table && (line.is_empty() || opening.is_some() || thematic_break(&cx, line) ||
+            (depth == 0usize && line.is(&cx, "<!-- more -->")) || quoted.is_some() ||
+            starts(&cx, line, "<") || heading_level(&cx, line) > 0usize || use_marker) {
+            out = out.push_static("</tbody>\n</table>\n");
+            table = false;
+        }
+        let table_start = if !table && pos < source.len() {
+            let (following, after) = next_line(&cx, source, pos);
+            match table_delimiter(&cx, line, following) {
+                Some(aligns) => Option::Some.((aligns, after)),
+                None => Option::None,
+            }
+        } else { Option::None };
         if code {
             if fence_close(&cx, line, code_marker, code_width) {
                 out = out.push_static("</code></pre>\n");
@@ -998,7 +1067,6 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
                 if !paragraph_compact { out = out.push_static("</p>\n"); }
                 paragraph = false;
             }
-            if table { out = out.push_static("</tbody>\n</table>\n"); table = false; table_body = false; }
         } else if quoted.is_some() {
             if paragraph {
                 if !paragraph_compact { out = out.push_static("</p>\n"); }
@@ -1074,15 +1142,26 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
             };
             out = out.push_buffer(list);
             pos = after_list;
-        } else if table || table_start {
+        } else if table || table_start.is_some() {
             if paragraph {
                 if !paragraph_compact { out = out.push_static("</p>\n"); }
                 paragraph = false;
             }
             compact_allowed = false;
-            if !table { out = out.push_static("<table>\n<thead>\n"); table = true; }
-            if starts(&cx, line, "| ---") { out = out.push_static("</thead>\n<tbody>\n"); table_body = true; }
-            else { out = table_row(&cx, out, line, !table_body, links); }
+            if table { out = table_row(&cx, out, line, false, table_aligns, links); }
+            else {
+                match table_start {
+                    Some(parts) => {
+                        let (aligns, after) = parts;
+                        table_aligns = aligns;
+                        out = table_row(&cx, out.push_static("<table>\n<thead>\n"), line,
+                            true, table_aligns, links).push_static("</thead>\n<tbody>\n");
+                        table = true;
+                        pos = after;
+                    },
+                    None => (),
+                }
+            }
         } else {
             let setext = if !paragraph { setext_after(&cx, source, pos) } else { Option::None };
             match setext {

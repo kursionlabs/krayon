@@ -94,6 +94,18 @@ images with optional titles, inline code, emphasis, strong text, fenced code
 blocks, blockquotes, tight and loose nested ordered and unordered lists, and pipe tables.
 It is a documented subset, not a complete CommonMark implementation.
 
+Pipe tables use a header row followed by a delimiter row with one or more
+hyphens per column. Outer pipes are optional. Add a colon to the left, right,
+or both ends of a delimiter cell to align that column left, right, or center.
+Pipes escaped with a backslash or enclosed in a code span stay inside their
+cell. Body rows with fewer cells leave empty cells; extra cells are ignored.
+
+```markdown
+Name | Score | Example
+:--- | ---: | :---:
+Ada  | 10    | `a|b`
+```
+
 Three or more matching `-`, `*`, or `_` characters form a thematic break
 (`<hr>`). Spaces or tabs may separate the markers, with up to three leading
 spaces. A line of one or more `=` or `-` markers under paragraph text is a

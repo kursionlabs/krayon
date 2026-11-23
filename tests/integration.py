@@ -3292,6 +3292,48 @@ class BuildTests(unittest.TestCase):
                       'title="Diagram &quot; details">', html)
         self.assertIn('<th>A|B</th>\n<th>C</th>', html)
 
+    def test_markdown_pipe_tables_without_outer_pipes_and_with_alignment(self):
+        (self.site / "src/tables.md").write_text(
+            'Before table.\n'
+            'Name | Score | Note\n'
+            ':--- | ---: | :---:\n'
+            'Ada | 10 | `a|b`\n'
+            'Bob | 7\n'
+            'Eve | 9 | yes | ignored\n\n'
+            'After table.\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/tables/index.html").read_text()
+        self.assertIn('<p>Before table.</p>\n<table>', html)
+        self.assertIn('<th align="left">Name</th>\n'
+                      '<th align="right">Score</th>\n'
+                      '<th align="center">Note</th>', html)
+        self.assertIn('<td align="left">Ada</td>\n'
+                      '<td align="right">10</td>\n'
+                      '<td align="center"><code>a|b</code></td>', html)
+        self.assertIn('<td align="center"></td>', html)
+        self.assertNotIn('ignored', html)
+        self.assertIn('</table>\n<p>After table.</p>', html)
+
+    def test_markdown_pipe_tables_validate_delimiters_and_code_spans(self):
+        slash = chr(92)
+        (self.site / "src/table-validation.md").write_text(
+            f'| A{slash}|B | `x|y` |\n'
+            '| --- | --- |\n'
+            f'| one{slash}|two | ``a|`b`` |\n\n'
+            'Name | Value\n'
+            '--- | nope\n\n'
+            'One | Two\n'
+            '--- | --- | ---\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/table-validation/index.html").read_text()
+        self.assertEqual(html.count('<table>'), 1)
+        self.assertIn('<th>A|B</th>\n<th><code>x|y</code></th>', html)
+        self.assertIn('<td>one|two</td>\n<td><code>a|`b</code></td>', html)
+        self.assertIn('Name | Value', html)
+        self.assertIn('One | Two', html)
+
     def test_inline_code_spans_match_backtick_run_lengths(self):
         tick = chr(96)
         (self.site / "src/code-spans.md").write_text(
