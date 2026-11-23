@@ -2910,6 +2910,61 @@ class BuildTests(unittest.TestCase):
         self.assertIn('<span class="tok-string">&quot;a&amp;b&quot;</span>', html)
         self.assertIn('<code class="language-other">fn &lt;x&gt;', html)
 
+    def test_fenced_code_requires_matching_marker_and_sufficient_length(self):
+        tick = chr(96)
+        (self.site / "src/fences.md").write_text(
+            f'{tick * 4}text\n'
+            f'{tick * 3}\n'
+            f'{tick * 4} trailing text\n'
+            'content\n'
+            f'{tick * 5}  \n'
+            'After fence.\n\n'
+            '~~~kursal\n'
+            'fn answer() -> usize { 42 }\n'
+            f'{tick * 3}\n'
+            '~~~~\n\n'
+            '  ~~~text\n'
+            '  first\n'
+            ' second\n'
+            '   ~~~\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/fences/index.html").read_text()
+        self.assertIn('<pre><code class="language-text">'
+                      '```\n```` trailing text\ncontent\n</code></pre>\n'
+                      '<p>After fence.</p>', html)
+        self.assertIn('<pre><code class="language-kursal">'
+                      '<span class="tok-keyword">fn</span> answer()', html)
+        self.assertIn('42</span> }\n```\n</code></pre>', html)
+        self.assertIn('<pre><code class="language-text">first\nsecond\n'
+                      '</code></pre>', html)
+
+    def test_fenced_code_in_lists_keeps_blank_lines_and_indent(self):
+        tick = chr(96)
+        (self.site / "src/list-fences.md").write_text(
+            '- Parent\n'
+            f'  {tick * 4}\n'
+            f'  {tick * 3}\n'
+            '\n'
+            '  code\n'
+            f'  {tick * 4}\n'
+            '- Sibling\n'
+            '- Nested parent\n'
+            '  - Child\n'
+            '    ~~~~\n'
+            '    ~~~\n'
+            '\n'
+            '    nested code\n'
+            '    ~~~~\n'
+            '  - Nested sibling\n')
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        html = (self.site / "dist/list-fences/index.html").read_text()
+        self.assertIn('<li>Parent<pre><code>```\n\ncode\n</code></pre>\n'
+                      '</li>\n<li>Sibling</li>', html)
+        self.assertIn('<li>Child<pre><code>~~~\n\nnested code\n</code></pre>\n'
+                      '</li>\n<li>Nested sibling</li>', html)
+
     def test_images_blockquotes_and_nested_lists(self):
         (self.site / "src/assets/diagram.svg").write_text(
             '<svg xmlns="http://www.w3.org/2000/svg"></svg>\n')
@@ -3149,7 +3204,7 @@ class BuildTests(unittest.TestCase):
         html = (self.site / "dist/break-boundaries/index.html").read_text()
         self.assertIn('<p>Before blank</p>', html)
         self.assertIn(f'<p>Before heading{slash}</p>\n<h1 id="heading">Heading</h1>', html)
-        self.assertIn('<pre><code>code\n</code></pre>', html)
+        self.assertIn('<pre><code>code  \n</code></pre>', html)
         self.assertIn(f'<p>At end{slash}</p>', html)
         self.assertNotIn('<br>', html)
 

@@ -81,7 +81,7 @@ forall 'k.
 fn paragraph_continues(&cx: Domain!['k], source: Span['k], pos: usize, depth: usize) -> bool {
     if pos >= source.len() { return false; }
     let (line, after) = next_line(&cx, source, pos);
-    if line.is_empty() || starts(&cx, line, "```") || thematic_break(&cx, line) ||
+    if line.is_empty() || fence_open(&cx, line).is_some() || thematic_break(&cx, line) ||
         (depth == 0usize && line.is(&cx, "<!-- more -->")) ||
         quote_line(&cx, line).is_some() || starts(&cx, line, "<") ||
         heading_level(&cx, line) > 0usize { return false; }
@@ -597,6 +597,48 @@ fn quote_line(&cx: Domain!['k], line: Span['k]) -> Option[Span['k]] {
 }
 
 forall 'k.
+fn fence_open(&cx: Domain!['k], line: Span['k]) -> Option[(u8, usize, usize, Span['k])] {
+    var indent = 0usize;
+    while at(&cx, line, indent) == b' ' { indent = indent + 1usize; }
+    if indent > 3usize { return Option::None; }
+    let marker = at(&cx, line, indent);
+    if marker != b'`' && marker != b'~' { return Option::None; }
+    var end = indent;
+    while at(&cx, line, end) == marker { end = end + 1usize; }
+    let width = end - indent;
+    if width < 3usize { return Option::None; }
+    let info = line.slice(end, line.len()).trim(&cx);
+    if marker == b'`' && info.find_byte(&cx, b'`', 0usize).is_some() { return Option::None; }
+    Option::Some.((marker, width, indent, info))
+}
+
+forall 'k.
+fn fence_close(&cx: Domain!['k], line: Span['k], marker: u8, width: usize) -> bool {
+    var indent = 0usize;
+    while at(&cx, line, indent) == b' ' { indent = indent + 1usize; }
+    if indent > 3usize || at(&cx, line, indent) != marker { return false; }
+    var end = indent;
+    while at(&cx, line, end) == marker { end = end + 1usize; }
+    if end - indent < width { return false; }
+    while end < line.len() {
+        let c = at(&cx, line, end);
+        if c != b' ' && c != b'\t' { return false; }
+        end = end + 1usize;
+    }
+    true
+}
+
+forall 'k.
+fn fence_content(&cx: Domain!['k], line: Span['k], indent: usize) -> Span['k] {
+    var removed = 0usize;
+    while removed < indent && at(&cx, line, removed) == b' ' { removed = removed + 1usize; }
+    let content = line.slice(removed, line.len());
+    if content.len() > 0usize && at(&cx, content, content.len() - 1usize) == b'\r' {
+        content.slice(0usize, content.len() - 1usize)
+    } else { content }
+}
+
+forall 'k.
 fn thematic_break(&cx: Domain!['k], line: Span['k]) -> bool {
     var indent = 0usize;
     while at(&cx, line, indent) == b' ' { indent = indent + 1usize; }
@@ -619,7 +661,7 @@ fn paragraph_text_line(&cx: Domain!['k], line: Span['k]) -> bool {
     let text = line.trim(&cx);
     !text.is_empty() && !list_marker(&cx, text).is_some() &&
         !quote_line(&cx, text).is_some() && heading_level(&cx, text) == 0usize &&
-        !thematic_break(&cx, line) && !starts(&cx, text, "```") &&
+        !thematic_break(&cx, line) && !fence_open(&cx, line).is_some() &&
         !starts(&cx, text, "<") && !starts(&cx, text, "| ")
 }
 
@@ -671,7 +713,18 @@ fn loose_list(&cx: Domain!['k], source: Span['k], next: usize,
     indent: usize, content_indent: usize, ordered: bool, first_content: Span['k]) -> bool {
     var pos = next;
     var blank = false;
-    var fenced = starts(&cx, first_content, "```");
+    var fenced = false;
+    var fence_marker = 0u8;
+    var fence_width = 0usize;
+    match fence_open(&cx, first_content) {
+        Some(parts) => {
+            let (marker, width, indent, info) = parts;
+            fenced = true;
+            fence_marker = marker;
+            fence_width = width;
+        },
+        None => (),
+    }
     var lazy_paragraph = item_paragraph_line(&cx, first_content);
     while pos < source.len() {
         let (line, after) = next_line(&cx, source, pos);
@@ -682,11 +735,12 @@ fn loose_list(&cx: Domain!['k], source: Span['k], next: usize,
         else {
             var line_indent = 0usize;
             while at(&cx, line, line_indent) == b' ' { line_indent = line_indent + 1usize; }
-            if fenced {
-                if line_indent >= content_indent && starts(&cx, line.slice(line_indent, line.len()), "```") {
+            if fenced && line_indent >= content_indent {
+                if fence_close(&cx, line.slice(content_indent, line.len()), fence_marker, fence_width) {
                     fenced = false;
                 }
             } else {
+                fenced = false;
                 let marker = list_marker(&cx, line);
                 let same_item_level = match marker {
                     Some(parts) => {
@@ -710,11 +764,15 @@ fn loose_list(&cx: Domain!['k], source: Span['k], next: usize,
                     }
                 } else if line_indent >= content_indent { line.slice(content_indent, line.len()) }
                 else { line };
-                if line_indent >= content_indent && starts(&cx, line.slice(line_indent, line.len()), "```") {
-                    fenced = true;
-                    lazy_paragraph = false;
-                } else {
-                    lazy_paragraph = item_paragraph_line(&cx, content);
+                match fence_open(&cx, content) {
+                    Some(parts) => {
+                        let (opened, width, indent, info) = parts;
+                        fenced = true;
+                        fence_marker = opened;
+                        fence_width = width;
+                        lazy_paragraph = false;
+                    },
+                    None => { lazy_paragraph = item_paragraph_line(&cx, content); },
                 }
             }
         }
@@ -774,7 +832,18 @@ fn render_list(&cx: Domain!['k], source: Span['k], start: usize, links: LinkCont
             body = body.push_bytes(&cx, first_content).push_byte(b'\n');
             pos = after;
             var reading_item = true;
-            var fenced = starts(&cx, first_content, "```");
+            var fenced = false;
+            var fence_marker = 0u8;
+            var fence_width = 0usize;
+            match fence_open(&cx, first_content) {
+                Some(parts) => {
+                    let (marker, width, indent, info) = parts;
+                    fenced = true;
+                    fence_marker = marker;
+                    fence_width = width;
+                },
+                None => (),
+            }
             var lazy_paragraph = item_paragraph_line(&cx, first_content);
             while reading_item && pos < source.len() {
                 let (following, next) = next_line(&cx, source, pos);
@@ -807,12 +876,20 @@ fn render_list(&cx: Domain!['k], source: Span['k], start: usize, links: LinkCont
                         body = body.push_bytes(&cx, content).push_byte(b'\n');
                         pos = next;
                         if fenced {
-                            if starts(&cx, content, "```") { fenced = false; }
+                            if fence_close(&cx, content, fence_marker, fence_width) { fenced = false; }
                             lazy_paragraph = false;
-                        } else if starts(&cx, content, "```") {
-                            fenced = true;
-                            lazy_paragraph = false;
-                        } else { lazy_paragraph = item_paragraph_line(&cx, content); }
+                        } else {
+                            match fence_open(&cx, content) {
+                                Some(parts) => {
+                                    let (opened, width, indent, info) = parts;
+                                    fenced = true;
+                                    fence_marker = opened;
+                                    fence_width = width;
+                                    lazy_paragraph = false;
+                                },
+                                None => { lazy_paragraph = item_paragraph_line(&cx, content); },
+                            }
+                        }
                     }
                 }
             }
@@ -844,6 +921,9 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
     var pending_break = false;
     var code = false;
     var code_lang = empty(&cx);
+    var code_marker = 0u8;
+    var code_width = 0usize;
+    var code_indent = 0usize;
     var table = false;
     var table_body = false;
     while pos < source.len() {
@@ -862,6 +942,7 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
         } else { false };
         let marker = list_marker(&cx, line);
         let quoted = quote_line(&cx, raw);
+        let opening = fence_open(&cx, line);
         let use_marker = match marker {
             Some(parts) => {
                 let (indent, content_start, ordered) = parts;
@@ -869,21 +950,35 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
             },
             None => false,
         };
-        if starts(&cx, line, "```") && !code {
+        if code {
+            if fence_close(&cx, line, code_marker, code_width) {
+                out = out.push_static("</code></pre>\n");
+                code = false;
+                code_lang = empty(&cx);
+            } else {
+                out = out.push_buffer(render_line(&cx, code_lang, fence_content(&cx, raw, code_indent)))
+                    .push_byte(b'\n');
+            }
+        } else if opening.is_some() {
             if paragraph {
                 if !paragraph_compact { out = out.push_static("</p>\n"); }
                 paragraph = false;
             }
             compact_allowed = false;
-            let lang = line.slice(3usize, line.len());
-            code_lang = lang;
+            match opening {
+                Some(parts) => {
+                    let (marker, width, indent, info) = parts;
+                    code_marker = marker;
+                    code_width = width;
+                    code_indent = indent;
+                    code_lang = info;
+                },
+                None => (),
+            }
             out = out.push_static("<pre><code");
-            if !lang.is_empty() { out = html_escape(&cx, out.push_static(" class=\"language-"), lang).push_static("\""); }
+            if !code_lang.is_empty() { out = html_escape(&cx, out.push_static(" class=\"language-"), code_lang).push_static("\""); }
             out = out.push_static(">"); code = true;
-        } else if starts(&cx, line, "```") && code {
-            out = out.push_static("</code></pre>\n"); code = false; code_lang = empty(&cx);
-        } else if code { out = out.push_buffer(render_line(&cx, code_lang, line)).push_byte(b'\n'); }
-        else if thematic_break(&cx, line) {
+        } else if thematic_break(&cx, line) {
             if paragraph {
                 if !paragraph_compact { out = out.push_static("</p>\n"); }
                 paragraph = false;

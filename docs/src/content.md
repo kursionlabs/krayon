@@ -128,6 +128,12 @@ Single-line code spans can use matching runs of one or more backticks. A longer
 delimiter lets the code contain shorter backtick runs. One surrounding space
 is removed when the content begins and ends with a space but is not all spaces.
 
+Fenced code blocks use at least three backticks or tildes. The closing fence
+must use the same marker and be at least as long; shorter runs and lines with
+text after the markers remain code. Fences may have up to three leading spaces,
+which are removed from their content lines when present. Trailing spaces in
+code lines are preserved.
+
 Fenced `kursal` code receives token classes for keywords, types,
 strings, numbers, and comments. Other fence languages remain escaped plain
 text.
