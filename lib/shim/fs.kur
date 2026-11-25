@@ -4,7 +4,7 @@ use std::arena::Domain!;
 use std::fs::{FileKind, metadata, mkdir};
 use std::io::{Error, ErrorKind};
 use std::option::Result;
-use std::raw::Span;
+use std::str::Str;
 
 /// Why a component of `create_dir_all` failed.
 exposed enum CreateDirErrorKind {
@@ -16,12 +16,12 @@ exposed enum CreateDirErrorKind {
 /// The component at which recursive directory creation failed.
 forall 'k.
 exposed struct CreateDirError {
-    path: Span['k],
+    path: Str['k],
     kind: CreateDirErrorKind,
 }
 
 forall 'k.
-fn ensure_component(&cx: Domain!['k], path: Span['k]) -> Result[(), CreateDirError['k]] {
+fn ensure_component(&cx: Domain!['k], path: Str['k]) -> Result[(), CreateDirError['k]] {
     if path.is_empty() { return Result::Ok.(()); }
     match metadata(&cx, path) {
         Ok(info) => match info.kind {
@@ -52,7 +52,7 @@ fn ensure_component(&cx: Domain!['k], path: Span['k]) -> Result[(), CreateDirErr
 /// symlink to a file fails with `NotDirectory`. The function checks each
 /// component in order; another process may still change one between calls.
 forall 'k.
-fn create_dir_all(&cx: Domain!['k], path: Span['k]) -> Result[(), CreateDirError['k]] {
+fn create_dir_all(&cx: Domain!['k], path: Str['k]) -> Result[(), CreateDirError['k]] {
     var i = 1usize;
     while i < path.len() {
         if path.byte_or_zero(&cx, i) == b'/' { ensure_component(&cx, path.slice(0usize, i))?; }

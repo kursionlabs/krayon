@@ -1,14 +1,15 @@
+use std::fmt::Writer;
 use std::arena::Domain!;
 use std::buffer::Buffer!;
-use std::raw::Span;
+use std::str::Str;
 
 // Site URLs are stored without the deployment prefix. Keep fragment,
 // relative, protocol-relative, and external links as written.
 forall 'k.
-fn prefix(&cx: Domain!['k], base: Span['k], target: Span['k]) -> Span['k] {
+fn prefix(&cx: Domain!['k], base: Str['k], target: Str['k]) -> Str['k] {
     if base.is_empty() || target.is_empty() || target.byte_or_zero(&cx, 0usize) != b'/'
         || target.byte_or_zero(&cx, 1usize) == b'/' { return target; }
-    Buffer!::new().push_bytes(&cx, base).push_bytes(&cx, target).save(&cx)
+    Buffer!::new().write(&cx, base).write(&cx, target).save(&cx)
 }
 
 fn letter_or_digit(c: u8) -> bool {
@@ -16,9 +17,9 @@ fn letter_or_digit(c: u8) -> bool {
 }
 
 forall 'k.
-fn valid_origin(&cx: Domain!['k], value: Span['k]) -> bool {
-    let start = if value.starts_with(&cx, Span::from_static(&cx, "https://")) { 8usize }
-        else if value.starts_with(&cx, Span::from_static(&cx, "http://")) { 7usize }
+fn valid_origin(&cx: Domain!['k], value: Str['k]) -> bool {
+    let start = if value.starts_with(&cx, Str::from_static(&cx, "https://")) { 8usize }
+        else if value.starts_with(&cx, Str::from_static(&cx, "http://")) { 7usize }
         else { return false; };
     if start >= value.len() { return false; }
     var i = start;
@@ -63,8 +64,8 @@ fn valid_origin(&cx: Domain!['k], value: Span['k]) -> bool {
 }
 
 forall 'k.
-fn absolute(&cx: Domain!['k], origin: Span['k], base: Span['k], target: Span['k]) -> Span['k] {
+fn absolute(&cx: Domain!['k], origin: Str['k], base: Str['k], target: Str['k]) -> Str['k] {
     if target.is_empty() || target.byte_or_zero(&cx, 0usize) != b'/'
         || target.byte_or_zero(&cx, 1usize) == b'/' { return target; }
-    Buffer!::new().push_bytes(&cx, origin).push_bytes(&cx, prefix(&cx, base, target)).save(&cx)
+    Buffer!::new().write(&cx, origin).write(&cx, prefix(&cx, base, target)).save(&cx)
 }

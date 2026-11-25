@@ -1,9 +1,10 @@
+use std::fmt::Writer;
 use std::arena::Domain!;
 use std::buffer::Buffer!;
 use std::collections::arena_map::ArenaMap;
 use std::collections::arena_vec::ArenaVec;
 use std::option::{Option, Result};
-use std::raw::Span;
+use std::str::Str;
 use std::slice::Slice;
 use url::prefix;
 use highlight::render_line_state;
@@ -11,18 +12,18 @@ use highlight::render_line_state;
 forall 'k.
 exposed struct Heading {
     level: usize,
-    text: Span['k],
-    id: Span['k],
+    text: Str['k],
+    id: Str['k],
 }
 
 forall 'k.
 struct LinkContext {
-    base: Span['k],
-    urls: ArenaMap[Span['k], Span['k], 'k],
-    asset_urls: ArenaMap[Span['k], Span['k], 'k],
+    base: Str['k],
+    urls: ArenaMap[Str['k], Str['k], 'k],
+    asset_urls: ArenaMap[Str['k], Str['k], 'k],
     fingerprint_assets: bool,
-    source: Span['k],
-    rendered_source: Span['k],
+    source: Str['k],
+    rendered_source: Str['k],
     segments: Option[ArenaVec[SourceSegment, 'k]],
     track_sources: bool,
 }
@@ -30,21 +31,21 @@ struct LinkContext {
 struct SourceSegment { start: usize, length: usize, original: usize }
 
 forall 'k.
-fn empty(&cx: Domain!['k]) -> Span['k] { Span::from_static(&cx, "") }
+fn empty(&cx: Domain!['k]) -> Str['k] { Str::from_static(&cx, "") }
 
 forall 'k.
-fn lit(&cx: Domain!['k], s: Slice[u8, 'static]) -> Span['k] { Span::from_static(&cx, s) }
+fn lit(&cx: Domain!['k], s: Str['static]) -> Str['k] { Str::from_static(&cx, s) }
 
 forall 'k.
-fn starts(&cx: Domain!['k], s: Span['k], prefix: Slice[u8, 'static]) -> bool {
+fn starts(&cx: Domain!['k], s: Str['k], prefix: Str['static]) -> bool {
     s.starts_with(&cx, lit(&cx, prefix))
 }
 
 forall 'k.
-fn at(&cx: Domain!['k], s: Span['k], i: usize) -> u8 { s.byte_or_zero(&cx, i) }
+fn at(&cx: Domain!['k], s: Str['k], i: usize) -> u8 { s.byte_or_zero(&cx, i) }
 
 forall 'k.
-fn next_line(&cx: Domain!['k], source: Span['k], start: usize) -> (Span['k], usize) {
+fn next_line(&cx: Domain!['k], source: Str['k], start: usize) -> (Str['k], usize) {
     var i = start;
     while i < source.len() && at(&cx, source, i) != b'\n' { i = i + 1usize; }
     let line = source.slice(start, i).trim_end(&cx);
@@ -52,13 +53,13 @@ fn next_line(&cx: Domain!['k], source: Span['k], start: usize) -> (Span['k], usi
 }
 
 forall 'k.
-fn raw_line(&cx: Domain!['k], source: Span['k], start: usize, next: usize) -> Span['k] {
+fn raw_line(&cx: Domain!['k], source: Str['k], start: usize, next: usize) -> Str['k] {
     let end = if at(&cx, source, next - 1usize) == b'\n' { next - 1usize } else { next };
     source.slice(start, end)
 }
 
 forall 'k.
-fn paragraph_line(&cx: Domain!['k], raw: Span['k], continues: bool) -> (Span['k], bool) {
+fn paragraph_line(&cx: Domain!['k], raw: Str['k], continues: bool) -> (Str['k], bool) {
     let end = if raw.len() > 0usize && at(&cx, raw, raw.len() - 1usize) == b'\r' {
         raw.len() - 1usize
     } else { raw.len() };
@@ -78,7 +79,7 @@ fn paragraph_line(&cx: Domain!['k], raw: Span['k], continues: bool) -> (Span['k]
 }
 
 forall 'k.
-fn paragraph_continues(&cx: Domain!['k], source: Span['k], pos: usize, depth: usize) -> bool {
+fn paragraph_continues(&cx: Domain!['k], source: Str['k], pos: usize, depth: usize) -> bool {
     if pos >= source.len() { return false; }
     let (line, after) = next_line(&cx, source, pos);
     if line.is_empty() || fence_open(&cx, line).is_some() || thematic_break(&cx, line) ||
@@ -100,9 +101,9 @@ fn paragraph_continues(&cx: Domain!['k], source: Span['k], pos: usize, depth: us
 }
 
 forall 'k.
-fn source_path(&cx: Domain!['k], source: Span['k], path: Span['k]) -> Option[Span['k]] {
+fn source_path(&cx: Domain!['k], source: Str['k], path: Str['k]) -> Option[Str['k]] {
     let absolute = at(&cx, path, 0usize) == b'/';
-    let parts: ArenaVec[Span['k], 'k] = ArenaVec::new(&cx);
+    let parts: ArenaVec[Str['k], 'k] = ArenaVec::new(&cx);
     if !absolute {
         var i = 0usize;
         var start = 0usize;
@@ -130,15 +131,15 @@ fn source_path(&cx: Domain!['k], source: Span['k], path: Span['k]) -> Option[Spa
     var key = Buffer!::new();
     i = 0usize;
     while i < parts.len(&cx) {
-        if i > 0usize { key = key.push_byte(b'/'); }
-        key = key.push_bytes(&cx, parts.at(&cx, i));
+        if i > 0usize { key = key.write_byte(b'/'); }
+        key = key.write(&cx, parts.at(&cx, i));
         i = i + 1usize;
     }
     Option::Some.(key.save(&cx))
 }
 
 forall 'k.
-fn source_link(&cx: Domain!['k], links: LinkContext['k], target: Span['k]) -> Span['k] {
+fn source_link(&cx: Domain!['k], links: LinkContext['k], target: Str['k]) -> Str['k] {
     var end = target.len();
     match target.find_byte(&cx, b'?', 0usize) { Option::Some(at) => if at < end { end = at; }, Option::None => (), }
     match target.find_byte(&cx, b'#', 0usize) { Option::Some(at) => if at < end { end = at; }, Option::None => (), }
@@ -151,13 +152,13 @@ fn source_link(&cx: Domain!['k], links: LinkContext['k], target: Span['k]) -> Sp
     };
     match links.urls.get(&cx, key) {
         Some(url) => prefix(&cx, links.base,
-            Buffer!::new().push_bytes(&cx, url).push_bytes(&cx, target.slice(end, target.len())).save(&cx)),
+            Buffer!::new().write(&cx, url).write(&cx, target.slice(end, target.len())).save(&cx)),
         None => asset_link(&cx, links, target),
     }
 }
 
 forall 'k.
-fn asset_link(&cx: Domain!['k], links: LinkContext['k], target: Span['k]) -> Span['k] {
+fn asset_link(&cx: Domain!['k], links: LinkContext['k], target: Str['k]) -> Str['k] {
     if !links.fingerprint_assets { return prefix(&cx, links.base, target); }
     var end = target.len();
     match target.find_byte(&cx, b'?', 0usize) { Option::Some(at) => if at < end { end = at; }, Option::None => (), }
@@ -170,25 +171,25 @@ fn asset_link(&cx: Domain!['k], links: LinkContext['k], target: Span['k]) -> Spa
         Some(found) => found,
         None => return prefix(&cx, links.base, target),
     };
-    let key = Buffer!::new().push_static("/").push_bytes(&cx, relative).save(&cx);
+    let key = Buffer!::new().write_static("/").write(&cx, relative).save(&cx);
     match links.asset_urls.get(&cx, key) {
         Some(url) => prefix(&cx, links.base,
-            Buffer!::new().push_bytes(&cx, url).push_bytes(&cx, target.slice(end, target.len())).save(&cx)),
+            Buffer!::new().write(&cx, url).write(&cx, target.slice(end, target.len())).save(&cx)),
         None => prefix(&cx, links.base, target),
     }
 }
 
 forall 'k.
-fn html_escape(&cx: Domain!['k], out: Buffer!, s: Span['k]) -> Buffer! {
+fn html_escape(&cx: Domain!['k], out: Buffer!, s: Str['k]) -> Buffer! {
     var out = out;
     var i = 0usize;
     while i < s.len() {
         let c = at(&cx, s, i);
-        out = if c == b'&' { out.push_static("&amp;") }
-          else if c == b'<' { out.push_static("&lt;") }
-          else if c == b'>' { out.push_static("&gt;") }
-          else if c == b'"' { out.push_static("&quot;") }
-          else { out.push_byte(c) };
+        out = if c == b'&' { out.write_static("&amp;") }
+          else if c == b'<' { out.write_static("&lt;") }
+          else if c == b'>' { out.write_static("&gt;") }
+          else if c == b'"' { out.write_static("&quot;") }
+          else { out.write_byte(c) };
         i = i + 1usize;
     }
     out
@@ -200,7 +201,7 @@ fn ascii_punctuation(c: u8) -> bool {
 }
 
 forall 'k.
-fn escaped_at(&cx: Domain!['k], s: Span['k], index: usize) -> bool {
+fn escaped_at(&cx: Domain!['k], s: Str['k], index: usize) -> bool {
     var count = 0usize;
     while count < index && at(&cx, s, index - count - 1usize) == b'\\' {
         count = count + 1usize;
@@ -209,7 +210,7 @@ fn escaped_at(&cx: Domain!['k], s: Span['k], index: usize) -> bool {
 }
 
 forall 'k.
-fn find_unescaped(&cx: Domain!['k], s: Span['k], target: u8, start: usize) -> Option[usize] {
+fn find_unescaped(&cx: Domain!['k], s: Str['k], target: u8, start: usize) -> Option[usize] {
     var pos = start;
     while pos < s.len() {
         if at(&cx, s, pos) == target && !escaped_at(&cx, s, pos) { return Option::Some.(pos); }
@@ -219,7 +220,7 @@ fn find_unescaped(&cx: Domain!['k], s: Span['k], target: u8, start: usize) -> Op
 }
 
 forall 'k.
-fn find_unescaped_strong(&cx: Domain!['k], s: Span['k], start: usize) -> Option[usize] {
+fn find_unescaped_strong(&cx: Domain!['k], s: Str['k], start: usize) -> Option[usize] {
     var pos = start;
     while pos + 1usize < s.len() {
         if at(&cx, s, pos) == b'*' && at(&cx, s, pos + 1usize) == b'*' &&
@@ -239,21 +240,21 @@ fn underscore_space(c: u8) -> bool {
 }
 
 forall 'k.
-fn underscore_run(&cx: Domain!['k], s: Span['k], start: usize) -> usize {
+fn underscore_run(&cx: Domain!['k], s: Str['k], start: usize) -> usize {
     var end = start;
     while at(&cx, s, end) == b'_' { end = end + 1usize; }
     end - start
 }
 
 forall 'k.
-fn underscore_open(&cx: Domain!['k], s: Span['k], start: usize, width: usize) -> bool {
+fn underscore_open(&cx: Domain!['k], s: Str['k], start: usize, width: usize) -> bool {
     let previous = if start == 0usize { 0u8 } else { at(&cx, s, start - 1usize) };
     width <= 2usize && !underscore_word(previous) &&
         !underscore_space(at(&cx, s, start + width))
 }
 
 forall 'k.
-fn underscore_close(&cx: Domain!['k], s: Span['k], start: usize, width: usize) -> Option[usize] {
+fn underscore_close(&cx: Domain!['k], s: Str['k], start: usize, width: usize) -> Option[usize] {
     var pos = start;
     while pos < s.len() {
         if at(&cx, s, pos) == b'_' {
@@ -268,15 +269,15 @@ fn underscore_close(&cx: Domain!['k], s: Span['k], start: usize, width: usize) -
 }
 
 forall 'k.
-fn unescape_punctuation(&cx: Domain!['k], s: Span['k]) -> Span['k] {
+fn unescape_punctuation(&cx: Domain!['k], s: Str['k]) -> Str['k] {
     var out = Buffer!::new();
     var pos = 0usize;
     while pos < s.len() {
         if at(&cx, s, pos) == b'\\' && ascii_punctuation(at(&cx, s, pos + 1usize)) {
-            out = out.push_byte(at(&cx, s, pos + 1usize));
+            out = out.write_byte(at(&cx, s, pos + 1usize));
             pos = pos + 2usize;
         } else {
-            out = out.push_byte(at(&cx, s, pos));
+            out = out.write_byte(at(&cx, s, pos));
             pos = pos + 1usize;
         }
     }
@@ -284,14 +285,14 @@ fn unescape_punctuation(&cx: Domain!['k], s: Span['k]) -> Span['k] {
 }
 
 forall 'k.
-fn backtick_run(&cx: Domain!['k], s: Span['k], start: usize) -> usize {
+fn backtick_run(&cx: Domain!['k], s: Str['k], start: usize) -> usize {
     var end = start;
     while at(&cx, s, end) == b'`' { end = end + 1usize; }
     end - start
 }
 
 forall 'k.
-fn code_close(&cx: Domain!['k], s: Span['k], start: usize, width: usize) -> Option[usize] {
+fn code_close(&cx: Domain!['k], s: Str['k], start: usize, width: usize) -> Option[usize] {
     var pos = start;
     while pos < s.len() {
         if at(&cx, s, pos) == b'`' {
@@ -304,7 +305,7 @@ fn code_close(&cx: Domain!['k], s: Span['k], start: usize, width: usize) -> Opti
 }
 
 forall 'k.
-fn code_content(&cx: Domain!['k], s: Span['k]) -> Span['k] {
+fn code_content(&cx: Domain!['k], s: Str['k]) -> Str['k] {
     if s.len() < 2usize || at(&cx, s, 0usize) != b' ' ||
         at(&cx, s, s.len() - 1usize) != b' ' { return s; }
     var pos = 0usize;
@@ -313,7 +314,7 @@ fn code_content(&cx: Domain!['k], s: Span['k]) -> Span['k] {
 }
 
 forall 'k.
-fn original_offset(&cx: Domain!['k], links: LinkContext['k], text: Span['k], index: usize) -> Option[usize] {
+fn original_offset(&cx: Domain!['k], links: LinkContext['k], text: Str['k], index: usize) -> Option[usize] {
     let start = links.rendered_source.address();
     let address = text.address() + index;
     if address < start || address >= start + links.rendered_source.len() { return Option::None; }
@@ -335,16 +336,16 @@ fn original_offset(&cx: Domain!['k], links: LinkContext['k], text: Span['k], ind
 }
 
 forall 'k.
-fn mark_source(&cx: Domain!['k], out: Buffer!, text: Span['k], index: usize, links: LinkContext['k]) -> Buffer! {
+fn mark_source(&cx: Domain!['k], out: Buffer!, text: Str['k], index: usize, links: LinkContext['k]) -> Buffer! {
     if !links.track_sources { return out; }
     match original_offset(&cx, links, text, index) {
-        Some(offset) => out.push_static("<!--krayon-md-source:").push_usize(offset).push_static("-->"),
+        Some(offset) => out.write_static("<!--krayon-md-source:").put(offset).write_static("-->"),
         None => out,
     }
 }
 
 forall 'k.
-fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -> Buffer! {
+fn inline(&cx: Domain!['k], out: Buffer!, s: Str['k], links: LinkContext['k]) -> Buffer! {
     var out = out;
     var i = 0usize;
     while i < s.len() {
@@ -356,11 +357,11 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
             let width = backtick_run(&cx, s, i);
             match code_close(&cx, s, i + width, width) {
                 Some(end) => {
-                    out = html_escape(&cx, out.push_static("<code>"),
-                        code_content(&cx, s.slice(i + width, end))).push_static("</code>");
+                    out = html_escape(&cx, out.write_static("<code>"),
+                        code_content(&cx, s.slice(i + width, end))).write_static("</code>");
                     i = end + width;
                 },
-                None => { out = out.push_bytes(&cx, s.slice(i, i + width)); i = i + width; },
+                None => { out = out.write(&cx, s.slice(i, i + width)); i = i + width; },
             }
         } else if c == b'!' && at(&cx, s, i + 1usize) == b'[' {
             match find_unescaped(&cx, s, b']', i + 2usize) {
@@ -379,23 +380,23 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
                                     None => (),
                                 }
                                 out = mark_source(&cx, out, s, i, links);
-                                out = html_escape(&cx, out.push_static("<img src=\""),
+                                out = html_escape(&cx, out.write_static("<img src=\""),
                                     asset_link(&cx, links, unescape_punctuation(&cx, target)))
-                                    .push_static("\" alt=\"");
+                                    .write_static("\" alt=\"");
                                 out = html_escape(&cx, out, unescape_punctuation(&cx, s.slice(i + 2usize, end)))
-                                    .push_static("\"");
+                                    .write_static("\"");
                                 if !title.is_empty() {
-                                    out = html_escape(&cx, out.push_static(" title=\""),
-                                        unescape_punctuation(&cx, title)).push_static("\"");
+                                    out = html_escape(&cx, out.write_static(" title=\""),
+                                        unescape_punctuation(&cx, title)).write_static("\"");
                                 }
-                                out = out.push_static(">");
+                                out = out.write_static(">");
                                 i = close + 1usize;
                             },
-                            None => { out = out.push_byte(c); i = i + 1usize; },
+                            None => { out = out.write_byte(c); i = i + 1usize; },
                         }
-                    } else { out = out.push_byte(c); i = i + 1usize; }
+                    } else { out = out.write_byte(c); i = i + 1usize; }
                 },
-                None => { out = out.push_byte(c); i = i + 1usize; },
+                None => { out = out.write_byte(c); i = i + 1usize; },
             }
         } else if c == b'[' {
             match find_unescaped(&cx, s, b']', i + 1usize) {
@@ -404,57 +405,57 @@ fn inline(&cx: Domain!['k], out: Buffer!, s: Span['k], links: LinkContext['k]) -
                         match find_unescaped(&cx, s, b')', end + 2usize) {
                             Some(close) => {
                                 out = mark_source(&cx, out, s, i, links);
-                                out = html_escape(&cx, out.push_static("<a href=\""),
+                                out = html_escape(&cx, out.write_static("<a href=\""),
                                     source_link(&cx, links, unescape_punctuation(&cx, s.slice(end + 2usize, close))))
-                                    .push_static("\">");
-                                out = inline(&cx, out, s.slice(i + 1usize, end), links).push_static("</a>");
+                                    .write_static("\">");
+                                out = inline(&cx, out, s.slice(i + 1usize, end), links).write_static("</a>");
                                 i = close + 1usize;
                             },
-                            None => { out = out.push_byte(c); i = i + 1usize; },
+                            None => { out = out.write_byte(c); i = i + 1usize; },
                         }
-                    } else { out = out.push_byte(c); i = i + 1usize; }
+                    } else { out = out.write_byte(c); i = i + 1usize; }
                 },
-                None => { out = out.push_byte(c); i = i + 1usize; },
+                None => { out = out.write_byte(c); i = i + 1usize; },
             }
         } else if c == b'*' && at(&cx, s, i + 1usize) == b'*' {
             match find_unescaped_strong(&cx, s, i + 2usize) {
                 Some(end) => {
-                    out = inline(&cx, out.push_static("<strong>"), s.slice(i + 2usize, end), links).push_static("</strong>");
+                    out = inline(&cx, out.write_static("<strong>"), s.slice(i + 2usize, end), links).write_static("</strong>");
                     i = end + 2usize;
                 },
-                None => { out = out.push_byte(c); i = i + 1usize; },
+                None => { out = out.write_byte(c); i = i + 1usize; },
             }
         } else if c == b'*' {
             match find_unescaped(&cx, s, b'*', i + 1usize) {
                 Some(end) => {
-                    out = inline(&cx, out.push_static("<em>"), s.slice(i + 1usize, end), links).push_static("</em>");
+                    out = inline(&cx, out.write_static("<em>"), s.slice(i + 1usize, end), links).write_static("</em>");
                     i = end + 1usize;
                 },
-                None => { out = out.push_byte(c); i = i + 1usize; },
+                None => { out = out.write_byte(c); i = i + 1usize; },
             }
         } else if c == b'_' {
             let width = underscore_run(&cx, s, i);
             if underscore_open(&cx, s, i, width) {
                 match underscore_close(&cx, s, i + width, width) {
                     Some(end) => {
-                        out = inline(&cx, out.push_static(if width == 2usize { "<strong>" } else { "<em>" }),
+                        out = inline(&cx, out.write_static(if width == 2usize { "<strong>" } else { "<em>" }),
                             s.slice(i + width, end), links)
-                            .push_static(if width == 2usize { "</strong>" } else { "</em>" });
+                            .write_static(if width == 2usize { "</strong>" } else { "</em>" });
                         i = end + width;
                     },
-                    None => { out = out.push_bytes(&cx, s.slice(i, i + width)); i = i + width; },
+                    None => { out = out.write(&cx, s.slice(i, i + width)); i = i + width; },
                 }
-            } else { out = out.push_bytes(&cx, s.slice(i, i + width)); i = i + width; }
+            } else { out = out.write(&cx, s.slice(i, i + width)); i = i + width; }
         } else if c == b'&' || c == b'<' || c == b'>' {
             out = html_escape(&cx, out, s.slice(i, i + 1usize));
             i = i + 1usize;
-        } else { out = out.push_byte(c); i = i + 1usize; }
+        } else { out = out.write_byte(c); i = i + 1usize; }
     }
     out
 }
 
 forall 'k.
-fn table_cells(&cx: Domain!['k], line: Span['k]) -> (ArenaVec[Span['k], 'k], bool) {
+fn table_cells(&cx: Domain!['k], line: Str['k]) -> (ArenaVec[Str['k], 'k], bool) {
     let text = line.trim(&cx);
     let cells = ArenaVec::new(&cx);
     var start = 0usize;
@@ -486,7 +487,7 @@ fn table_cells(&cx: Domain!['k], line: Span['k]) -> (ArenaVec[Span['k], 'k], boo
 }
 
 forall 'k.
-fn table_delimiter(&cx: Domain!['k], header: Span['k], delimiter: Span['k])
+fn table_delimiter(&cx: Domain!['k], header: Str['k], delimiter: Str['k])
     -> Option[ArenaVec[u8, 'k]] {
     let (headers, header_pipe) = table_cells(&cx, header);
     let (markers, marker_pipe) = table_cells(&cx, delimiter);
@@ -516,34 +517,34 @@ fn table_delimiter(&cx: Domain!['k], header: Span['k], delimiter: Span['k])
 }
 
 forall 'k.
-fn table_row(&cx: Domain!['k], out: Buffer!, line: Span['k], header: bool,
+fn table_row(&cx: Domain!['k], out: Buffer!, line: Str['k], header: bool,
     aligns: ArenaVec[u8, 'k], links: LinkContext['k]) -> Buffer! {
-    var out = out.push_static("<tr>\n");
+    var out = out.write_static("<tr>\n");
     let (cells, has_pipe) = table_cells(&cx, line);
     var i = 0usize;
     while i < aligns.len(&cx) {
-        out = out.push_static(if header { "<th" } else { "<td" });
+        out = out.write_static(if header { "<th" } else { "<td" });
         let align = aligns.at(&cx, i);
-        if align == b'l' { out = out.push_static(" align=\"left\""); }
-        else if align == b'r' { out = out.push_static(" align=\"right\""); }
-        else if align == b'c' { out = out.push_static(" align=\"center\""); }
-        out = out.push_static(">");
+        if align == b'l' { out = out.write_static(" align=\"left\""); }
+        else if align == b'r' { out = out.write_static(" align=\"right\""); }
+        else if align == b'c' { out = out.write_static(" align=\"center\""); }
+        out = out.write_static(">");
         if i < cells.len(&cx) { out = inline(&cx, out, cells.at(&cx, i), links); }
-        out = out.push_static(if header { "</th>\n" } else { "</td>\n" });
+        out = out.write_static(if header { "</th>\n" } else { "</td>\n" });
         i = i + 1usize;
     }
-    out.push_static("</tr>\n")
+    out.write_static("</tr>\n")
 }
 
 forall 'k.
-fn heading_level(&cx: Domain!['k], line: Span['k]) -> usize {
+fn heading_level(&cx: Domain!['k], line: Str['k]) -> usize {
     var level = 0usize;
     while level < 6usize && at(&cx, line, level) == b'#' { level = level + 1usize; }
     if level > 0usize && at(&cx, line, level) == b' ' { level } else { 0usize }
 }
 
 forall 'k.
-fn attr_name(&cx: Domain!['k], name: Span['k]) -> bool {
+fn attr_name(&cx: Domain!['k], name: Str['k]) -> bool {
     if name.is_empty() { return false; }
     var i = 0usize;
     while i < name.len() {
@@ -556,7 +557,7 @@ fn attr_name(&cx: Domain!['k], name: Span['k]) -> bool {
 }
 
 forall 'k.
-fn heading_text(&cx: Domain!['k], source: Span['k]) -> Span['k] {
+fn heading_text(&cx: Domain!['k], source: Str['k]) -> Str['k] {
     var out = Buffer!::new();
     var i = 0usize;
     while i < source.len() {
@@ -566,17 +567,17 @@ fn heading_text(&cx: Domain!['k], source: Span['k]) -> Span['k] {
             let width = backtick_run(&cx, source, i);
             match code_close(&cx, source, i + width, width) {
                 Some(end) => {
-                    out = out.push_bytes(&cx, code_content(&cx, source.slice(i + width, end)));
+                    out = out.write(&cx, code_content(&cx, source.slice(i + width, end)));
                     i = end + width;
                 },
                 None => {
-                    out = out.push_bytes(&cx, source.slice(i, i + width));
+                    out = out.write(&cx, source.slice(i, i + width));
                     i = i + width;
                 },
             }
         }
         else if c == b'\\' && ascii_punctuation(at(&cx, source, i + 1usize)) {
-            out = out.push_byte(at(&cx, source, i + 1usize));
+            out = out.write_byte(at(&cx, source, i + 1usize));
             i = i + 2usize;
         }
         else if at(&cx, source, opening) == b'[' {
@@ -584,13 +585,13 @@ fn heading_text(&cx: Domain!['k], source: Span['k]) -> Span['k] {
                 Some(end) => if at(&cx, source, end + 1usize) == b'(' {
                     match find_unescaped(&cx, source, b')', end + 2usize) {
                         Some(close) => {
-                            out = out.push_bytes(&cx, heading_text(&cx, source.slice(opening + 1usize, end)));
+                            out = out.write(&cx, heading_text(&cx, source.slice(opening + 1usize, end)));
                             i = close + 1usize;
                         },
-                        None => { out = out.push_byte(c); i = i + 1usize; },
+                        None => { out = out.write_byte(c); i = i + 1usize; },
                     }
-                } else { out = out.push_byte(c); i = i + 1usize; },
-                None => { out = out.push_byte(c); i = i + 1usize; },
+                } else { out = out.write_byte(c); i = i + 1usize; },
+                None => { out = out.write_byte(c); i = i + 1usize; },
             }
         } else if c == b'*' { i = i + 1usize; }
         else if c == b'_' {
@@ -598,20 +599,20 @@ fn heading_text(&cx: Domain!['k], source: Span['k]) -> Span['k] {
             if underscore_open(&cx, source, i, width) {
                 match underscore_close(&cx, source, i + width, width) {
                     Some(end) => {
-                        out = out.push_bytes(&cx, heading_text(&cx, source.slice(i + width, end)));
+                        out = out.write(&cx, heading_text(&cx, source.slice(i + width, end)));
                         i = end + width;
                     },
-                    None => { out = out.push_bytes(&cx, source.slice(i, i + width)); i = i + width; },
+                    None => { out = out.write(&cx, source.slice(i, i + width)); i = i + width; },
                 }
-            } else { out = out.push_bytes(&cx, source.slice(i, i + width)); i = i + width; }
+            } else { out = out.write(&cx, source.slice(i, i + width)); i = i + width; }
         }
-        else { out = out.push_byte(c); i = i + 1usize; }
+        else { out = out.write_byte(c); i = i + 1usize; }
     }
     out.save(&cx)
 }
 
 forall 'k.
-fn heading_slug(&cx: Domain!['k], text: Span['k]) -> Span['k] {
+fn heading_slug(&cx: Domain!['k], text: Str['k]) -> Str['k] {
     var out = Buffer!::new();
     var pending_dash = false;
     var written = false;
@@ -621,8 +622,8 @@ fn heading_slug(&cx: Domain!['k], text: Span['k]) -> Span['k] {
         let letter = (c >= b'a' && c <= b'z') || (c >= b'A' && c <= b'Z');
         let digit = c >= b'0' && c <= b'9';
         if letter || digit || c >= 128u8 {
-            if pending_dash && written { out = out.push_byte(b'-'); }
-            out = out.push_byte(if c >= b'A' && c <= b'Z' { c + 32u8 } else { c });
+            if pending_dash && written { out = out.write_byte(b'-'); }
+            out = out.write_byte(if c >= b'A' && c <= b'Z' { c + 32u8 } else { c });
             written = true;
             pending_dash = false;
         } else if c == b' ' || c == b'\t' || c == b'-' || c == b'_' { pending_dash = true; }
@@ -632,8 +633,8 @@ fn heading_slug(&cx: Domain!['k], text: Span['k]) -> Span['k] {
 }
 
 forall 'k.
-fn heading(&cx: Domain!['k], out: Buffer!, content: Span['k], mark: Span['k], level: usize,
-    ids: ArenaMap[Span['k], bool, 'k], headings: ArenaVec[Heading['k], 'k], links: LinkContext['k]) -> Result[Buffer!, Span['k]] {
+fn heading(&cx: Domain!['k], out: Buffer!, content: Str['k], mark: Str['k], level: usize,
+    ids: ArenaMap[Str['k], bool, 'k], headings: ArenaVec[Heading['k], 'k], links: LinkContext['k]) -> Result[Buffer!, Str['k]] {
     var out = out;
     var text = content;
     var id = empty(&cx);
@@ -660,8 +661,8 @@ fn heading(&cx: Domain!['k], out: Buffer!, content: Span['k], mark: Span['k], le
                             if !id.is_empty() { classes.destroy(); out.destroy(); return Result::Err.(lit(&cx, "duplicate heading ID attribute")); }
                             id = value;
                         } else {
-                            if has_class { classes = classes.push_byte(b' '); }
-                            classes = classes.push_bytes(&cx, value);
+                            if has_class { classes = classes.write_byte(b' '); }
+                            classes = classes.write(&cx, value);
                             has_class = true;
                         }
                         pos = end;
@@ -679,22 +680,22 @@ fn heading(&cx: Domain!['k], out: Buffer!, content: Span['k], mark: Span['k], le
         id = slug;
         var number = 2usize;
         while ids.contains(&cx, id) {
-            id = Buffer!::new().push_bytes(&cx, slug).push_byte(b'-').push_usize(number).save(&cx);
+            id = Buffer!::new().write(&cx, slug).write_byte(b'-').put(number).save(&cx);
             number = number + 1usize;
         }
     }
     ids.insert(&cx, id, true);
     headings.push(&cx, Heading.{ level, text: plain, id });
     out = mark_source(&cx, out, mark, 0usize, links);
-    out = out.push_static("<h").push_usize(level);
-    out = out.push_static(" id=\"").push_bytes(&cx, id).push_static("\"");
+    out = out.write_static("<h").put(level);
+    out = out.write_static(" id=\"").write(&cx, id).write_static("\"");
     let class_text = classes.save(&cx);
-    if !class_text.is_empty() { out = out.push_static(" class=\"").push_bytes(&cx, class_text).push_static("\""); }
-    Result::Ok.(inline(&cx, out.push_static(">"), text, links).push_static("</h").push_usize(level).push_static(">\n"))
+    if !class_text.is_empty() { out = out.write_static(" class=\"").write(&cx, class_text).write_static("\""); }
+    Result::Ok.(inline(&cx, out.write_static(">"), text, links).write_static("</h").put(level).write_static(">\n"))
 }
 
 forall 'k.
-fn ordered_marker(&cx: Domain!['k], line: Span['k]) -> usize {
+fn ordered_marker(&cx: Domain!['k], line: Str['k]) -> usize {
     var i = 0usize;
     while at(&cx, line, i) >= b'0' && at(&cx, line, i) <= b'9' { i = i + 1usize; }
     if i > 0usize && at(&cx, line, i) == b'.' && at(&cx, line, i + 1usize) == b' ' { i + 2usize }
@@ -702,7 +703,7 @@ fn ordered_marker(&cx: Domain!['k], line: Span['k]) -> usize {
 }
 
 forall 'k.
-fn list_marker(&cx: Domain!['k], line: Span['k]) -> Option[(usize, usize, bool)] {
+fn list_marker(&cx: Domain!['k], line: Str['k]) -> Option[(usize, usize, bool)] {
     var indent = 0usize;
     while at(&cx, line, indent) == b' ' { indent = indent + 1usize; }
     let marker = line.slice(indent, line.len());
@@ -716,7 +717,7 @@ fn list_marker(&cx: Domain!['k], line: Span['k]) -> Option[(usize, usize, bool)]
 }
 
 forall 'k.
-fn quote_line(&cx: Domain!['k], line: Span['k]) -> Option[Span['k]] {
+fn quote_line(&cx: Domain!['k], line: Str['k]) -> Option[Str['k]] {
     var indent = 0usize;
     while indent < 4usize && at(&cx, line, indent) == b' ' { indent = indent + 1usize; }
     if indent > 3usize || at(&cx, line, indent) != b'>' { return Option::None; }
@@ -725,7 +726,7 @@ fn quote_line(&cx: Domain!['k], line: Span['k]) -> Option[Span['k]] {
 }
 
 forall 'k.
-fn fence_open(&cx: Domain!['k], line: Span['k]) -> Option[(u8, usize, usize, Span['k])] {
+fn fence_open(&cx: Domain!['k], line: Str['k]) -> Option[(u8, usize, usize, Str['k])] {
     var indent = 0usize;
     while at(&cx, line, indent) == b' ' { indent = indent + 1usize; }
     if indent > 3usize { return Option::None; }
@@ -741,7 +742,7 @@ fn fence_open(&cx: Domain!['k], line: Span['k]) -> Option[(u8, usize, usize, Spa
 }
 
 forall 'k.
-fn fence_close(&cx: Domain!['k], line: Span['k], marker: u8, width: usize) -> bool {
+fn fence_close(&cx: Domain!['k], line: Str['k], marker: u8, width: usize) -> bool {
     var indent = 0usize;
     while at(&cx, line, indent) == b' ' { indent = indent + 1usize; }
     if indent > 3usize || at(&cx, line, indent) != marker { return false; }
@@ -757,7 +758,7 @@ fn fence_close(&cx: Domain!['k], line: Span['k], marker: u8, width: usize) -> bo
 }
 
 forall 'k.
-fn fence_content(&cx: Domain!['k], line: Span['k], indent: usize) -> Span['k] {
+fn fence_content(&cx: Domain!['k], line: Str['k], indent: usize) -> Str['k] {
     var removed = 0usize;
     while removed < indent && at(&cx, line, removed) == b' ' { removed = removed + 1usize; }
     let content = line.slice(removed, line.len());
@@ -767,14 +768,14 @@ fn fence_content(&cx: Domain!['k], line: Span['k], indent: usize) -> Span['k] {
 }
 
 forall 'k.
-fn indented_code(&cx: Domain!['k], line: Span['k]) -> bool {
+fn indented_code(&cx: Domain!['k], line: Str['k]) -> bool {
     line.len() >= 4usize && at(&cx, line, 0usize) == b' ' &&
         at(&cx, line, 1usize) == b' ' && at(&cx, line, 2usize) == b' ' &&
         at(&cx, line, 3usize) == b' ' && !line.trim(&cx).is_empty()
 }
 
 forall 'k.
-fn thematic_break(&cx: Domain!['k], line: Span['k]) -> bool {
+fn thematic_break(&cx: Domain!['k], line: Str['k]) -> bool {
     var indent = 0usize;
     while at(&cx, line, indent) == b' ' { indent = indent + 1usize; }
     if indent > 3usize { return false; }
@@ -792,7 +793,7 @@ fn thematic_break(&cx: Domain!['k], line: Span['k]) -> bool {
 }
 
 forall 'k.
-fn paragraph_text_line(&cx: Domain!['k], line: Span['k]) -> bool {
+fn paragraph_text_line(&cx: Domain!['k], line: Str['k]) -> bool {
     let text = line.trim(&cx);
     !text.is_empty() && !list_marker(&cx, text).is_some() &&
         !quote_line(&cx, text).is_some() && heading_level(&cx, text) == 0usize &&
@@ -801,7 +802,7 @@ fn paragraph_text_line(&cx: Domain!['k], line: Span['k]) -> bool {
 }
 
 forall 'k.
-fn setext_level(&cx: Domain!['k], line: Span['k]) -> usize {
+fn setext_level(&cx: Domain!['k], line: Str['k]) -> usize {
     var indent = 0usize;
     while at(&cx, line, indent) == b' ' { indent = indent + 1usize; }
     if indent > 3usize { return 0usize; }
@@ -818,7 +819,7 @@ fn setext_level(&cx: Domain!['k], line: Span['k]) -> usize {
 }
 
 forall 'k.
-fn setext_after(&cx: Domain!['k], source: Span['k], next: usize) -> Option[(usize, usize, usize)] {
+fn setext_after(&cx: Domain!['k], source: Str['k], next: usize) -> Option[(usize, usize, usize)] {
     var pos = next;
     while pos < source.len() {
         let (line, after) = next_line(&cx, source, pos);
@@ -831,7 +832,7 @@ fn setext_after(&cx: Domain!['k], source: Span['k], next: usize) -> Option[(usiz
 }
 
 forall 'k.
-fn item_paragraph_line(&cx: Domain!['k], line: Span['k]) -> bool {
+fn item_paragraph_line(&cx: Domain!['k], line: Str['k]) -> bool {
     match list_marker(&cx, line) {
         Some(parts) => {
             let (indent, content_start, ordered) = parts;
@@ -844,8 +845,8 @@ fn item_paragraph_line(&cx: Domain!['k], line: Span['k]) -> bool {
 // A blank line between items or between blocks in an item makes the whole
 // list loose, including items that precede the blank line.
 forall 'k.
-fn loose_list(&cx: Domain!['k], source: Span['k], next: usize,
-    indent: usize, content_indent: usize, ordered: bool, first_content: Span['k]) -> bool {
+fn loose_list(&cx: Domain!['k], source: Str['k], next: usize,
+    indent: usize, content_indent: usize, ordered: bool, first_content: Str['k]) -> bool {
     var pos = next;
     var blank = false;
     var fenced = false;
@@ -916,9 +917,9 @@ fn loose_list(&cx: Domain!['k], source: Span['k], next: usize,
 }
 
 forall 'k.
-fn render_list(&cx: Domain!['k], source: Span['k], start: usize, links: LinkContext['k],
-    ids: ArenaMap[Span['k], bool, 'k], headings: ArenaVec[Heading['k], 'k], depth: usize)
-    -> Result[(Buffer!, usize), Span['k]] {
+fn render_list(&cx: Domain!['k], source: Str['k], start: usize, links: LinkContext['k],
+    ids: ArenaMap[Str['k], bool, 'k], headings: ArenaVec[Heading['k], 'k], depth: usize)
+    -> Result[(Buffer!, usize), Str['k]] {
     let (first, first_after) = next_line(&cx, source, start);
     let (indent, content_indent, ordered) = match list_marker(&cx, first) {
         Some(parts) => parts,
@@ -928,13 +929,13 @@ fn render_list(&cx: Domain!['k], source: Span['k], start: usize, links: LinkCont
         first.slice(content_indent, first.len()));
     var out = Buffer!::new();
     if ordered {
-        out = out.push_static("<ol");
+        out = out.write_static("<ol");
         let start_number = first.slice(indent, content_indent - 2usize);
         if !start_number.is(&cx, "1") {
-            out = out.push_static(" start=\"").push_bytes(&cx, start_number).push_static("\"");
+            out = out.write_static(" start=\"").write(&cx, start_number).write_static("\"");
         }
-        out = out.push_static(">\n");
-    } else { out = out.push_static("<ul>\n"); }
+        out = out.write_static(">\n");
+    } else { out = out.write_static("<ul>\n"); }
     var pos = start;
     var gathering = true;
     while gathering && pos < source.len() {
@@ -964,7 +965,7 @@ fn render_list(&cx: Domain!['k], source: Span['k], start: usize, links: LinkCont
                 Some(offset) => segments.push(&cx, SourceSegment.{ start: 0usize, length: first_content.len(), original: offset }),
                 None => (),
             }
-            body = body.push_bytes(&cx, first_content).push_byte(b'\n');
+            body = body.write(&cx, first_content).write_byte(b'\n');
             pos = after;
             var reading_item = true;
             var fenced = false;
@@ -983,7 +984,7 @@ fn render_list(&cx: Domain!['k], source: Span['k], start: usize, links: LinkCont
             while reading_item && pos < source.len() {
                 let (following, next) = next_line(&cx, source, pos);
                 if following.is_empty() {
-                    body = body.push_byte(b'\n');
+                    body = body.write_byte(b'\n');
                     pos = next;
                     if !fenced { lazy_paragraph = false; }
                 } else {
@@ -1008,7 +1009,7 @@ fn render_list(&cx: Domain!['k], source: Span['k], start: usize, links: LinkCont
                             Some(offset) => segments.push(&cx, SourceSegment.{ start: &body.len(), length: content.len(), original: offset }),
                             None => (),
                         }
-                        body = body.push_bytes(&cx, content).push_byte(b'\n');
+                        body = body.write(&cx, content).write_byte(b'\n');
                         pos = next;
                         if fenced {
                             if fence_close(&cx, content, fence_marker, fence_width) { fenced = false; }
@@ -1036,17 +1037,17 @@ fn render_list(&cx: Domain!['k], source: Span['k], start: usize, links: LinkCont
                 Ok(html) => html,
                 Err(message) => { out.destroy(); return Result::Err.(message); },
             };
-            out = out.push_static("<li>").push_buffer(inner).push_static("</li>\n");
+            out = out.write_static("<li>").put(inner).write_static("</li>\n");
         }
     }
-    out = out.push_static(if ordered { "</ol>\n" } else { "</ul>\n" });
+    out = out.write_static(if ordered { "</ol>\n" } else { "</ul>\n" });
     Result::Ok.((out, pos))
 }
 
 forall 'k.
-fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
-    ids: ArenaMap[Span['k], bool, 'k], headings: ArenaVec[Heading['k], 'k], depth: usize,
-    tight_item: bool) -> Result[Buffer!, Span['k]] {
+fn render_blocks(&cx: Domain!['k], source: Str['k], links: LinkContext['k],
+    ids: ArenaMap[Str['k], bool, 'k], headings: ArenaVec[Heading['k], 'k], depth: usize,
+    tight_item: bool) -> Result[Buffer!, Str['k]] {
     if depth >= 32usize { return Result::Err.(lit(&cx, "Markdown containers nested too deeply")); }
     var out = Buffer!::new();
     var pos = 0usize;
@@ -1080,7 +1081,7 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
         if table && (line.is_empty() || opening.is_some() || thematic_break(&cx, line) ||
             (depth == 0usize && line.is(&cx, "<!-- more -->")) || quoted.is_some() ||
             starts(&cx, line, "<") || heading_level(&cx, line) > 0usize || use_marker) {
-            out = out.push_static("</tbody>\n</table>\n");
+            out = out.write_static("</tbody>\n</table>\n");
             table = false;
         }
         let table_start = if !table && !indented_code(&cx, raw) && pos < source.len() {
@@ -1092,7 +1093,7 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
         } else { Option::None };
         if code {
             if fence_close(&cx, line, code_marker, code_width) {
-                out = out.push_static("</code></pre>\n");
+                out = out.write_static("</code></pre>\n");
                 code = false;
                 code_lang = empty(&cx);
                 code_comment = false;
@@ -1100,11 +1101,11 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
                 let (rendered, next_comment) = render_line_state(&cx, code_lang,
                     fence_content(&cx, raw, code_indent), code_comment);
                 code_comment = next_comment;
-                out = out.push_buffer(rendered).push_byte(b'\n');
+                out = out.put(rendered).write_byte(b'\n');
             }
         } else if opening.is_some() {
             if paragraph {
-                if !paragraph_compact { out = out.push_static("</p>\n"); }
+                if !paragraph_compact { out = out.write_static("</p>\n"); }
                 paragraph = false;
             }
             compact_allowed = false;
@@ -1118,14 +1119,14 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
                 },
                 None => (),
             }
-            out = out.push_static("<pre><code");
-            if !code_lang.is_empty() { out = html_escape(&cx, out.push_static(" class=\"language-"), code_lang).push_static("\""); }
-            out = out.push_static(">"); code = true;
+            out = out.write_static("<pre><code");
+            if !code_lang.is_empty() { out = html_escape(&cx, out.write_static(" class=\"language-"), code_lang).write_static("\""); }
+            out = out.write_static(">"); code = true;
             code_comment = false;
         } else if !paragraph && !table && indented_code(&cx, raw) {
             compact_allowed = false;
-            out = html_escape(&cx, out.push_static("<pre><code>"),
-                fence_content(&cx, raw.slice(4usize, raw.len()), 0usize)).push_byte(b'\n');
+            out = html_escape(&cx, out.write_static("<pre><code>"),
+                fence_content(&cx, raw.slice(4usize, raw.len()), 0usize)).write_byte(b'\n');
             var pending_blank = 0usize;
             var gathering = true;
             while gathering && pos < source.len() {
@@ -1137,40 +1138,40 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
                     let following_raw = raw_line(&cx, source, pos, after);
                     if indented_code(&cx, following_raw) {
                         while pending_blank > 0usize {
-                            out = out.push_byte(b'\n');
+                            out = out.write_byte(b'\n');
                             pending_blank = pending_blank - 1usize;
                         }
                         out = html_escape(&cx, out,
                             fence_content(&cx, following_raw.slice(4usize, following_raw.len()), 0usize))
-                            .push_byte(b'\n');
+                            .write_byte(b'\n');
                         pos = after;
                     } else { gathering = false; }
                 }
             }
-            out = out.push_static("</code></pre>\n");
+            out = out.write_static("</code></pre>\n");
         } else if thematic_break(&cx, line) {
             if paragraph {
-                if !paragraph_compact { out = out.push_static("</p>\n"); }
+                if !paragraph_compact { out = out.write_static("</p>\n"); }
                 paragraph = false;
             }
             compact_allowed = false;
-            out = out.push_static("<hr>\n");
+            out = out.write_static("<hr>\n");
         }
         else if depth == 0usize && line.is(&cx, "<!-- more -->") {
             if paragraph {
-                if !paragraph_compact { out = out.push_static("</p>\n"); }
+                if !paragraph_compact { out = out.write_static("</p>\n"); }
                 paragraph = false;
             }
             compact_allowed = false;
         }
         else if line.is_empty() {
             if paragraph {
-                if !paragraph_compact { out = out.push_static("</p>\n"); }
+                if !paragraph_compact { out = out.write_static("</p>\n"); }
                 paragraph = false;
             }
         } else if quoted.is_some() {
             if paragraph {
-                if !paragraph_compact { out = out.push_static("</p>\n"); }
+                if !paragraph_compact { out = out.write_static("</p>\n"); }
                 paragraph = false;
             }
             compact_allowed = false;
@@ -1182,7 +1183,7 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
                         Some(offset) => segments.push(&cx, SourceSegment.{ start: &quote.len(), length: content.len(), original: offset }),
                         None => (),
                     }
-                    quote = quote.push_bytes(&cx, content).push_byte(b'\n');
+                    quote = quote.write(&cx, content).write_byte(b'\n');
                 },
                 None => (),
             }
@@ -1196,7 +1197,7 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
                             Some(offset) => segments.push(&cx, SourceSegment.{ start: &quote.len(), length: content.len(), original: offset }),
                             None => (),
                         }
-                        quote = quote.push_bytes(&cx, content).push_byte(b'\n');
+                        quote = quote.write(&cx, content).write_byte(b'\n');
                         pos = after;
                     },
                     None => { gathering = false; },
@@ -1210,17 +1211,17 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
                 Ok(html) => html,
                 Err(message) => { out.destroy(); return Result::Err.(message); },
             };
-            out = out.push_static("<blockquote>\n").push_buffer(inner).push_static("</blockquote>\n");
+            out = out.write_static("<blockquote>\n").put(inner).write_static("</blockquote>\n");
         } else if starts(&cx, line, "<") {
             if paragraph {
-                if !paragraph_compact { out = out.push_static("</p>\n"); }
+                if !paragraph_compact { out = out.write_static("</p>\n"); }
                 paragraph = false;
             }
             compact_allowed = false;
-            out = out.push_bytes(&cx, line).push_byte(b'\n');
+            out = out.write(&cx, line).write_byte(b'\n');
         } else if heading_level(&cx, line) > 0usize {
             if paragraph {
-                if !paragraph_compact { out = out.push_static("</p>\n"); }
+                if !paragraph_compact { out = out.write_static("</p>\n"); }
                 paragraph = false;
             }
             compact_allowed = false;
@@ -1232,7 +1233,7 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
             };
         } else if use_marker {
             if paragraph {
-                if !paragraph_compact { out = out.push_static("</p>\n"); }
+                if !paragraph_compact { out = out.write_static("</p>\n"); }
                 paragraph = false;
             }
             compact_allowed = false;
@@ -1241,11 +1242,11 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
                 Ok(rendered) => rendered,
                 Err(message) => { out.destroy(); return Result::Err.(message); },
             };
-            out = out.push_buffer(list);
+            out = out.put(list);
             pos = after_list;
         } else if table || table_start.is_some() {
             if paragraph {
-                if !paragraph_compact { out = out.push_static("</p>\n"); }
+                if !paragraph_compact { out = out.write_static("</p>\n"); }
                 paragraph = false;
             }
             compact_allowed = false;
@@ -1255,8 +1256,8 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
                     Some(parts) => {
                         let (aligns, after) = parts;
                         table_aligns = aligns;
-                        out = table_row(&cx, out.push_static("<table>\n<thead>\n"), line,
-                            true, table_aligns, links).push_static("</thead>\n<tbody>\n");
+                        out = table_row(&cx, out.write_static("<table>\n<thead>\n"), line,
+                            true, table_aligns, links).write_static("</thead>\n<tbody>\n");
                         table = true;
                         pos = after;
                     },
@@ -1274,12 +1275,12 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
                     while scan < underline_start {
                         let (part, after) = next_line(&cx, source, scan);
                         let content = raw_line(&cx, source, scan, after).trim(&cx);
-                        if scan > line_start { joined = joined.push_byte(b' '); }
+                        if scan > line_start { joined = joined.write_byte(b' '); }
                         match original_offset(&cx, links, content, 0usize) {
                             Some(offset) => segments.push(&cx, SourceSegment.{ start: &joined.len(), length: content.len(), original: offset }),
                             None => (),
                         }
-                        joined = joined.push_bytes(&cx, content);
+                        joined = joined.write(&cx, content);
                         scan = after;
                     }
                     let heading_source = joined.save(&cx);
@@ -1297,11 +1298,11 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
                 None => {
                     if !paragraph {
                         paragraph_compact = compact_allowed;
-                        if !paragraph_compact { out = out.push_static("<p>"); }
+                        if !paragraph_compact { out = out.write_static("<p>"); }
                         paragraph = true;
                         compact_allowed = false;
-                    } else if pending_break { out = out.push_static("<br>\n"); }
-                    else { out = out.push_byte(b' '); }
+                    } else if pending_break { out = out.write_static("<br>\n"); }
+                    else { out = out.write_byte(b' '); }
                     let (content, hard_break) = paragraph_line(&cx, raw,
                         paragraph_continues(&cx, source, pos, depth));
                     out = inline(&cx, out, content, links);
@@ -1310,17 +1311,17 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
             }
         }
     }
-    if paragraph && !paragraph_compact { out = out.push_static("</p>\n"); }
-    if code { out = out.push_static("</code></pre>\n"); }
-    if table { out = out.push_static("</tbody>\n</table>\n"); }
+    if paragraph && !paragraph_compact { out = out.write_static("</p>\n"); }
+    if code { out = out.write_static("</code></pre>\n"); }
+    if table { out = out.write_static("</tbody>\n</table>\n"); }
     Result::Ok.(out)
 }
 
 forall 'k.
-fn markdown(&cx: Domain!['k], source: Span['k], base: Span['k],
-    urls: ArenaMap[Span['k], Span['k], 'k], asset_urls: ArenaMap[Span['k], Span['k], 'k],
-    fingerprint_assets: bool, current: Span['k], track_sources: bool)
-    -> Result[(Buffer!, ArenaVec[Heading['k], 'k]), Span['k]] {
+fn markdown(&cx: Domain!['k], source: Str['k], base: Str['k],
+    urls: ArenaMap[Str['k], Str['k], 'k], asset_urls: ArenaMap[Str['k], Str['k], 'k],
+    fingerprint_assets: bool, current: Str['k], track_sources: bool)
+    -> Result[(Buffer!, ArenaVec[Heading['k], 'k]), Str['k]] {
     let headings = ArenaVec::new(&cx);
     let links = LinkContext.{ base, urls, asset_urls, fingerprint_assets, source: current,
         rendered_source: source, segments: Option::None, track_sources };

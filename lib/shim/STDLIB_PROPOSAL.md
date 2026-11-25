@@ -9,7 +9,7 @@ behavior checks in `tests/shim`. This proposal describes moving them to
 ## `std::path`
 
 Add `join`, `parent`, and `basename` with the signatures in `shim::path`.
-They accept and return `Span` values under the caller's arena domain. They
+They accept and return `Str` values under the caller's arena domain. They
 inspect bytes only, use `/` as the separator, and do not consult the
 filesystem, canonicalize, or resolve `.` and `..`.
 

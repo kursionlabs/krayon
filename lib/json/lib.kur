@@ -1,21 +1,21 @@
 use std::arena::Domain!;
 use std::option::{Option, Result};
-use std::raw::Span;
+use std::str::Str;
 use std::slice::Slice;
 use std::utf8::decode;
 
 exposed struct Error {
     offset: usize,
-    message: Slice[u8, 'static],
+    message: Str['static],
 }
 
-fn fail(at: usize, message: Slice[u8, 'static]) -> Error { Error.{ offset: at, message } }
+fn fail(at: usize, message: Str['static]) -> Error { Error.{ offset: at, message } }
 
 forall 'k.
-fn byte(&cx: Domain!['k], text: Span['k], i: usize) -> u8 { text.byte_or_zero(&cx, i) }
+fn byte(&cx: Domain!['k], text: Str['k], i: usize) -> u8 { text.byte_or_zero(&cx, i) }
 
 forall 'k.
-fn whitespace(&cx: Domain!['k], text: Span['k], start: usize) -> usize {
+fn whitespace(&cx: Domain!['k], text: Str['k], start: usize) -> usize {
     var i = start;
     while i < text.len() && (byte(&cx, text, i) == b' ' || byte(&cx, text, i) == b'\t'
         || byte(&cx, text, i) == b'\r' || byte(&cx, text, i) == b'\n') {
@@ -35,7 +35,7 @@ fn hex_value(c: u8) -> u32 {
 }
 
 forall 'k.
-fn unicode_escape(&cx: Domain!['k], text: Span['k], start: usize) -> Result[(u32, usize), Error] {
+fn unicode_escape(&cx: Domain!['k], text: Str['k], start: usize) -> Result[(u32, usize), Error] {
     if start + 4usize > text.len() { return Result::Err.(fail(start, "incomplete Unicode escape")); }
     var code = 0u32;
     var i = start;
@@ -49,7 +49,7 @@ fn unicode_escape(&cx: Domain!['k], text: Span['k], start: usize) -> Result[(u32
 }
 
 forall 'k.
-fn string(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error] {
+fn string(&cx: Domain!['k], text: Str['k], start: usize) -> Result[usize, Error] {
     var i = start + 1usize;
     while i < text.len() {
         let c = byte(&cx, text, i);
@@ -96,7 +96,7 @@ fn string(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error
 fn digit(c: u8) -> bool { c >= b'0' && c <= b'9' }
 
 forall 'k.
-fn number(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error] {
+fn number(&cx: Domain!['k], text: Str['k], start: usize) -> Result[usize, Error] {
     var i = start;
     if byte(&cx, text, i) == b'-' { i = i + 1usize; }
     if i >= text.len() { return Result::Err.(fail(i, "expected digit")); }
@@ -122,8 +122,8 @@ fn number(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error
 }
 
 forall 'k.
-fn keyword(&cx: Domain!['k], text: Span['k], start: usize, expected: Slice[u8, 'static]) -> Result[usize, Error] {
-    let expected = Span::from_static(&cx, expected);
+fn keyword(&cx: Domain!['k], text: Str['k], start: usize, expected: Str['static]) -> Result[usize, Error] {
+    let expected = Str::from_static(&cx, expected);
     let len = expected.len();
     if start + len > text.len() { return Result::Err.(fail(start, "invalid JSON value")); }
     var i = 0usize;
@@ -137,7 +137,7 @@ fn keyword(&cx: Domain!['k], text: Span['k], start: usize, expected: Slice[u8, '
 }
 
 forall 'k.
-fn value(&cx: Domain!['k], text: Span['k], start: usize, depth: usize) -> Result[usize, Error] {
+fn value(&cx: Domain!['k], text: Str['k], start: usize, depth: usize) -> Result[usize, Error] {
     var i = whitespace(&cx, text, start);
     if i >= text.len() { return Result::Err.(fail(i, "expected JSON value")); }
     let c = byte(&cx, text, i);
@@ -179,7 +179,7 @@ fn value(&cx: Domain!['k], text: Span['k], start: usize, depth: usize) -> Result
 }
 
 forall 'k.
-fn validate(&cx: Domain!['k], text: Span['k]) -> Result[(), Error] {
+fn validate(&cx: Domain!['k], text: Str['k]) -> Result[(), Error] {
     let end = value(&cx, text, 0usize, 0usize)?;
     let end = whitespace(&cx, text, end);
     if end != text.len() { return Result::Err.(fail(end, "extra content after JSON value")); }

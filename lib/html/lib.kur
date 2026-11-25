@@ -3,9 +3,9 @@ use std::buffer::Buffer!;
 use std::collections::arena_map::ArenaMap;
 use std::collections::arena_vec::ArenaVec;
 use std::fs::{canonicalize, read_to_arena};
-use std::fmt::Writable;
+use std::fmt::Writer;
 use std::option::{Option, Result};
-use std::raw::Span;
+use std::str::Str;
 use std::slice::Slice;
 use toml::parse;
 use toml::value::TomlValue;
@@ -14,10 +14,10 @@ use records::{filter_contains, filter_records, sort_records};
 
 forall 'k.
 exposed struct Page {
-    data: ArenaMap[Span['k], TomlValue['k], 'k],
-    source_urls: ArenaMap[Span['k], Span['k], 'k],
-    url: Span['k],
-    body: Span['k],
+    data: ArenaMap[Str['k], TomlValue['k], 'k],
+    source_urls: ArenaMap[Str['k], Str['k], 'k],
+    url: Str['k],
+    body: Str['k],
     body_line: usize,
 }
 
@@ -37,29 +37,29 @@ struct Frame {
 
 forall 'k.
 struct Binding {
-    name: Span['k],
+    name: Str['k],
     value: TomlValue['k],
 }
 
 forall 'k.
 struct Group {
-    key: Span['k],
+    key: Str['k],
     items: ArenaVec[TomlValue['k], 'k],
 }
 
 forall 'k.
-fn lit(&cx: Domain!['k], text: Slice[u8, 'static]) -> Span['k] { Span::from_static(&cx, text) }
+fn lit(&cx: Domain!['k], text: Str['static]) -> Str['k] { Str::from_static(&cx, text) }
 
 forall 'k.
-fn byte(&cx: Domain!['k], text: Span['k], i: usize) -> u8 { text.byte_or_zero(&cx, i) }
+fn byte(&cx: Domain!['k], text: Str['k], i: usize) -> u8 { text.byte_or_zero(&cx, i) }
 
 forall 'k.
-fn starts(&cx: Domain!['k], text: Span['k], prefix: Slice[u8, 'static]) -> bool {
+fn starts(&cx: Domain!['k], text: Str['k], prefix: Str['static]) -> bool {
     text.starts_with(&cx, lit(&cx, prefix))
 }
 
 forall 'k.
-fn position(&cx: Domain!['k], source: Span['k], offset: usize, first_line: usize, first_column: usize) -> (usize, usize) {
+fn position(&cx: Domain!['k], source: Str['k], offset: usize, first_line: usize, first_column: usize) -> (usize, usize) {
     var line = first_line;
     var column = first_column;
     var i = 0usize;
@@ -73,17 +73,17 @@ fn position(&cx: Domain!['k], source: Span['k], offset: usize, first_line: usize
 }
 
 forall 'k.
-fn template_error(&cx: Domain!['k], file: Span['k], source: Span['k], offset: usize,
-    first_line: usize, first_column: usize, detail: Span['k]) -> Span['k] {
+fn template_error(&cx: Domain!['k], file: Str['k], source: Str['k], offset: usize,
+    first_line: usize, first_column: usize, detail: Str['k]) -> Str['k] {
     let (line, column) = position(&cx, source, offset, first_line, first_column);
-    Buffer!::new().push_bytes(&cx, file).push_byte(b':').push_usize(line).push_byte(b':')
-        .push_usize(column).push_static(": ").push_bytes(&cx, detail).save(&cx)
+    Buffer!::new().write(&cx, file).write_byte(b':').put(line).write_byte(b':')
+        .put(column).write_static(": ").write(&cx, detail).save(&cx)
 }
 
 // Pages and layouts use TOML front matter between +++ lines. A file without
 // front matter has an empty data table.
 forall 'k.
-fn parse_page(&cx: Domain!['k], source: Span['k], url: Span['k]) -> Result[Page['k], Span['k]] {
+fn parse_page(&cx: Domain!['k], source: Str['k], url: Str['k]) -> Result[Page['k], Str['k]] {
     if !starts(&cx, source, "+++\n") {
         return Result::Ok.(Page.{ data: ArenaMap::new(&cx), source_urls: ArenaMap::new(&cx),
             url, body: source, body_line: 1usize });
@@ -96,7 +96,7 @@ fn parse_page(&cx: Domain!['k], source: Span['k], url: Span['k]) -> Result[Page[
                 return Result::Err.(lit(&cx, "front matter delimiter must end its line"));
             }
             match parse(&cx, source.slice(4usize, end)) {
-                Err(e) => Result::Err.(Span::from_static(&cx, e.message)),
+                Err(e) => Result::Err.(Str::from_static(&cx, e.message)),
                 Ok(data) => {
                     let start = if after < source.len() { after + 1usize } else { after };
                     let (line, column) = position(&cx, source, start, 1usize, 1usize);
@@ -109,12 +109,12 @@ fn parse_page(&cx: Domain!['k], source: Span['k], url: Span['k]) -> Result[Page[
 }
 
 forall 'k.
-fn field(&cx: Domain!['k], table: ArenaMap[Span['k], TomlValue['k], 'k], name: Slice[u8, 'static]) -> Option[TomlValue['k]] {
+fn field(&cx: Domain!['k], table: ArenaMap[Str['k], TomlValue['k], 'k], name: Str['static]) -> Option[TomlValue['k]] {
     table.get(&cx, lit(&cx, name))
 }
 
 forall 'k.
-fn string_field(&cx: Domain!['k], table: ArenaMap[Span['k], TomlValue['k], 'k], name: Slice[u8, 'static]) -> Option[Span['k]] {
+fn string_field(&cx: Domain!['k], table: ArenaMap[Str['k], TomlValue['k], 'k], name: Str['static]) -> Option[Str['k]] {
     match field(&cx, table, name) {
         None => Option::None,
         Some(value) => value.as_string(),
@@ -122,10 +122,10 @@ fn string_field(&cx: Domain!['k], table: ArenaMap[Span['k], TomlValue['k], 'k], 
 }
 
 forall 'k.
-fn scalar(&cx: Domain!['k], value: TomlValue['k]) -> Option[Span['k]] {
+fn scalar(&cx: Domain!['k], value: TomlValue['k]) -> Option[Str['k]] {
     match value {
         TomlValue::String(s) => Option::Some.(s),
-        TomlValue::Integer(n) => Option::Some.(Buffer!::new().push_i64(n).save(&cx)),
+        TomlValue::Integer(n) => Option::Some.(Buffer!::new().put(n).save(&cx)),
         TomlValue::Boolean(b) => Option::Some.(lit(&cx, if b { "true" } else { "false" })),
         TomlValue::Datetime(d) => Option::Some.(d.text),
         _ => Option::None,
@@ -133,9 +133,9 @@ fn scalar(&cx: Domain!['k], value: TomlValue['k]) -> Option[Span['k]] {
 }
 
 forall 'k.
-fn lookup(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
-    collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k],
-    bindings: ArenaVec[Binding['k], 'k], expression: Span['k]) -> Option[TomlValue['k]] {
+fn lookup(&cx: Domain!['k], site: ArenaMap[Str['k], TomlValue['k], 'k],
+    collections: ArenaMap[Str['k], TomlValue['k], 'k], page: Page['k],
+    bindings: ArenaVec[Binding['k], 'k], expression: Str['k]) -> Option[TomlValue['k]] {
     var path = expression;
     var table = site;
     if starts(&cx, path, "site.") { path = path.slice(5usize, path.len()); }
@@ -169,7 +169,7 @@ fn lookup(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
 }
 
 forall 'k.
-fn lookup_table(&cx: Domain!['k], start: ArenaMap[Span['k], TomlValue['k], 'k], path: Span['k]) -> Option[TomlValue['k]] {
+fn lookup_table(&cx: Domain!['k], start: ArenaMap[Str['k], TomlValue['k], 'k], path: Str['k]) -> Option[TomlValue['k]] {
     var table = start;
     var path = path;
     while true {
@@ -192,7 +192,7 @@ fn lookup_table(&cx: Domain!['k], start: ArenaMap[Span['k], TomlValue['k], 'k], 
 }
 
 forall 'k.
-fn literal(&cx: Domain!['k], text: Span['k]) -> Option[Span['k]] {
+fn literal(&cx: Domain!['k], text: Str['k]) -> Option[Str['k]] {
     let text = text.trim(&cx);
     if text.len() < 2usize { return Option::None; }
     let q = byte(&cx, text, 0usize);
@@ -202,9 +202,9 @@ fn literal(&cx: Domain!['k], text: Span['k]) -> Option[Span['k]] {
 }
 
 forall 'k.
-fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
-    collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k], bindings: ArenaVec[Binding['k], 'k],
-    expr: Span['k], content: Span['k]) -> Option[Span['k]] {
+fn resolve(&cx: Domain!['k], site: ArenaMap[Str['k], TomlValue['k], 'k],
+    collections: ArenaMap[Str['k], TomlValue['k], 'k], page: Page['k], bindings: ArenaVec[Binding['k], 'k],
+    expr: Str['k], content: Str['k]) -> Option[Str['k]] {
     let expr = expr.trim(&cx);
     if expr.is(&cx, "content") || expr.is(&cx, "content | safe") { return Option::Some.(content); }
     if expr.ends_with(&cx, lit(&cx, " | safe")) {
@@ -241,7 +241,7 @@ fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
             None => lit(&cx, ""),
         };
         return Option::Some.(prefix(&cx, base,
-            Buffer!::new().push_bytes(&cx, url).push_bytes(&cx, target.slice(end, target.len())).save(&cx)));
+            Buffer!::new().write(&cx, url).write(&cx, target.slice(end, target.len())).save(&cx)));
     }
     if expr.ends_with(&cx, lit(&cx, " | asset_url")) {
         let source = expr.slice(0usize, expr.len() - 12usize).trim(&cx);
@@ -277,7 +277,7 @@ fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
             None => lit(&cx, ""),
         };
         return Option::Some.(prefix(&cx, base,
-            Buffer!::new().push_bytes(&cx, url).push_bytes(&cx, target.slice(end, target.len())).save(&cx)));
+            Buffer!::new().write(&cx, url).write(&cx, target.slice(end, target.len())).save(&cx)));
     }
     if expr.ends_with(&cx, lit(&cx, " | absolute_url")) {
         let source = expr.slice(0usize, expr.len() - 15usize).trim(&cx);
@@ -340,9 +340,9 @@ fn resolve(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
 }
 
 forall 'k.
-fn truth(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
-    collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k], bindings: ArenaVec[Binding['k], 'k],
-    expr: Span['k], content: Span['k]) -> bool {
+fn truth(&cx: Domain!['k], site: ArenaMap[Str['k], TomlValue['k], 'k],
+    collections: ArenaMap[Str['k], TomlValue['k], 'k], page: Page['k], bindings: ArenaVec[Binding['k], 'k],
+    expr: Str['k], content: Str['k]) -> bool {
     let expr = expr.trim(&cx);
     match expr.find(&cx, lit(&cx, " == "), 0usize) {
         Some(at) => {
@@ -374,17 +374,17 @@ fn truth(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
 }
 
 forall 'k.
-fn escape_markup(&cx: Domain!['k], out: Buffer!, text: Span['k]) -> Buffer! {
+fn escape_markup(&cx: Domain!['k], out: Buffer!, text: Str['k]) -> Buffer! {
     var out = out;
     var i = 0usize;
     while i < text.len() {
         let c = byte(&cx, text, i);
-        out = if c == b'&' { out.push_static("&amp;") }
-            else if c == b'<' { out.push_static("&lt;") }
-            else if c == b'>' { out.push_static("&gt;") }
-            else if c == b'"' { out.push_static("&quot;") }
-            else if c == b'\'' { out.push_static("&#39;") }
-            else { out.push_byte(c) };
+        out = if c == b'&' { out.write_static("&amp;") }
+            else if c == b'<' { out.write_static("&lt;") }
+            else if c == b'>' { out.write_static("&gt;") }
+            else if c == b'"' { out.write_static("&quot;") }
+            else if c == b'\'' { out.write_static("&#39;") }
+            else { out.write_byte(c) };
         i = i + 1usize;
     }
     out
@@ -393,20 +393,20 @@ fn escape_markup(&cx: Domain!['k], out: Buffer!, text: Span['k]) -> Buffer! {
 fn hex_digit(n: u8) -> u8 { if n < 10u8 { b'0' + n } else { b'a' + n - 10u8 } }
 
 forall 'k.
-fn escape_json(&cx: Domain!['k], out: Buffer!, text: Span['k]) -> Buffer! {
+fn escape_json(&cx: Domain!['k], out: Buffer!, text: Str['k]) -> Buffer! {
     var out = out;
     var i = 0usize;
     while i < text.len() {
         let c = byte(&cx, text, i);
-        out = if c == b'"' { out.push_static("\\\"") }
-            else if c == b'\\' { out.push_static("\\\\") }
-            else if c == b'\n' { out.push_static("\\n") }
-            else if c == b'\r' { out.push_static("\\r") }
-            else if c == b'\t' { out.push_static("\\t") }
-            else if c == 8u8 { out.push_static("\\b") }
-            else if c == 12u8 { out.push_static("\\f") }
-            else if c < 32u8 { out.push_static("\\u00").push_byte(hex_digit(c / 16u8)).push_byte(hex_digit(c % 16u8)) }
-            else { out.push_byte(c) };
+        out = if c == b'"' { out.write_static("\\\"") }
+            else if c == b'\\' { out.write_static("\\\\") }
+            else if c == b'\n' { out.write_static("\\n") }
+            else if c == b'\r' { out.write_static("\\r") }
+            else if c == b'\t' { out.write_static("\\t") }
+            else if c == 8u8 { out.write_static("\\b") }
+            else if c == 12u8 { out.write_static("\\f") }
+            else if c < 32u8 { out.write_static("\\u00").write_byte(hex_digit(c / 16u8)).write_byte(hex_digit(c % 16u8)) }
+            else { out.write_byte(c) };
         i = i + 1usize;
     }
     out
@@ -414,33 +414,33 @@ fn escape_json(&cx: Domain!['k], out: Buffer!, text: Span['k]) -> Buffer! {
 
 forall 'k.
 fn json_value(&cx: Domain!['k], out: Buffer!, value: TomlValue['k], depth: usize)
-    -> Result[Buffer!, Span['k]] {
+    -> Result[Buffer!, Str['k]] {
     if depth >= 64usize {
         out.destroy(); return Result::Err.(lit(&cx, "JSON value nested too deeply"));
     }
     match value {
-        TomlValue::String(text) => Result::Ok.(escape_json(&cx, out.push_byte(b'"'), text).push_byte(b'"')),
-        TomlValue::Integer(number) => Result::Ok.(out.push_i64(number)),
+        TomlValue::String(text) => Result::Ok.(escape_json(&cx, out.write_byte(b'"'), text).write_byte(b'"')),
+        TomlValue::Integer(number) => Result::Ok.(out.put(number)),
         TomlValue::Float(number) => {
             if !number.is_finite() {
                 out.destroy(); return Result::Err.(lit(&cx, "JSON cannot represent NaN or infinity"));
             }
             Result::Ok.(f"{number}".write(out))
         },
-        TomlValue::Boolean(flag) => Result::Ok.(out.push_static(if flag { "true" } else { "false" })),
-        TomlValue::Datetime(date) => Result::Ok.(escape_json(&cx, out.push_byte(b'"'), date.text).push_byte(b'"')),
+        TomlValue::Boolean(flag) => Result::Ok.(out.write_static(if flag { "true" } else { "false" })),
+        TomlValue::Datetime(date) => Result::Ok.(escape_json(&cx, out.write_byte(b'"'), date.text).write_byte(b'"')),
         TomlValue::Array(items) => {
-            var out = out.push_byte(b'[');
+            var out = out.write_byte(b'[');
             var i = 0usize;
             while i < items.len(&cx) {
-                if i > 0usize { out = out.push_byte(b','); }
+                if i > 0usize { out = out.write_byte(b','); }
                 out = match json_value(&cx, out, items.at(&cx, i), depth + 1usize) {
                     Ok(next) => next,
                     Err(message) => return Result::Err.(message),
                 };
                 i = i + 1usize;
             }
-            Result::Ok.(out.push_byte(b']'))
+            Result::Ok.(out.write_byte(b']'))
         },
         TomlValue::Table(table) => {
             let keys = ArenaVec::new(&cx);
@@ -453,12 +453,12 @@ fn json_value(&cx: Domain!['k], out: Buffer!, value: TomlValue['k], depth: usize
                 i = i + 1usize;
             }
             keys.sort_by(&cx, |&cx, a, b| a.cmp(&cx, b));
-            var out = out.push_byte(b'{');
+            var out = out.write_byte(b'{');
             i = 0usize;
             while i < keys.len(&cx) {
                 let key = keys.at(&cx, i);
-                if i > 0usize { out = out.push_byte(b','); }
-                out = escape_json(&cx, out.push_byte(b'"'), key).push_static("\":");
+                if i > 0usize { out = out.write_byte(b','); }
+                out = escape_json(&cx, out.write_byte(b'"'), key).write_static("\":");
                 let field = match table.get(&cx, key) {
                     Some(found) => found,
                     None => { out.destroy(); return Result::Err.(lit(&cx, "JSON table key disappeared")); },
@@ -469,13 +469,13 @@ fn json_value(&cx: Domain!['k], out: Buffer!, value: TomlValue['k], depth: usize
                 };
                 i = i + 1usize;
             }
-            Result::Ok.(out.push_byte(b'}'))
+            Result::Ok.(out.write_byte(b'}'))
         },
     }
 }
 
 forall 'k.
-fn valid_xml(&cx: Domain!['k], text: Span['k]) -> bool {
+fn valid_xml(&cx: Domain!['k], text: Str['k]) -> bool {
     var i = 0usize;
     while i < text.len() {
         let c = byte(&cx, text, i);
@@ -488,12 +488,12 @@ fn valid_xml(&cx: Domain!['k], text: Span['k]) -> bool {
 fn valid_xml_byte(c: u8) -> bool { c >= 32u8 || c == b'\t' || c == b'\n' || c == b'\r' }
 
 forall 'k.
-fn escape_value(&cx: Domain!['k], out: Buffer!, value: Span['k], format: TemplateFormat) -> Buffer! {
+fn escape_value(&cx: Domain!['k], out: Buffer!, value: Str['k], format: TemplateFormat) -> Buffer! {
     match format {
         TemplateFormat::Html => escape_markup(&cx, out, value),
         TemplateFormat::Xml => escape_markup(&cx, out, value),
         TemplateFormat::Json => escape_json(&cx, out, value),
-        TemplateFormat::Text => out.push_bytes(&cx, value),
+        TemplateFormat::Text => out.write(&cx, value),
     }
 }
 
@@ -502,7 +502,7 @@ fn xml_format(format: TemplateFormat) -> bool {
 }
 
 forall 'k.
-fn format_extension(&cx: Domain!['k], format: TemplateFormat) -> Span['k] {
+fn format_extension(&cx: Domain!['k], format: TemplateFormat) -> Str['k] {
     lit(&cx, match format {
         TemplateFormat::Html => ".html",
         TemplateFormat::Xml => ".xml",
@@ -512,7 +512,7 @@ fn format_extension(&cx: Domain!['k], format: TemplateFormat) -> Span['k] {
 }
 
 forall 'k.
-fn valid_name(&cx: Domain!['k], name: Span['k]) -> bool {
+fn valid_name(&cx: Domain!['k], name: Str['k]) -> bool {
     if name.is_empty() || name.is(&cx, "site") || name.is(&cx, "page") || name.is(&cx, "collections") || name.is(&cx, "content") {
         return false;
     }
@@ -528,7 +528,7 @@ fn valid_name(&cx: Domain!['k], name: Span['k]) -> bool {
 }
 
 forall 'k.
-fn include_name(&cx: Domain!['k], name: Span['k]) -> bool {
+fn include_name(&cx: Domain!['k], name: Str['k]) -> bool {
     if name.is_empty() || byte(&cx, name, 0usize) == b'/' { return false; }
     var start = 0usize;
     var i = 0usize;
@@ -545,22 +545,22 @@ fn include_name(&cx: Domain!['k], name: Span['k]) -> bool {
 }
 
 forall 'k.
-fn include_error(&cx: Domain!['k], name: Span['k], detail: Slice[u8, 'static]) -> Span['k] {
-    Buffer!::new().push_static("include ").push_bytes(&cx, name).push_static(": ").push_static(detail).save(&cx)
+fn include_error(&cx: Domain!['k], name: Str['k], detail: Str['static]) -> Str['k] {
+    Buffer!::new().write_static("include ").write(&cx, name).write_static(": ").write_static(detail).save(&cx)
 }
 
 forall 'k.
-fn include_source(&cx: Domain!['k], root: Span['k], name: Span['k]) -> Result[Span['k], Span['k]] {
+fn include_source(&cx: Domain!['k], root: Str['k], name: Str['k]) -> Result[Str['k], Str['k]] {
     let base = match canonicalize(&cx, root) {
         Ok(path) => path.save(&cx),
         Err(e) => return Result::Err.(include_error(&cx, name, "cannot resolve layouts directory")),
     };
-    let requested = Buffer!::new().push_bytes(&cx, root).push_static("/").push_bytes(&cx, name).save(&cx);
+    let requested = Buffer!::new().write(&cx, root).write_static("/").write(&cx, name).save(&cx);
     let actual = match canonicalize(&cx, requested) {
         Ok(path) => path.save(&cx),
         Err(e) => return Result::Err.(include_error(&cx, name, "cannot read file")),
     };
-    let prefix = Buffer!::new().push_bytes(&cx, base).push_static("/").save(&cx);
+    let prefix = Buffer!::new().write(&cx, base).write_static("/").save(&cx);
     if !actual.starts_with(&cx, prefix) {
         return Result::Err.(include_error(&cx, name, "path escapes layouts directory"));
     }
@@ -571,9 +571,9 @@ fn include_source(&cx: Domain!['k], root: Span['k], name: Span['k]) -> Result[Sp
 }
 
 forall 'k.
-fn query_value(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
-    collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k],
-    bindings: ArenaVec[Binding['k], 'k], text: Span['k]) -> Option[Span['k]] {
+fn query_value(&cx: Domain!['k], site: ArenaMap[Str['k], TomlValue['k], 'k],
+    collections: ArenaMap[Str['k], TomlValue['k], 'k], page: Page['k],
+    bindings: ArenaVec[Binding['k], 'k], text: Str['k]) -> Option[Str['k]] {
     match literal(&cx, text) {
         Some(value) => Option::Some.(value),
         None => match lookup(&cx, site, collections, page, bindings, text.trim(&cx)) {
@@ -584,9 +584,9 @@ fn query_value(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
 }
 
 forall 'k.
-fn query_array(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
-    collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k],
-    bindings: ArenaVec[Binding['k], 'k], expression: Span['k]) -> Result[ArenaVec[TomlValue['k], 'k], Span['k]] {
+fn query_array(&cx: Domain!['k], site: ArenaMap[Str['k], TomlValue['k], 'k],
+    collections: ArenaMap[Str['k], TomlValue['k], 'k], page: Page['k],
+    bindings: ArenaVec[Binding['k], 'k], expression: Str['k]) -> Result[ArenaVec[TomlValue['k], 'k], Str['k]] {
     let first_pipe = match expression.find_byte(&cx, b'|', 0usize) {
         Some(at) => at,
         None => expression.len(),
@@ -681,8 +681,8 @@ fn query_array(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                 };
                 values = match sort_records(&cx, values, field_name, descending) {
                     Ok(sorted) => sorted,
-                    Err(message) => return Result::Err.(Buffer!::new().push_bytes(&cx, filter)
-                        .push_static(": ").push_static(message).save(&cx)),
+                    Err(message) => return Result::Err.(Buffer!::new().write(&cx, filter)
+                        .write_static(": ").write_static(message).save(&cx)),
                 };
             } else if operation.is(&cx, "where") || operation.is(&cx, "contains") {
                 let comma_at = match comma {
@@ -698,8 +698,8 @@ fn query_array(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                 } else { filter_records(&cx, values, field_name, target) };
                 values = match filtered {
                     Ok(selected) => selected,
-                    Err(message) => return Result::Err.(Buffer!::new().push_bytes(&cx, filter)
-                        .push_static(": ").push_static(message).save(&cx)),
+                    Err(message) => return Result::Err.(Buffer!::new().write(&cx, filter)
+                        .write_static(": ").write_static(message).save(&cx)),
                 };
             } else {
                 let groups: ArenaVec[Group['k], 'k] = ArenaVec::new(&cx);
@@ -752,7 +752,7 @@ fn query_array(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
 // The start and end of the endfor tag matching a for whose body starts at
 // `start`. Nested for blocks increase the depth; if blocks do not affect it.
 forall 'k.
-fn find_endfor(&cx: Domain!['k], source: Span['k], start: usize) -> Option[(usize, usize)] {
+fn find_endfor(&cx: Domain!['k], source: Str['k], start: usize) -> Option[(usize, usize)] {
     var depth = 1usize;
     var pos = start;
     while pos < source.len() {
@@ -779,10 +779,10 @@ fn find_endfor(&cx: Domain!['k], source: Span['k], start: usize) -> Option[(usiz
 // rendered content, nested if/else/endif and for/endfor blocks. Unknown substitutions
 // and malformed directives fail the build.
 forall 'k.
-fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
-    collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k], bindings: ArenaVec[Binding['k], 'k],
-    includes: ArenaVec[Span['k], 'k], root: Span['k], file: Span['k], source: Span['k], content: Span['k],
-    format: TemplateFormat, first_line: usize, first_column: usize, depth: usize) -> Result[Buffer!, Span['k]] {
+fn render_scope(&cx: Domain!['k], site: ArenaMap[Str['k], TomlValue['k], 'k],
+    collections: ArenaMap[Str['k], TomlValue['k], 'k], page: Page['k], bindings: ArenaVec[Binding['k], 'k],
+    includes: ArenaVec[Str['k], 'k], root: Str['k], file: Str['k], source: Str['k], content: Str['k],
+    format: TemplateFormat, first_line: usize, first_column: usize, depth: usize) -> Result[Buffer!, Str['k]] {
     if depth >= 64usize { return Result::Err.(template_error(&cx, file, source, 0usize,
         first_line, first_column, lit(&cx, "template scopes nested too deeply"))); }
     var out = Buffer!::new();
@@ -843,7 +843,7 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                                 None => { out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                                     first_line, first_column, expr)); },
                                 Some(value) => {
-                                    if expr.ends_with(&cx, lit(&cx, " | safe")) { out = out.push_bytes(&cx, value); }
+                                    if expr.ends_with(&cx, lit(&cx, " | safe")) { out = out.write(&cx, value); }
                                     else {
                                         if xml && !valid_xml(&cx, value) {
                                             out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
@@ -922,7 +922,7 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                                 let popped = bindings.pop(&cx);
                                 let popped_loop = bindings.pop(&cx);
                                 match part {
-                                    Ok(html) => { out = out.push_buffer(html); },
+                                    Ok(html) => { out = out.put(html); },
                                     Err(message) => { out.destroy(); return Result::Err.(message); },
                                 }
                                 i = i + 1usize;
@@ -959,16 +959,16 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                                     first_line, first_column, message)); },
                             };
                             includes.push(&cx, name);
-                            let child_file = Buffer!::new().push_bytes(&cx, root).push_byte(b'/').push_bytes(&cx, name).save(&cx);
+                            let child_file = Buffer!::new().write(&cx, root).write_byte(b'/').write(&cx, name).save(&cx);
                             let part = render_scope(&cx, site, collections, page, bindings, includes, root, child_file,
                                 partial, content, format, 1usize, 1usize, depth + 1usize);
                             let popped = includes.pop(&cx);
                             match part {
-                                Ok(html) => { out = out.push_buffer(html); },
+                                Ok(html) => { out = out.put(html); },
                                 Err(message) => {
                                     out.destroy();
                                     return Result::Err.(template_error(&cx, file, source, pos, first_line, first_column,
-                                        Buffer!::new().push_static("include ").push_bytes(&cx, message).save(&cx)));
+                                        Buffer!::new().write_static("include ").write(&cx, message).save(&cx)));
                                 },
                             }
                         }
@@ -986,7 +986,7 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
                     out.destroy(); return Result::Err.(template_error(&cx, file, source, pos,
                         first_line, first_column, lit(&cx, "XML template contains an invalid control character")));
                 }
-                out = out.push_byte(byte(&cx, source, pos));
+                out = out.write_byte(byte(&cx, source, pos));
             }
             pos = pos + 1usize;
         }
@@ -1000,10 +1000,10 @@ fn render_scope(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
 }
 
 forall 'k.
-fn template(&cx: Domain!['k], site: ArenaMap[Span['k], TomlValue['k], 'k],
-    collections: ArenaMap[Span['k], TomlValue['k], 'k], page: Page['k],
-    root: Span['k], file: Span['k], source: Span['k], content: Span['k], first_line: usize,
-    format: TemplateFormat) -> Result[Buffer!, Span['k]] {
+fn template(&cx: Domain!['k], site: ArenaMap[Str['k], TomlValue['k], 'k],
+    collections: ArenaMap[Str['k], TomlValue['k], 'k], page: Page['k],
+    root: Str['k], file: Str['k], source: Str['k], content: Str['k], first_line: usize,
+    format: TemplateFormat) -> Result[Buffer!, Str['k]] {
     render_scope(&cx, site, collections, page, ArenaVec::new(&cx), ArenaVec::new(&cx),
         root, file, source, content, format, first_line, 1usize, 0usize)
 }

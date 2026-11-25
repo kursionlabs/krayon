@@ -1,32 +1,33 @@
+use std::fmt::Writer;
 use std::arena::Domain!;
 use std::buffer::Buffer!;
 use std::collections::arena_vec::ArenaVec;
 use std::option::{Option, Result};
-use std::raw::Span;
+use std::str::Str;
 use std::slice::Slice;
 use std::utf8::decode;
 
 exposed struct Error {
     offset: usize,
-    message: Slice[u8, 'static],
+    message: Str['static],
 }
 
 forall 'k.
 exposed struct Location {
-    value: Span['k],
+    value: Str['k],
     offset: usize,
-    bases: Option[ArenaVec[Span['k], 'k]],
+    bases: Option[ArenaVec[Str['k], 'k]],
 }
 
-fn fail(offset: usize, message: Slice[u8, 'static]) -> Error { Error.{ offset, message } }
+fn fail(offset: usize, message: Str['static]) -> Error { Error.{ offset, message } }
 
 forall 'k.
-fn byte(&cx: Domain!['k], text: Span['k], i: usize) -> u8 { text.byte_or_zero(&cx, i) }
+fn byte(&cx: Domain!['k], text: Str['k], i: usize) -> u8 { text.byte_or_zero(&cx, i) }
 
 fn space(c: u8) -> bool { c == b' ' || c == b'\t' || c == b'\r' || c == b'\n' }
 
 forall 'k.
-fn skip_space(&cx: Domain!['k], text: Span['k], start: usize) -> usize {
+fn skip_space(&cx: Domain!['k], text: Str['k], start: usize) -> usize {
     var i = start;
     while i < text.len() && space(byte(&cx, text, i)) { i = i + 1usize; }
     i
@@ -40,7 +41,7 @@ fn xml_char(code: u32) -> bool {
 }
 
 forall 'k.
-fn scalar(&cx: Domain!['k], text: Span['k], i: usize) -> Result[(u32, usize), Error] {
+fn scalar(&cx: Domain!['k], text: Str['k], i: usize) -> Result[(u32, usize), Error] {
     match decode(&cx, text, i) {
         Some(pair) => {
             let (code, next) = pair;
@@ -69,7 +70,7 @@ fn name_char(c: u32) -> bool {
 }
 
 forall 'k.
-fn name(&cx: Domain!['k], text: Span['k], start: usize) -> Result[(Span['k], usize), Error] {
+fn name(&cx: Domain!['k], text: Str['k], start: usize) -> Result[(Str['k], usize), Error] {
     if start >= text.len() { return Result::Err.(fail(start, "expected XML name")); }
     let (first, next) = scalar(&cx, text, start)?;
     if !name_start(first) { return Result::Err.(fail(start, "expected XML name")); }
@@ -89,8 +90,8 @@ fn digit(c: u8) -> bool { c >= b'0' && c <= b'9' }
 fn lower(c: u8) -> u8 { if c >= b'A' && c <= b'Z' { c + 32u8 } else { c } }
 
 forall 'k.
-fn equal_ci(&cx: Domain!['k], text: Span['k], expected: Slice[u8, 'static]) -> bool {
-    let expected = Span::from_static(&cx, expected);
+fn equal_ci(&cx: Domain!['k], text: Str['k], expected: Str['static]) -> bool {
+    let expected = Str::from_static(&cx, expected);
     if text.len() != expected.len() { return false; }
     var i = 0usize;
     while i < text.len() {
@@ -107,7 +108,7 @@ fn hex_value(c: u8) -> usize {
 }
 
 forall 'k.
-fn reference(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error] {
+fn reference(&cx: Domain!['k], text: Str['k], start: usize) -> Result[usize, Error] {
     var i = start + 1usize;
     if i >= text.len() { return Result::Err.(fail(start, "unterminated XML reference")); }
     if byte(&cx, text, i) == b'#' {
@@ -147,7 +148,7 @@ fn reference(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Er
 }
 
 forall 'k.
-fn quoted(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error] {
+fn quoted(&cx: Domain!['k], text: Str['k], start: usize) -> Result[usize, Error] {
     let quote = byte(&cx, text, start);
     if quote != b'\'' && quote != b'"' { return Result::Err.(fail(start, "expected quoted attribute value")); }
     var i = start + 1usize;
@@ -162,7 +163,7 @@ fn quoted(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error
 }
 
 forall 'k.
-fn comment(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error] {
+fn comment(&cx: Domain!['k], text: Str['k], start: usize) -> Result[usize, Error] {
     var i = start + 4usize;
     while i < text.len() {
         if byte(&cx, text, i) == b'-' && byte(&cx, text, i + 1usize) == b'-' {
@@ -176,7 +177,7 @@ fn comment(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Erro
 }
 
 forall 'k.
-fn cdata(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error] {
+fn cdata(&cx: Domain!['k], text: Str['k], start: usize) -> Result[usize, Error] {
     var i = start + 9usize;
     while i < text.len() {
         if byte(&cx, text, i) == b']' && byte(&cx, text, i + 1usize) == b']'
@@ -188,7 +189,7 @@ fn cdata(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error]
 }
 
 forall 'k.
-fn processing_instruction(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error] {
+fn processing_instruction(&cx: Domain!['k], text: Str['k], start: usize) -> Result[usize, Error] {
     let (target, after) = name(&cx, text, start + 2usize)?;
     if equal_ci(&cx, target, "xml") { return Result::Err.(fail(start, "XML declaration must be first")); }
     var i = after;
@@ -206,11 +207,11 @@ fn processing_instruction(&cx: Domain!['k], text: Span['k], start: usize) -> Res
 }
 
 forall 'k.
-fn declaration(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, Error] {
+fn declaration(&cx: Domain!['k], text: Str['k], start: usize) -> Result[usize, Error] {
     var i = start + 5usize;
     if !space(byte(&cx, text, i)) { return Result::Err.(fail(i, "expected XML version")); }
     i = skip_space(&cx, text, i);
-    if !text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "version")) {
+    if !text.slice(i, text.len()).starts_with(&cx, Str::from_static(&cx, "version")) {
         return Result::Err.(fail(i, "expected XML version"));
     }
     i = skip_space(&cx, text, i + 7usize);
@@ -259,7 +260,7 @@ fn declaration(&cx: Domain!['k], text: Span['k], start: usize) -> Result[usize, 
 }
 
 forall 'k.
-fn start_tag(&cx: Domain!['k], text: Span['k], start: usize) -> Result[(Span['k], usize, bool), Error] {
+fn start_tag(&cx: Domain!['k], text: Str['k], start: usize) -> Result[(Str['k], usize, bool), Error] {
     let (tag, after) = name(&cx, text, start + 1usize)?;
     var i = after;
     let attributes = ArenaVec::new(&cx);
@@ -293,7 +294,7 @@ fn start_tag(&cx: Domain!['k], text: Span['k], start: usize) -> Result[(Span['k]
 }
 
 forall 'k.
-fn end_tag(&cx: Domain!['k], text: Span['k], start: usize) -> Result[(Span['k], usize), Error] {
+fn end_tag(&cx: Domain!['k], text: Str['k], start: usize) -> Result[(Str['k], usize), Error] {
     let (tag, after) = name(&cx, text, start + 2usize)?;
     let i = skip_space(&cx, text, after);
     if byte(&cx, text, i) != b'>' { return Result::Err.(fail(i, "expected > after closing tag")); }
@@ -301,13 +302,13 @@ fn end_tag(&cx: Domain!['k], text: Span['k], start: usize) -> Result[(Span['k], 
 }
 
 forall 'k.
-fn validate(&cx: Domain!['k], text: Span['k]) -> Result[(), Error] {
+fn validate(&cx: Domain!['k], text: Str['k]) -> Result[(), Error] {
     var i = 0usize;
     if text.len() >= 3usize && byte(&cx, text, 0usize) == 239u8
         && byte(&cx, text, 1usize) == 187u8 && byte(&cx, text, 2usize) == 191u8 {
         i = 3usize;
     }
-    if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<?xml"))
+    if text.slice(i, text.len()).starts_with(&cx, Str::from_static(&cx, "<?xml"))
         && space(byte(&cx, text, i + 5usize)) {
         i = declaration(&cx, text, i)?;
     }
@@ -327,16 +328,16 @@ fn validate(&cx: Domain!['k], text: Span['k]) -> Result[(), Error] {
                 let (code, next) = scalar(&cx, text, i)?;
                 i = next;
             }
-        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<!--")) {
+        } else if text.slice(i, text.len()).starts_with(&cx, Str::from_static(&cx, "<!--")) {
             i = comment(&cx, text, i)?;
-        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<![CDATA[")) {
+        } else if text.slice(i, text.len()).starts_with(&cx, Str::from_static(&cx, "<![CDATA[")) {
             if open.len(&cx) == 0usize { return Result::Err.(fail(i, "CDATA outside XML root element")); }
             i = cdata(&cx, text, i)?;
-        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<!")) {
+        } else if text.slice(i, text.len()).starts_with(&cx, Str::from_static(&cx, "<!")) {
             return Result::Err.(fail(i, "DTD declarations are not supported"));
-        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<?")) {
+        } else if text.slice(i, text.len()).starts_with(&cx, Str::from_static(&cx, "<?")) {
             i = processing_instruction(&cx, text, i)?;
-        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "</")) {
+        } else if text.slice(i, text.len()).starts_with(&cx, Str::from_static(&cx, "</")) {
             let (tag, next) = end_tag(&cx, text, i)?;
             let expected = match open.pop(&cx) {
                 Some(name) => name,
@@ -361,30 +362,30 @@ fn validate(&cx: Domain!['k], text: Span['k]) -> Result[(), Error] {
 }
 
 fn append_utf8(out: Buffer!, code: usize) -> Buffer! {
-    if code < 128usize { out.push_byte(code as u8) }
+    if code < 128usize { out.write_byte(code as u8) }
     else if code < 2048usize {
-        out.push_byte((192usize + code / 64usize) as u8)
-            .push_byte((128usize + code % 64usize) as u8)
+        out.write_byte((192usize + code / 64usize) as u8)
+            .write_byte((128usize + code % 64usize) as u8)
     } else if code < 65536usize {
-        out.push_byte((224usize + code / 4096usize) as u8)
-            .push_byte((128usize + (code / 64usize) % 64usize) as u8)
-            .push_byte((128usize + code % 64usize) as u8)
+        out.write_byte((224usize + code / 4096usize) as u8)
+            .write_byte((128usize + (code / 64usize) % 64usize) as u8)
+            .write_byte((128usize + code % 64usize) as u8)
     } else {
-        out.push_byte((240usize + code / 262144usize) as u8)
-            .push_byte((128usize + (code / 4096usize) % 64usize) as u8)
-            .push_byte((128usize + (code / 64usize) % 64usize) as u8)
-            .push_byte((128usize + code % 64usize) as u8)
+        out.write_byte((240usize + code / 262144usize) as u8)
+            .write_byte((128usize + (code / 4096usize) % 64usize) as u8)
+            .write_byte((128usize + (code / 64usize) % 64usize) as u8)
+            .write_byte((128usize + code % 64usize) as u8)
     }
 }
 
 forall 'k.
-fn append_reference(&cx: Domain!['k], out: Buffer!, text: Span['k], start: usize, end: usize) -> Buffer! {
+fn append_reference(&cx: Domain!['k], out: Buffer!, text: Str['k], start: usize, end: usize) -> Buffer! {
     let entity = text.slice(start + 1usize, end - 1usize);
-    if entity.is(&cx, "amp") { return out.push_byte(b'&'); }
-    if entity.is(&cx, "lt") { return out.push_byte(b'<'); }
-    if entity.is(&cx, "gt") { return out.push_byte(b'>'); }
-    if entity.is(&cx, "quot") { return out.push_byte(b'"'); }
-    if entity.is(&cx, "apos") { return out.push_byte(b'\''); }
+    if entity.is(&cx, "amp") { return out.write_byte(b'&'); }
+    if entity.is(&cx, "lt") { return out.write_byte(b'<'); }
+    if entity.is(&cx, "gt") { return out.write_byte(b'>'); }
+    if entity.is(&cx, "quot") { return out.write_byte(b'"'); }
+    if entity.is(&cx, "apos") { return out.write_byte(b'\''); }
     let hexadecimal = byte(&cx, entity, 1usize) == b'x';
     let base = if hexadecimal { 16usize } else { 10usize };
     var i = if hexadecimal { 2usize } else { 1usize };
@@ -398,25 +399,25 @@ fn append_reference(&cx: Domain!['k], out: Buffer!, text: Span['k], start: usize
 }
 
 forall 'k.
-fn loc_name(&cx: Domain!['k], tag: Span['k]) -> bool {
-    tag.is(&cx, "loc") || tag.ends_with(&cx, Span::from_static(&cx, ":loc"))
+fn loc_name(&cx: Domain!['k], tag: Str['k]) -> bool {
+    tag.is(&cx, "loc") || tag.ends_with(&cx, Str::from_static(&cx, ":loc"))
 }
 
 forall 'k.
-fn sitemap_root(&cx: Domain!['k], tag: Span['k]) -> bool {
+fn sitemap_root(&cx: Domain!['k], tag: Str['k]) -> bool {
     tag.is(&cx, "urlset") || tag.is(&cx, "sitemapindex")
-        || tag.ends_with(&cx, Span::from_static(&cx, ":urlset"))
-        || tag.ends_with(&cx, Span::from_static(&cx, ":sitemapindex"))
+        || tag.ends_with(&cx, Str::from_static(&cx, ":urlset"))
+        || tag.ends_with(&cx, Str::from_static(&cx, ":sitemapindex"))
 }
 
 forall 'k.
-fn xml_name(&cx: Domain!['k], tag: Span['k], namespace: Span['k], local: Slice[u8, 'static]) -> bool {
+fn xml_name(&cx: Domain!['k], tag: Str['k], namespace: Str['k], local: Str['static]) -> bool {
     if namespace.is_empty() { tag.is(&cx, local) }
-    else { tag.eq(&cx, Buffer!::new().push_bytes(&cx, namespace).push_byte(b':').push_static(local).save(&cx)) }
+    else { tag.eq(&cx, Buffer!::new().write(&cx, namespace).write_byte(b':').write_static(local).save(&cx)) }
 }
 
 forall 'k.
-fn attribute_text(&cx: Domain!['k], raw: Span['k]) -> Result[Span['k], Error] {
+fn attribute_text(&cx: Domain!['k], raw: Str['k]) -> Result[Str['k], Error] {
     var out = Buffer!::new();
     var i = 0usize;
     while i < raw.len() {
@@ -430,14 +431,14 @@ fn attribute_text(&cx: Domain!['k], raw: Span['k]) -> Result[Span['k], Error] {
         } else {
             let start = i;
             while i < raw.len() && byte(&cx, raw, i) != b'&' { i = i + 1usize; }
-            out = out.push_bytes(&cx, raw.slice(start, i));
+            out = out.write(&cx, raw.slice(start, i));
         }
     }
     Result::Ok.(out.save(&cx))
 }
 
 forall 'k.
-fn named_attribute(&cx: Domain!['k], text: Span['k], tag_start: usize, wanted: Span['k])
+fn named_attribute(&cx: Domain!['k], text: Str['k], tag_start: usize, wanted: Str['k])
     -> Result[Option[Location['k]], Error] {
     let (_, after) = name(&cx, text, tag_start + 1usize)?;
     var i = after;
@@ -461,10 +462,10 @@ fn named_attribute(&cx: Domain!['k], text: Span['k], tag_start: usize, wanted: S
 }
 
 forall 'k.
-fn atom_namespace(&cx: Domain!['k], text: Span['k], tag_start: usize, namespace: Span['k])
+fn atom_namespace(&cx: Domain!['k], text: Str['k], tag_start: usize, namespace: Str['k])
     -> Result[bool, Error] {
-    let attribute = if namespace.is_empty() { Span::from_static(&cx, "xmlns") }
-        else { Buffer!::new().push_static("xmlns:").push_bytes(&cx, namespace).save(&cx) };
+    let attribute = if namespace.is_empty() { Str::from_static(&cx, "xmlns") }
+        else { Buffer!::new().write_static("xmlns:").write(&cx, namespace).save(&cx) };
     match named_attribute(&cx, text, tag_start, attribute)? {
         Some(found) => Result::Ok.(found.value.is(&cx, "http://www.w3.org/2005/Atom")),
         None => Result::Ok.(false),
@@ -473,22 +474,22 @@ fn atom_namespace(&cx: Domain!['k], text: Span['k], tag_start: usize, namespace:
 
 // Called after validate, so all XML tokens and references are well formed.
 forall 'k.
-fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 'k], Error] {
+fn locations(&cx: Domain!['k], text: Str['k]) -> Result[ArenaVec[Location['k], 'k], Error] {
     let found = ArenaVec::new(&cx);
     var i = 0usize;
     if text.len() >= 3usize && byte(&cx, text, 0usize) == 239u8
         && byte(&cx, text, 1usize) == 187u8 && byte(&cx, text, 2usize) == 191u8 { i = 3usize; }
-    if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<?xml"))
+    if text.slice(i, text.len()).starts_with(&cx, Str::from_static(&cx, "<?xml"))
         && space(byte(&cx, text, i + 5usize)) { i = declaration(&cx, text, i)?; }
     var active = false;
     var root_seen = false;
     var sitemap = false;
     var atom = false;
     var rss = false;
-    var namespace = Span::from_static(&cx, "");
+    var namespace = Str::from_static(&cx, "");
     let open = ArenaVec::new(&cx);
     let base_stack = ArenaVec::new(&cx);
-    var active_tag = Span::from_static(&cx, "");
+    var active_tag = Str::from_static(&cx, "");
     var depth = 0usize;
     var parts = ArenaVec::new(&cx);
     var offset = 0usize;
@@ -516,9 +517,9 @@ fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 
                     parts.push(&cx, text.slice(start, i));
                 }
             }
-        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<!--")) {
+        } else if text.slice(i, text.len()).starts_with(&cx, Str::from_static(&cx, "<!--")) {
             i = comment(&cx, text, i)?;
-        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<![CDATA[")) {
+        } else if text.slice(i, text.len()).starts_with(&cx, Str::from_static(&cx, "<![CDATA[")) {
             let next = cdata(&cx, text, i)?;
             if active && depth == 0usize {
                 if !have_offset {
@@ -529,16 +530,16 @@ fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 
                 parts.push(&cx, text.slice(i + 9usize, next - 3usize));
             }
             i = next;
-        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "<?")) {
+        } else if text.slice(i, text.len()).starts_with(&cx, Str::from_static(&cx, "<?")) {
             i = processing_instruction(&cx, text, i)?;
-        } else if text.slice(i, text.len()).starts_with(&cx, Span::from_static(&cx, "</")) {
+        } else if text.slice(i, text.len()).starts_with(&cx, Str::from_static(&cx, "</")) {
             let (tag, next) = end_tag(&cx, text, i)?;
             if active {
                 if depth == 0usize && tag.eq(&cx, active_tag) {
                     var value = Buffer!::new();
                     var part = 0usize;
                     while part < parts.len(&cx) {
-                        value = value.push_bytes(&cx, parts.at(&cx, part));
+                        value = value.write(&cx, parts.at(&cx, part));
                         part = part + 1usize;
                     }
                     let raw = value.save(&cx);
@@ -570,7 +571,7 @@ fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 
             if atom && xml_name(&cx, tag, namespace, "link") &&
                 ((open.len(&cx) == 1usize && xml_name(&cx, open.at(&cx, 0usize), namespace, "feed")) ||
                  (open.len(&cx) == 2usize && xml_name(&cx, open.at(&cx, 1usize), namespace, "entry"))) {
-                match named_attribute(&cx, text, i, Span::from_static(&cx, "href"))? {
+                match named_attribute(&cx, text, i, Str::from_static(&cx, "href"))? {
                     Some(location) => {
                         let bases = ArenaVec::new(&cx);
                         var j = 0usize;
@@ -581,7 +582,7 @@ fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 
                             }
                             j = j + 1usize;
                         }
-                        match named_attribute(&cx, text, i, Span::from_static(&cx, "xml:base"))? {
+                        match named_attribute(&cx, text, i, Str::from_static(&cx, "xml:base"))? {
                             Some(base) => bases.push(&cx, base.value),
                             None => (),
                         }
@@ -611,7 +612,7 @@ fn locations(&cx: Domain!['k], text: Span['k]) -> Result[ArenaVec[Location['k], 
             if !empty {
                 open.push(&cx, tag);
                 if atom {
-                    let base = match named_attribute(&cx, text, i, Span::from_static(&cx, "xml:base"))? {
+                    let base = match named_attribute(&cx, text, i, Str::from_static(&cx, "xml:base"))? {
                         Some(found) => Option::Some.(found.value),
                         None => Option::None,
                     };

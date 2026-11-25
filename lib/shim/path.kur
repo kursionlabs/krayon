@@ -1,27 +1,28 @@
 //! Lexical filesystem path operations proposed for the Kursal standard library.
+use std::fmt::Writer;
 //! These functions only inspect bytes; they do not access the filesystem or
 //! resolve `.` / `..` / symlinks. The separator is `/`.
 
 use std::arena::Domain!;
 use std::buffer::Buffer!;
-use std::raw::Span;
+use std::str::Str;
 
 /// Join two path fragments. An absolute `right` replaces `left`. Otherwise,
 /// insert `/` unless `left` already ends with it. Empty fragments return the
 /// other fragment unchanged. This does not normalize `.` or `..`.
 forall 'k.
-fn join(&cx: Domain!['k], left: Span['k], right: Span['k]) -> Span['k] {
+fn join(&cx: Domain!['k], left: Str['k], right: Str['k]) -> Str['k] {
     if right.is_empty() { return left; }
     if right.byte_or_zero(&cx, 0usize) == b'/' { return right; }
     if left.is_empty() { return right; }
     let separator = if left.byte_or_zero(&cx, left.len() - 1usize) == b'/' { "" } else { "/" };
-    Buffer!::new().push_bytes(&cx, left).push_static(separator).push_bytes(&cx, right).save(&cx)
+    Buffer!::new().write(&cx, left).write_static(separator).write(&cx, right).save(&cx)
 }
 
 /// Bytes before the final `/`, or an empty span if there is no separator.
 /// `/` is its own parent; the parent of `/file` is `/`, and of `dir/` is `dir`.
 forall 'k.
-fn parent(&cx: Domain!['k], path: Span['k]) -> Span['k] {
+fn parent(&cx: Domain!['k], path: Str['k]) -> Str['k] {
     if path.len() == 1usize && path.byte_or_zero(&cx, 0usize) == b'/' { return path; }
     var i = path.len();
     while i > 0usize {
@@ -36,7 +37,7 @@ fn parent(&cx: Domain!['k], path: Span['k]) -> Span['k] {
 /// Bytes after the final `/`, or all of `path` if there is no separator.
 /// `/` and paths ending in `/` have an empty basename; `/file` has `file`.
 forall 'k.
-fn basename(&cx: Domain!['k], path: Span['k]) -> Span['k] {
+fn basename(&cx: Domain!['k], path: Str['k]) -> Str['k] {
     var i = path.len();
     while i > 0usize {
         i = i - 1usize;

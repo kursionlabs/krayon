@@ -1,9 +1,10 @@
+use std::fmt::Writer;
 use std::arena::Domain!;
 use std::buffer::Buffer!;
 use std::collections::arena_vec::ArenaVec;
 use std::io::{Error, File!};
 use std::option::{Option, Result};
-use std::raw::Span;
+use std::str::Str;
 use std::slice::ReadBytes;
 
 forall 'k.
@@ -34,13 +35,13 @@ fn push_hex_word(out: Buffer!, word: u32) -> Buffer! {
     var i = 8usize;
     while i > 0usize {
         i = i - 1usize;
-        out = out.push_byte(hex_digit(((word >> ((i as u32) * 4u32)) & 15u32) as u8));
+        out = out.write_byte(hex_digit(((word >> ((i as u32) * 4u32)) & 15u32) as u8));
     }
     out
 }
 
 forall 'k.
-fn constant(&cx: Domain!['k], digits: Span['k], index: usize) -> u32 {
+fn constant(&cx: Domain!['k], digits: Str['k], index: usize) -> u32 {
     var value = 0u32;
     var i = index * 8usize;
     while i < index * 8usize + 8usize {
@@ -54,14 +55,14 @@ fn constant(&cx: Domain!['k], digits: Span['k], index: usize) -> u32 {
 forall 'k.
 fn new_hash(&cx: Domain!['k]) -> Hasher['k] {
     let constants = Buffer!::new()
-        .push_static("428a2f9871374491b5c0fbcfe9b5dba53956c25b59f111f1923f82a4ab1c5ed5")
-        .push_static("d807aa9812835b01243185be550c7dc372be5d7480deb1fe9bdc06a7c19bf174")
-        .push_static("e49b69c1efbe47860fc19dc6240ca1cc2de92c6f4a7484aa5cb0a9dc76f988da")
-        .push_static("983e5152a831c66db00327c8bf597fc7c6e00bf3d5a7914706ca635114292967")
-        .push_static("27b70a852e1b21384d2c6dfc53380d13650a7354766a0abb81c2c92e92722c85")
-        .push_static("a2bfe8a1a81a664bc24b8b70c76c51a3d192e819d6990624f40e3585106aa070")
-        .push_static("19a4c1161e376c082748774c34b0bcb5391c0cb34ed8aa4a5b9cca4f682e6ff3")
-        .push_static("748f82ee78a5636f84c878148cc7020890befffaa4506cebbef9a3f7c67178f2")
+        .write_static("428a2f9871374491b5c0fbcfe9b5dba53956c25b59f111f1923f82a4ab1c5ed5")
+        .write_static("d807aa9812835b01243185be550c7dc372be5d7480deb1fe9bdc06a7c19bf174")
+        .write_static("e49b69c1efbe47860fc19dc6240ca1cc2de92c6f4a7484aa5cb0a9dc76f988da")
+        .write_static("983e5152a831c66db00327c8bf597fc7c6e00bf3d5a7914706ca635114292967")
+        .write_static("27b70a852e1b21384d2c6dfc53380d13650a7354766a0abb81c2c92e92722c85")
+        .write_static("a2bfe8a1a81a664bc24b8b70c76c51a3d192e819d6990624f40e3585106aa070")
+        .write_static("19a4c1161e376c082748774c34b0bcb5391c0cb34ed8aa4a5b9cca4f682e6ff3")
+        .write_static("748f82ee78a5636f84c878148cc7020890befffaa4506cebbef9a3f7c67178f2")
         .save(&cx);
     let rounds = ArenaVec::new(&cx);
     var i = 0usize;
@@ -169,7 +170,7 @@ fn absorb(&cx: Domain!['k], hash: Hasher['k], used: usize, value: u8) -> usize {
 }
 
 forall 'k.
-fn finish_hash(&cx: Domain!['k], hash: Hasher['k]) -> Span['k] {
+fn finish_hash(&cx: Domain!['k], hash: Hasher['k]) -> Str['k] {
     let bits = hash.total * 8u64;
     var used = hash.used;
     let previous = hash.pending.replace(&cx, used, 128u8);
@@ -203,7 +204,7 @@ fn finish_hash(&cx: Domain!['k], hash: Hasher['k]) -> Span['k] {
 }
 
 forall 'k.
-fn digest_hex(&cx: Domain!['k], contents: Span['k]) -> Span['k] {
+fn digest_hex(&cx: Domain!['k], contents: Str['k]) -> Str['k] {
     var hash = new_hash(&cx);
     var used = 0usize;
     var i = 0usize;
@@ -218,9 +219,9 @@ fn digest_hex(&cx: Domain!['k], contents: Span['k]) -> Span['k] {
 
 // Reads a regular file in bounded chunks and hashes exactly the bytes read.
 forall 'k.
-fn digest_file(&cx: Domain!['k], path: Span['k]) -> Result[Span['k], Error] {
+fn digest_file(&cx: Domain!['k], path: Str['k]) -> Result[Str['k], Error] {
     let opened = File!::open_read(&cx, path)?;
-    var opened = opened;
+    var opened = opened.input();
     var chunk = Buffer!::with_capacity(65536usize);
     var hash = new_hash(&cx);
     var going = true;
@@ -229,7 +230,8 @@ fn digest_file(&cx: Domain!['k], path: Span['k]) -> Result[Span['k], Error] {
             Ok(n) => n,
             Err(e) => {
                 chunk.destroy();
-                let closed = opened.close();
+                let closed = opened.finish();
+                match closed { Ok(rest) => rest.destroy(), Err(e) => (), }
                 return Result::Err.(e);
             },
         };
@@ -242,8 +244,8 @@ fn digest_file(&cx: Domain!['k], path: Span['k]) -> Result[Span['k], Error] {
         }
     }
     chunk.destroy();
-    match opened.close() {
-        Ok(nothing) => Result::Ok.(finish_hash(&cx, hash)),
+    match opened.finish() {
+        Ok(rest) => { rest.destroy(); Result::Ok.(finish_hash(&cx, hash)) },
         Err(e) => Result::Err.(e),
     }
 }

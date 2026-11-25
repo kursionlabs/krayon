@@ -19,7 +19,7 @@ Proposed `std::path` operations:
 - `basename(path)`: return bytes after the last `/`, or the whole path if
   there is none. `/file` has basename `file`; `/` has an empty basename.
 
-All return arena-backed `Span` values. They perform no filesystem I/O or
+All return arena-backed `Str` values. They perform no filesystem I/O or
 normalization. Their edge behavior is documented in `path.kur`. See
 [`STDLIB_PROPOSAL.md`](STDLIB_PROPOSAL.md) for the proposed Kursal API and
 the remaining design questions.

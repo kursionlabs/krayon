@@ -1,12 +1,13 @@
+use std::fmt::Writer;
 use std::arena::Domain!;
 use std::buffer::Buffer!;
 use std::collections::arena_map::ArenaMap;
 use std::collections::arena_vec::ArenaVec;
 use std::fs::{FileKind, canonicalize, metadata, path_exists, read_dir, read_to_arena, mkdir, remove, rename, write};
-use std::io::File!;
+use std::io::{File!, Input!, Error};
 use std::option::{Option, Result};
 use std::parse::parse_usize;
-use std::raw::Span;
+use std::str::Str;
 use std::slice::Slice;
 use toml::parse;
 use toml::value::TomlValue;
@@ -25,84 +26,84 @@ extern "C" fn getpid() -> i32;
 
 forall 'k.
 struct Config {
-    input: Span['k],
-    output: Span['k],
-    layouts: Span['k],
-    data: Span['k],
-    assets: Span['k],
+    input: Str['k],
+    output: Str['k],
+    layouts: Str['k],
+    data: Str['k],
+    assets: Str['k],
     fingerprint_assets: bool,
-    base_path: Span['k],
-    origin: Span['k],
-    exclude: ArenaVec[Span['k], 'k],
-    definitions: ArenaMap[Span['k], TomlValue['k], 'k],
+    base_path: Str['k],
+    origin: Str['k],
+    exclude: ArenaVec[Str['k], 'k],
+    definitions: ArenaMap[Str['k], TomlValue['k], 'k],
 }
 
 forall 'k.
 struct Build {
-    source: Span['k],
-    output: Span['k],
-    layouts: Span['k],
-    layouts_rel: Span['k],
-    assets: Span['k],
+    source: Str['k],
+    output: Str['k],
+    layouts: Str['k],
+    layouts_rel: Str['k],
+    assets: Str['k],
     fingerprint_assets: bool,
-    asset_urls: ArenaMap[Span['k], Span['k], 'k],
-    data_dir: Span['k],
-    base_path: Span['k],
-    origin: Span['k],
+    asset_urls: ArenaMap[Str['k], Str['k], 'k],
+    data_dir: Str['k],
+    base_path: Str['k],
+    origin: Str['k],
     include_drafts: bool,
-    exclude: ArenaVec[Span['k], 'k],
-    site_data: ArenaMap[Span['k], TomlValue['k], 'k],
-    definitions: ArenaMap[Span['k], TomlValue['k], 'k],
-    config_file: Span['k],
-    collections: ArenaMap[Span['k], TomlValue['k], 'k],
-    navigation: ArenaMap[Span['k], TomlValue['k], 'k],
-    source_urls: ArenaMap[Span['k], Span['k], 'k],
+    exclude: ArenaVec[Str['k], 'k],
+    site_data: ArenaMap[Str['k], TomlValue['k], 'k],
+    definitions: ArenaMap[Str['k], TomlValue['k], 'k],
+    config_file: Str['k],
+    collections: ArenaMap[Str['k], TomlValue['k], 'k],
+    navigation: ArenaMap[Str['k], TomlValue['k], 'k],
+    source_urls: ArenaMap[Str['k], Str['k], 'k],
     pages: ArenaVec[SourcePage['k], 'k],
     redirects: ArenaVec[Redirect['k], 'k],
     pending_pagination: ArenaVec[PendingPagination['k], 'k],
     stylesheets: ArenaVec[Stylesheet['k], 'k],
-    written: ArenaMap[Span['k], Span['k], 'k],
-    markdown_positions: ArenaMap[Span['k], ArenaMap[usize, usize, 'k], 'k],
+    written: ArenaMap[Str['k], Str['k], 'k],
+    markdown_positions: ArenaMap[Str['k], ArenaMap[usize, usize, 'k], 'k],
 }
 
 forall 'k.
 struct SourcePage {
-    file: Span['k],
-    source_path: Option[Span['k]],
+    file: Str['k],
+    source_path: Option[Str['k]],
     page: Page['k],
     is_markdown: bool,
     format: TemplateFormat,
-    destination: Span['k],
-    excerpt: Option[Span['k]],
+    destination: Str['k],
+    excerpt: Option[Str['k]],
 }
 
 forall 'k.
 struct Redirect {
-    url: Span['k],
-    destination: Span['k],
-    target: Span['k],
+    url: Str['k],
+    destination: Str['k],
+    target: Str['k],
 }
 
 forall 'k.
 struct PendingPagination {
-    file: Span['k],
+    file: Str['k],
     page: Page['k],
-    source: Span['k],
-    default_url: Span['k],
+    source: Str['k],
+    default_url: Str['k],
 }
 
 forall 'k.
 struct PaginationPattern {
-    prefix: Span['k],
-    suffix: Span['k],
+    prefix: Str['k],
+    suffix: Str['k],
 }
 
 forall 'k.
-fn lit(&cx: Domain!['k], s: Slice[u8, 'static]) -> Span['k] { Span::from_static(&cx, s) }
+fn lit(&cx: Domain!['k], s: Str['static]) -> Str['k] { Str::from_static(&cx, s) }
 
 // A standalone marker outside a fenced block splits the rendered excerpt.
 forall 'k.
-fn markdown_excerpt_source(&cx: Domain!['k], source: Span['k]) -> Option[Span['k]] {
+fn markdown_excerpt_source(&cx: Domain!['k], source: Str['k]) -> Option[Str['k]] {
     var pos = 0usize;
     var code = false;
     while pos < source.len() {
@@ -122,26 +123,26 @@ fn markdown_excerpt_source(&cx: Domain!['k], source: Span['k]) -> Option[Span['k
 }
 
 forall 'k.
-fn byte(&cx: Domain!['k], s: Span['k], i: usize) -> u8 { s.byte_or_zero(&cx, i) }
+fn byte(&cx: Domain!['k], s: Str['k], i: usize) -> u8 { s.byte_or_zero(&cx, i) }
 
 forall 'k.
-fn report(&cx: Domain!['k], action: Slice[u8, 'static], file: Span['k]) -> Buffer! {
-    Buffer!::new().push_static("krayon: ").push_static(action).push_static(": ").push_bytes(&cx, file).push_byte(b'\n')
+fn report(&cx: Domain!['k], action: Str['static], file: Str['k]) -> Buffer! {
+    Buffer!::new().write_static("krayon: ").write_static(action).write_static(": ").write(&cx, file).write_byte(b'\n')
 }
 
 forall 'k.
-fn report_detail(&cx: Domain!['k], file: Span['k], detail: Span['k]) -> Buffer! {
-    Buffer!::new().push_static("krayon: ").push_bytes(&cx, file).push_static(": ").push_bytes(&cx, detail).push_byte(b'\n')
+fn report_detail(&cx: Domain!['k], file: Str['k], detail: Str['k]) -> Buffer! {
+    Buffer!::new().write_static("krayon: ").write(&cx, file).write_static(": ").write(&cx, detail).write_byte(b'\n')
 }
 
 forall 'k.
-fn report_template(&cx: Domain!['k], detail: Span['k]) -> Buffer! {
-    Buffer!::new().push_static("krayon: ").push_bytes(&cx, detail).push_byte(b'\n')
+fn report_template(&cx: Domain!['k], detail: Str['k]) -> Buffer! {
+    Buffer!::new().write_static("krayon: ").write(&cx, detail).write_byte(b'\n')
 }
 
 forall 'k.
-fn report_generated(&cx: Domain!['k], source: SourcePage['k], rendered: Span['k],
-    kind: Slice[u8, 'static], offset: usize, detail: Slice[u8, 'static]) -> Buffer! {
+fn report_generated(&cx: Domain!['k], source: SourcePage['k], rendered: Str['k],
+    kind: Str['static], offset: usize, detail: Str['static]) -> Buffer! {
     var line = 1usize;
     var column = 1usize;
     var i = 0usize;
@@ -151,15 +152,15 @@ fn report_generated(&cx: Domain!['k], source: SourcePage['k], rendered: Span['k]
         else if c < 128u8 || c >= 192u8 { column = column + 1usize; }
         i = i + 1usize;
     }
-    Buffer!::new().push_static("krayon: ").push_bytes(&cx, source.file)
-        .push_static(": generated ").push_static(kind).push_byte(b' ')
-        .push_bytes(&cx, source.page.url).push_byte(b':')
-        .push_usize(line).push_byte(b':').push_usize(column).push_static(": ")
-        .push_static(detail).push_byte(b'\n')
+    Buffer!::new().write_static("krayon: ").write(&cx, source.file)
+        .write_static(": generated ").write_static(kind).write_byte(b' ')
+        .write(&cx, source.page.url).write_byte(b':')
+        .put(line).write_byte(b':').put(column).write_static(": ")
+        .write_static(detail).write_byte(b'\n')
 }
 
 forall 'k.
-fn exists_path(&cx: Domain!['k], file: Span['k]) -> Result[bool, Buffer!] {
+fn exists_path(&cx: Domain!['k], file: Str['k]) -> Result[bool, Buffer!] {
     match path_exists(&cx, file) {
         Ok(found) => Result::Ok.(found),
         Err(e) => Result::Err.(report(&cx, "cannot stat", file)),
@@ -167,7 +168,7 @@ fn exists_path(&cx: Domain!['k], file: Span['k]) -> Result[bool, Buffer!] {
 }
 
 forall 'k.
-fn load(&cx: Domain!['k], file: Span['k]) -> Result[Span['k], Buffer!] {
+fn load(&cx: Domain!['k], file: Str['k]) -> Result[Str['k], Buffer!] {
     match read_to_arena(&cx, file) {
         Ok(text) => Result::Ok.(text),
         Err(e) => Result::Err.(report(&cx, "cannot read", file)),
@@ -175,7 +176,7 @@ fn load(&cx: Domain!['k], file: Span['k]) -> Result[Span['k], Buffer!] {
 }
 
 forall 'k.
-fn ensure_dir(&cx: Domain!['k], directory: Span['k]) -> Result[(), Buffer!] {
+fn ensure_dir(&cx: Domain!['k], directory: Str['k]) -> Result[(), Buffer!] {
     match create_dir_all(&cx, directory) {
         Ok(nothing) => Result::Ok.(()),
         Err(failure) => {
@@ -191,7 +192,7 @@ fn ensure_dir(&cx: Domain!['k], directory: Span['k]) -> Result[(), Buffer!] {
 }
 
 forall 'k.
-fn save(&cx: Domain!['k], file: Span['k], contents: Buffer!) -> Result[(), Buffer!] {
+fn save(&cx: Domain!['k], file: Str['k], contents: Buffer!) -> Result[(), Buffer!] {
     match ensure_dir(&cx, parent(&cx, file)) {
         Ok(nothing) => (),
         Err(message) => { contents.destroy(); return Result::Err.(message); },
@@ -203,7 +204,7 @@ fn save(&cx: Domain!['k], file: Span['k], contents: Buffer!) -> Result[(), Buffe
 }
 
 forall 'k.
-fn init(&cx: Domain!['k], root: Span['k]) -> Result[(), Buffer!] {
+fn init(&cx: Domain!['k], root: Str['k]) -> Result[(), Buffer!] {
     match metadata(&cx, root) {
         Ok(info) => {
             match info.kind {
@@ -242,23 +243,23 @@ fn init(&cx: Domain!['k], root: Span['k]) -> Result[(), Buffer!] {
         },
     }
     save(&cx, join(&cx, root, lit(&cx, "krayon.toml")),
-        Buffer!::new().push_static("input = \"src\"\noutput = \"dist\"\n"))?;
+        Buffer!::new().write_static("input = \"src\"\noutput = \"dist\"\n"))?;
     save(&cx, join(&cx, root, lit(&cx, ".gitignore")),
-        Buffer!::new().push_static("/dist/\n"))?;
+        Buffer!::new().write_static("/dist/\n"))?;
     save(&cx, join(&cx, root, lit(&cx, "src/_includes/base.html")),
-        Buffer!::new().push_static("<!doctype html>\n<html lang=\"en\">\n<head>\n")
-            .push_static("  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
-            .push_static("  <title>{{ page.title }}</title>\n</head>\n<body>\n  <main>{{ content | safe }}</main>\n")
-            .push_static("</body>\n</html>\n"))?;
+        Buffer!::new().write_static("<!doctype html>\n<html lang=\"en\">\n<head>\n")
+            .write_static("  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+            .write_static("  <title>{{ page.title }}</title>\n</head>\n<body>\n  <main>{{ content | safe }}</main>\n")
+            .write_static("</body>\n</html>\n"))?;
     save(&cx, join(&cx, root, lit(&cx, "src/index.md")),
-        Buffer!::new().push_static("+++\ntitle = \"Home\"\nlayout = \"base.html\"\n+++\n\n")
-            .push_static("# Welcome to Krayon\n\nEdit `src/index.md` to get started.\n"))?;
+        Buffer!::new().write_static("+++\ntitle = \"Home\"\nlayout = \"base.html\"\n+++\n\n")
+            .write_static("# Welcome to Krayon\n\nEdit `src/index.md` to get started.\n"))?;
     Result::Ok.(())
 }
 
 // Relative config paths and URL path components cannot escape their root.
 forall 'k.
-fn safe_path(&cx: Domain!['k], path: Span['k], absolute: bool) -> bool {
+fn safe_path(&cx: Domain!['k], path: Str['k], absolute: bool) -> bool {
     if path.is_empty() { return false; }
     if absolute != (byte(&cx, path, 0usize) == b'/') { return false; }
     var start = if absolute { 1usize } else { 0usize };
@@ -276,19 +277,19 @@ fn safe_path(&cx: Domain!['k], path: Span['k], absolute: bool) -> bool {
 }
 
 forall 'k.
-fn config_string(&cx: Domain!['k], values: ArenaMap[Span['k], TomlValue['k], 'k], name: Slice[u8, 'static], fallback: Slice[u8, 'static]) -> Result[Span['k], Buffer!] {
+fn config_string(&cx: Domain!['k], values: ArenaMap[Str['k], TomlValue['k], 'k], name: Str['static], fallback: Str['static]) -> Result[Str['k], Buffer!] {
     match values.get(&cx, lit(&cx, name)) {
         None => Result::Ok.(lit(&cx, fallback)),
         Some(value) => match value.as_string() {
-            None => Result::Err.(Buffer!::new().push_static("krayon: config value must be a string: ").push_static(name).push_byte(b'\n')),
+            None => Result::Err.(Buffer!::new().write_static("krayon: config value must be a string: ").write_static(name).write_byte(b'\n')),
             Some(text) => if safe_path(&cx, text, false) { Result::Ok.(text) }
-                else { Result::Err.(Buffer!::new().push_static("krayon: unsafe config path: ").push_static(name).push_byte(b'\n')) },
+                else { Result::Err.(Buffer!::new().write_static("krayon: unsafe config path: ").write_static(name).write_byte(b'\n')) },
         },
     }
 }
 
 forall 'k.
-fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] {
+fn read_config(&cx: Domain!['k], root: Str['k]) -> Result[Config['k], Buffer!] {
     let file = join(&cx, root, lit(&cx, "krayon.toml"));
     let defaults = Config.{ input: lit(&cx, "src"), output: lit(&cx, "dist"), layouts: lit(&cx, "_includes"),
         data: lit(&cx, "_data/site.toml"), assets: lit(&cx, "assets"), fingerprint_assets: false, base_path: lit(&cx, ""),
@@ -389,7 +390,7 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
                             || rule.find_byte(&cx, b'[', 0usize).is_some()
                             || rule.find_byte(&cx, b']', 0usize).is_some() {
                             return Result::Err.(report_detail(&cx, file,
-                                Buffer!::new().push_static("invalid exclude path: ").push_bytes(&cx, rule).save(&cx)));
+                                Buffer!::new().write_static("invalid exclude path: ").write(&cx, rule).save(&cx)));
                         }
                         exclude.push(&cx, rule);
                         j = j + 1usize;
@@ -413,27 +414,27 @@ fn read_config(&cx: Domain!['k], root: Span['k]) -> Result[Config['k], Buffer!] 
 }
 
 forall 'k.
-fn claim(&cx: Domain!['k], build: Build['k], output: Span['k], source: Span['k]) -> Result[(), Buffer!] {
+fn claim(&cx: Domain!['k], build: Build['k], output: Str['k], source: Str['k]) -> Result[(), Buffer!] {
     match build.written.insert(&cx, output, source) {
         None => Result::Ok.(()),
-        Some(previous) => Result::Err.(Buffer!::new().push_static("krayon: output collision: ")
-            .push_bytes(&cx, previous).push_static(" and ").push_bytes(&cx, source).push_static(" -> ").push_bytes(&cx, output).push_byte(b'\n')),
+        Some(previous) => Result::Err.(Buffer!::new().write_static("krayon: output collision: ")
+            .write(&cx, previous).write_static(" and ").write(&cx, source).write_static(" -> ").write(&cx, output).write_byte(b'\n')),
     }
 }
 
 forall 'k.
-fn source_url(&cx: Domain!['k], relative: Span['k], ext_len: usize) -> Span['k] {
+fn source_url(&cx: Domain!['k], relative: Str['k], ext_len: usize) -> Str['k] {
     let stem = relative.slice(0usize, relative.len() - ext_len);
     if stem.is(&cx, "index") { return lit(&cx, "/"); }
     let index = lit(&cx, "/index");
     if stem.ends_with(&cx, index) {
-        return Buffer!::new().push_static("/").push_bytes(&cx, stem.slice(0usize, stem.len() - 5usize)).save(&cx);
+        return Buffer!::new().write_static("/").write(&cx, stem.slice(0usize, stem.len() - 5usize)).save(&cx);
     }
-    Buffer!::new().push_static("/").push_bytes(&cx, stem).push_static("/").save(&cx)
+    Buffer!::new().write_static("/").write(&cx, stem).write_static("/").save(&cx)
 }
 
 forall 'k.
-fn page_format(&cx: Domain!['k], relative: Span['k]) -> TemplateFormat {
+fn page_format(&cx: Domain!['k], relative: Str['k]) -> TemplateFormat {
     if relative.ends_with(&cx, lit(&cx, ".xml")) { TemplateFormat::Xml }
     else if relative.ends_with(&cx, lit(&cx, ".json")) { TemplateFormat::Json }
     else if relative.ends_with(&cx, lit(&cx, ".txt")) { TemplateFormat::Text }
@@ -441,7 +442,7 @@ fn page_format(&cx: Domain!['k], relative: Span['k]) -> TemplateFormat {
 }
 
 forall 'k.
-fn format_suffix(&cx: Domain!['k], format: TemplateFormat) -> Span['k] {
+fn format_suffix(&cx: Domain!['k], format: TemplateFormat) -> Str['k] {
     lit(&cx, match format {
         TemplateFormat::Html => ".html",
         TemplateFormat::Xml => ".xml",
@@ -451,10 +452,10 @@ fn format_suffix(&cx: Domain!['k], format: TemplateFormat) -> Span['k] {
 }
 
 forall 'k.
-fn output_for_url(&cx: Domain!['k], output: Span['k], url: Span['k], source: Span['k],
-    format: TemplateFormat) -> Result[Span['k], Buffer!] {
+fn output_for_url(&cx: Domain!['k], output: Str['k], url: Str['k], source: Str['k],
+    format: TemplateFormat) -> Result[Str['k], Buffer!] {
     if !safe_path(&cx, url, true) { return Result::Err.(report_detail(&cx, source,
-        Buffer!::new().push_static("unsafe URL: ").push_bytes(&cx, url).save(&cx))); }
+        Buffer!::new().write_static("unsafe URL: ").write(&cx, url).save(&cx))); }
     let relative = url.slice(1usize, url.len());
     match format {
         TemplateFormat::Html => if url.ends_with(&cx, lit(&cx, "/")) {
@@ -472,13 +473,13 @@ fn output_for_url(&cx: Domain!['k], output: Span['k], url: Span['k], source: Spa
         TemplateFormat::Text => ".txt",
     };
     Result::Err.(report_detail(&cx, source,
-        Buffer!::new().push_static("URL must end in ").push_static(expected)
-            .push_static(": ").push_bytes(&cx, url).save(&cx)))
+        Buffer!::new().write_static("URL must end in ").write_static(expected)
+            .write_static(": ").write(&cx, url).save(&cx)))
 }
 
 forall 'k.
-fn add_aliases(&cx: Domain!['k], build: Build['k], file: Span['k],
-    fields: ArenaMap[Span['k], TomlValue['k], 'k], canonical: Span['k]) -> Result[(), Buffer!] {
+fn add_aliases(&cx: Domain!['k], build: Build['k], file: Str['k],
+    fields: ArenaMap[Str['k], TomlValue['k], 'k], canonical: Str['k]) -> Result[(), Buffer!] {
     let aliases = match fields.get(&cx, lit(&cx, "aliases")) {
         None => return Result::Ok.(()),
         Some(value) => match value.as_array() {
@@ -488,8 +489,8 @@ fn add_aliases(&cx: Domain!['k], build: Build['k], file: Span['k],
     };
     var i = 0usize;
     while i < aliases.len(&cx) {
-        let label = Buffer!::new().push_bytes(&cx, file).push_static(" [alias ")
-            .push_usize(i + 1usize).push_static("]").save(&cx);
+        let label = Buffer!::new().write(&cx, file).write_static(" [alias ")
+            .put(i + 1usize).write_static("]").save(&cx);
         let alias = match aliases.at(&cx, i).as_string() {
             Some(url) => url,
             None => return Result::Err.(report_detail(&cx, label, lit(&cx, "alias must be a string URL"))),
@@ -503,17 +504,17 @@ fn add_aliases(&cx: Domain!['k], build: Build['k], file: Span['k],
 }
 
 forall 'k.
-fn escape_redirect(&cx: Domain!['k], out: Buffer!, value: Span['k]) -> Buffer! {
+fn escape_redirect(&cx: Domain!['k], out: Buffer!, value: Str['k]) -> Buffer! {
     var out = out;
     var i = 0usize;
     while i < value.len() {
         let c = byte(&cx, value, i);
-        out = if c == b'&' { out.push_static("&amp;") }
-            else if c == b'<' { out.push_static("&lt;") }
-            else if c == b'>' { out.push_static("&gt;") }
-            else if c == b'"' { out.push_static("&quot;") }
-            else if c == b'\'' { out.push_static("&#39;") }
-            else { out.push_byte(c) };
+        out = if c == b'&' { out.write_static("&amp;") }
+            else if c == b'<' { out.write_static("&lt;") }
+            else if c == b'>' { out.write_static("&gt;") }
+            else if c == b'"' { out.write_static("&quot;") }
+            else if c == b'\'' { out.write_static("&#39;") }
+            else { out.write_byte(c) };
         i = i + 1usize;
     }
     out
@@ -525,12 +526,12 @@ fn write_redirects(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
     while i < build.redirects.len(&cx) {
         let redirect = build.redirects.at(&cx, i);
         let target = prefix(&cx, build.base_path, redirect.target);
-        var html = Buffer!::new().push_static("<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">")
-            .push_static("<meta name=\"robots\" content=\"noindex\">")
-            .push_static("<meta http-equiv=\"refresh\" content=\"0; url=");
-        html = escape_redirect(&cx, html, target).push_static("\"></head><body><p>This page moved to ")
-            .push_static("<a href=\"");
-        html = escape_redirect(&cx, html, target).push_static("\">the new page</a>.</p></body></html>\n");
+        var html = Buffer!::new().write_static("<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">")
+            .write_static("<meta name=\"robots\" content=\"noindex\">")
+            .write_static("<meta http-equiv=\"refresh\" content=\"0; url=");
+        html = escape_redirect(&cx, html, target).write_static("\"></head><body><p>This page moved to ")
+            .write_static("<a href=\"");
+        html = escape_redirect(&cx, html, target).write_static("\">the new page</a>.</p></body></html>\n");
         save(&cx, redirect.destination, html)?;
         i = i + 1usize;
     }
@@ -538,11 +539,11 @@ fn write_redirects(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
 }
 
 forall 'k.
-fn layout_name(&cx: Domain!['k], data: ArenaMap[Span['k], TomlValue['k], 'k]) -> Result[Option[Span['k]], Buffer!] {
+fn layout_name(&cx: Domain!['k], data: ArenaMap[Str['k], TomlValue['k], 'k]) -> Result[Option[Str['k]], Buffer!] {
     match data.get(&cx, lit(&cx, "layout")) {
         None => Result::Ok.(Option::None),
         Some(value) => match value.as_string() {
-            None => Result::Err.(Buffer!::new().push_static("krayon: layout must be a string\n")),
+            None => Result::Err.(Buffer!::new().write_static("krayon: layout must be a string\n")),
             Some(name) => if name.is_empty() { Result::Ok.(Option::None) }
                 else if safe_path(&cx, name, false) { Result::Ok.(Option::Some.(name)) }
                 else { Result::Err.(report(&cx, "unsafe layout name", name)) },
@@ -551,7 +552,7 @@ fn layout_name(&cx: Domain!['k], data: ArenaMap[Span['k], TomlValue['k], 'k]) ->
 }
 
 forall 'k.
-fn site_value(&cx: Domain!['k], data: ArenaMap[Span['k], TomlValue['k], 'k], path: Span['k]) -> Option[TomlValue['k]] {
+fn site_value(&cx: Domain!['k], data: ArenaMap[Str['k], TomlValue['k], 'k], path: Str['k]) -> Option[TomlValue['k]] {
     var table = data;
     var remaining = path;
     while true {
@@ -576,7 +577,7 @@ fn site_value(&cx: Domain!['k], data: ArenaMap[Span['k], TomlValue['k], 'k], pat
 }
 
 forall 'k.
-fn draft(&cx: Domain!['k], data: ArenaMap[Span['k], TomlValue['k], 'k], file: Span['k]) -> Result[bool, Buffer!] {
+fn draft(&cx: Domain!['k], data: ArenaMap[Str['k], TomlValue['k], 'k], file: Str['k]) -> Result[bool, Buffer!] {
     match data.get(&cx, lit(&cx, "draft")) {
         None => Result::Ok.(false),
         Some(value) => match value.as_bool() {
@@ -587,9 +588,9 @@ fn draft(&cx: Domain!['k], data: ArenaMap[Span['k], TomlValue['k], 'k], file: Sp
 }
 
 forall 'k.
-fn permalink_pattern(&cx: Domain!['k], pattern: Span['k], record: ArenaMap[Span['k], TomlValue['k], 'k],
-    field_prefix: Slice[u8, 'static])
-    -> Result[Span['k], Span['k]] {
+fn permalink_pattern(&cx: Domain!['k], pattern: Str['k], record: ArenaMap[Str['k], TomlValue['k], 'k],
+    field_prefix: Str['static])
+    -> Result[Str['k], Str['k]] {
     var out = Buffer!::new();
     var pos = 0usize;
     while pos < pattern.len() {
@@ -603,7 +604,7 @@ fn permalink_pattern(&cx: Domain!['k], pattern: Span['k], record: ArenaMap[Span[
             },
             None => (),
         }
-        out = out.push_bytes(&cx, pattern.slice(pos, opening));
+        out = out.write(&cx, pattern.slice(pos, opening));
         if opening == pattern.len() { return Result::Ok.(out.save(&cx)); }
         let closing = match pattern.find(&cx, lit(&cx, "}}"), opening + 2usize) {
             Some(at) => at,
@@ -612,30 +613,30 @@ fn permalink_pattern(&cx: Domain!['k], pattern: Span['k], record: ArenaMap[Span[
         let expression = pattern.slice(opening + 2usize, closing).trim(&cx);
         let prefix = lit(&cx, field_prefix);
         if !expression.starts_with(&cx, prefix) || expression.len() <= prefix.len() {
-            out.destroy(); return Result::Err.(Buffer!::new().push_static("permalink placeholders must use ")
-                .push_static(field_prefix).push_static("<field>").save(&cx));
+            out.destroy(); return Result::Err.(Buffer!::new().write_static("permalink placeholders must use ")
+                .write_static(field_prefix).write_static("<field>").save(&cx));
         }
         let value = match site_value(&cx, record, expression.slice(prefix.len(), expression.len())) {
             Some(value) => value,
-            None => { out.destroy(); return Result::Err.(Buffer!::new().push_static("missing permalink field: ")
-                .push_bytes(&cx, expression).save(&cx)); },
+            None => { out.destroy(); return Result::Err.(Buffer!::new().write_static("missing permalink field: ")
+                .write(&cx, expression).save(&cx)); },
         };
         let text = match value {
             TomlValue::String(text) => text,
-            TomlValue::Integer(number) => Buffer!::new().push_i64(number).save(&cx),
+            TomlValue::Integer(number) => Buffer!::new().put(number).save(&cx),
             TomlValue::Datetime(date) => date.text,
-            _ => { out.destroy(); return Result::Err.(Buffer!::new().push_static("permalink field must be a string, integer, or date: ")
-                .push_bytes(&cx, expression).save(&cx)); },
+            _ => { out.destroy(); return Result::Err.(Buffer!::new().write_static("permalink field must be a string, integer, or date: ")
+                .write(&cx, expression).save(&cx)); },
         };
-        out = out.push_bytes(&cx, text);
+        out = out.write(&cx, text);
         pos = closing + 2usize;
     }
     Result::Ok.(out.save(&cx))
 }
 
 forall 'k.
-fn generated_fields(&cx: Domain!['k], defaults: ArenaMap[Span['k], TomlValue['k], 'k],
-    record: ArenaMap[Span['k], TomlValue['k], 'k]) -> ArenaMap[Span['k], TomlValue['k], 'k] {
+fn generated_fields(&cx: Domain!['k], defaults: ArenaMap[Str['k], TomlValue['k], 'k],
+    record: ArenaMap[Str['k], TomlValue['k], 'k]) -> ArenaMap[Str['k], TomlValue['k], 'k] {
     let fields = ArenaMap::new(&cx);
     var i = 0usize;
     while i < defaults.positions(&cx) {
@@ -665,8 +666,8 @@ fn generated_fields(&cx: Domain!['k], defaults: ArenaMap[Span['k], TomlValue['k]
 }
 
 forall 'k.
-fn merge_defaults(&cx: Domain!['k], inherited: ArenaMap[Span['k], TomlValue['k], 'k],
-    local: ArenaMap[Span['k], TomlValue['k], 'k]) -> ArenaMap[Span['k], TomlValue['k], 'k] {
+fn merge_defaults(&cx: Domain!['k], inherited: ArenaMap[Str['k], TomlValue['k], 'k],
+    local: ArenaMap[Str['k], TomlValue['k], 'k]) -> ArenaMap[Str['k], TomlValue['k], 'k] {
     let fields = ArenaMap::new(&cx);
     var i = 0usize;
     while i < inherited.positions(&cx) {
@@ -694,8 +695,8 @@ fn merge_defaults(&cx: Domain!['k], inherited: ArenaMap[Span['k], TomlValue['k],
 }
 
 forall 'k.
-fn directory_defaults(&cx: Domain!['k], build: Build['k], relative: Span['k],
-    inherited: ArenaMap[Span['k], TomlValue['k], 'k]) -> Result[ArenaMap[Span['k], TomlValue['k], 'k], Buffer!] {
+fn directory_defaults(&cx: Domain!['k], build: Build['k], relative: Str['k],
+    inherited: ArenaMap[Str['k], TomlValue['k], 'k]) -> Result[ArenaMap[Str['k], TomlValue['k], 'k], Buffer!] {
     let file = join(&cx, join(&cx, build.source, relative), lit(&cx, "_defaults.toml"));
     if !exists_path(&cx, file)? { return Result::Ok.(inherited); }
     let source = load(&cx, file)?;
@@ -714,7 +715,7 @@ fn directory_defaults(&cx: Domain!['k], build: Build['k], relative: Span['k],
                 || key.is(&cx, "collection_navigation") || key.is(&cx, "url")
                 || key.is(&cx, "aliases") {
                 return Result::Err.(report_detail(&cx, file,
-                    Buffer!::new().push_static("field cannot be a directory default: ").push_bytes(&cx, key).save(&cx)));
+                    Buffer!::new().write_static("field cannot be a directory default: ").write(&cx, key).save(&cx)));
             },
             None => (),
         }
@@ -733,8 +734,8 @@ fn directory_defaults(&cx: Domain!['k], build: Build['k], relative: Span['k],
 }
 
 forall 'k.
-fn generate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_page: Page['k],
-    source: Span['k], format: TemplateFormat) -> Result[(), Buffer!] {
+fn generate_pages(&cx: Domain!['k], build: Build['k], file: Str['k], template_page: Page['k],
+    source: Str['k], format: TemplateFormat) -> Result[(), Buffer!] {
     if !source.starts_with(&cx, lit(&cx, "site.")) || source.len() <= 5usize {
         return Result::Err.(report_detail(&cx, file, lit(&cx, "generate must name a site data array, such as site.products")));
     }
@@ -759,8 +760,8 @@ fn generate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
     };
     var i = 0usize;
     while i < items.len(&cx) {
-        let label = Buffer!::new().push_bytes(&cx, file).push_static(" [item ")
-            .push_usize(i + 1usize).push_static("]").save(&cx);
+        let label = Buffer!::new().write(&cx, file).write_static(" [item ")
+            .put(i + 1usize).write_static("]").save(&cx);
         let record = match items.at(&cx, i).as_table() {
             Some(table) => table,
             None => return Result::Err.(report_detail(&cx, label, lit(&cx, "generate item must be a table"))),
@@ -798,19 +799,19 @@ fn generate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
 }
 
 forall 'k.
-fn pagination_url(&cx: Domain!['k], base: Span['k], pattern: Option[PaginationPattern['k]], number: usize) -> Span['k] {
+fn pagination_url(&cx: Domain!['k], base: Str['k], pattern: Option[PaginationPattern['k]], number: usize) -> Str['k] {
     if number == 1usize { return base; }
     match pattern {
-        Some(parts) => Buffer!::new().push_bytes(&cx, parts.prefix).push_usize(number)
-            .push_bytes(&cx, parts.suffix).save(&cx),
-        None => Buffer!::new().push_bytes(&cx, base).push_static("page/").push_usize(number)
-            .push_byte(b'/').save(&cx),
+        Some(parts) => Buffer!::new().write(&cx, parts.prefix).put(number)
+            .write(&cx, parts.suffix).save(&cx),
+        None => Buffer!::new().write(&cx, base).write_static("page/").put(number)
+            .write_byte(b'/').save(&cx),
     }
 }
 
 forall 'k.
 fn select_records(&cx: Domain!['k], all: ArenaVec[TomlValue['k], 'k],
-    rules: ArenaMap[Span['k], TomlValue['k], 'k], file: Span['k]) -> Result[ArenaVec[TomlValue['k], 'k], Buffer!] {
+    rules: ArenaMap[Str['k], TomlValue['k], 'k], file: Str['k]) -> Result[ArenaVec[TomlValue['k], 'k], Buffer!] {
     let all = match rules.get(&cx, lit(&cx, "where")) {
         None => all,
         Some(value) => {
@@ -847,7 +848,7 @@ fn select_records(&cx: Domain!['k], all: ArenaVec[TomlValue['k], 'k],
             match filtered {
                 Ok(selected) => selected,
                 Err(message) => return Result::Err.(report_detail(&cx, file,
-                    Buffer!::new().push_static("where: ").push_static(message).save(&cx))),
+                    Buffer!::new().write_static("where: ").write_static(message).save(&cx))),
             }
         },
     };
@@ -875,7 +876,7 @@ fn select_records(&cx: Domain!['k], all: ArenaVec[TomlValue['k], 'k],
             match sort_records(&cx, all, field, descending) {
                 Ok(sorted) => sorted,
                 Err(message) => return Result::Err.(report_detail(&cx, file,
-                    Buffer!::new().push_static("sort_by: ").push_static(message).save(&cx))),
+                    Buffer!::new().write_static("sort_by: ").write_static(message).save(&cx))),
             }
         },
     };
@@ -883,8 +884,8 @@ fn select_records(&cx: Domain!['k], all: ArenaVec[TomlValue['k], 'k],
 }
 
 forall 'k.
-fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_page: Page['k],
-    source: Span['k], default_url: Span['k]) -> Result[(), Buffer!] {
+fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Str['k], template_page: Page['k],
+    source: Str['k], default_url: Str['k]) -> Result[(), Buffer!] {
     let collection = source.starts_with(&cx, lit(&cx, "collections.")) && source.len() > 12usize;
     if !collection && (!source.starts_with(&cx, lit(&cx, "site.")) || source.len() <= 5usize) {
         return Result::Err.(report_detail(&cx, file,
@@ -961,8 +962,8 @@ fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
     let pages = if count == 0usize { 1usize } else { (count - 1usize) / page_size + 1usize };
     var number = 1usize;
     while number <= pages {
-        let label = Buffer!::new().push_bytes(&cx, file).push_static(" [page ")
-            .push_usize(number).push_static("]").save(&cx);
+        let label = Buffer!::new().write(&cx, file).write_static(" [page ")
+            .put(number).write_static("]").save(&cx);
         let url = pagination_url(&cx, base, pattern, number);
         let destination = output_for_url(&cx, build.output, url, label, TemplateFormat::Html)?;
         claim(&cx, build, destination, label)?;
@@ -999,8 +1000,8 @@ fn paginate_pages(&cx: Domain!['k], build: Build['k], file: Span['k], template_p
 }
 
 forall 'k.
-fn render_layout(&cx: Domain!['k], build: Build['k], page: Page['k], content: Span['k], name: Span['k],
-    format: TemplateFormat, depth: usize) -> Result[Span['k], Buffer!] {
+fn render_layout(&cx: Domain!['k], build: Build['k], page: Page['k], content: Str['k], name: Str['k],
+    format: TemplateFormat, depth: usize) -> Result[Str['k], Buffer!] {
     if depth >= 32usize { return Result::Err.(report(&cx, "layout chain too deep or cyclic", name)); }
     if !name.ends_with(&cx, format_suffix(&cx, format)) {
         return Result::Err.(report(&cx, "layout has the wrong suffix", name));
@@ -1023,15 +1024,15 @@ fn render_layout(&cx: Domain!['k], build: Build['k], page: Page['k], content: Sp
 }
 
 forall 'k.
-fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k],
-    defaults: ArenaMap[Span['k], TomlValue['k], 'k]) -> Result[(), Buffer!] {
+fn collect_page(&cx: Domain!['k], build: Build['k], relative: Str['k],
+    defaults: ArenaMap[Str['k], TomlValue['k], 'k]) -> Result[(), Buffer!] {
     let file = join(&cx, build.source, relative);
     let source = load(&cx, file)?;
     let is_markdown = relative.ends_with(&cx, lit(&cx, ".md"));
     let format = page_format(&cx, relative);
     let url = match format {
         TemplateFormat::Html => source_url(&cx, relative, if is_markdown { 3usize } else { 5usize }),
-        _ => Buffer!::new().push_static("/").push_bytes(&cx, relative).save(&cx),
+        _ => Buffer!::new().write_static("/").write(&cx, relative).save(&cx),
     };
     let parsed = match parse_page(&cx, source, url) {
         Ok(page) => page,
@@ -1121,8 +1122,8 @@ fn collect_page(&cx: Domain!['k], build: Build['k], relative: Span['k],
 }
 
 forall 'k.
-fn strip_source_markers(&cx: Domain!['k], html: Span['k], body_len: usize)
-    -> (Span['k], ArenaMap[usize, usize, 'k]) {
+fn strip_source_markers(&cx: Domain!['k], html: Str['k], body_len: usize)
+    -> (Str['k], ArenaMap[usize, usize, 'k]) {
     let positions = ArenaMap::new(&cx);
     let prefix = lit(&cx, "<!--krayon-md-source:");
     var clean = Buffer!::new();
@@ -1147,10 +1148,10 @@ fn strip_source_markers(&cx: Domain!['k], html: Span['k], body_len: usize)
                 Some(number) => if number < body_len {
                     positions.insert(&cx, &clean.len(), number);
                     i = end + 3usize;
-                } else { clean = clean.push_byte(byte(&cx, html, i)); i = i + 1usize; },
-                None => { clean = clean.push_byte(byte(&cx, html, i)); i = i + 1usize; },
+                } else { clean = clean.write_byte(byte(&cx, html, i)); i = i + 1usize; },
+                None => { clean = clean.write_byte(byte(&cx, html, i)); i = i + 1usize; },
             }
-        } else { clean = clean.push_byte(byte(&cx, html, i)); i = i + 1usize; }
+        } else { clean = clean.write_byte(byte(&cx, html, i)); i = i + 1usize; }
     }
     (clean.save(&cx), positions)
 }
@@ -1222,11 +1223,11 @@ fn render_page(&cx: Domain!['k], build: Build['k], source: SourcePage['k]) -> Re
         build.markdown_positions.insert(&cx, source.destination, positions);
         clean
     } else { rendered };
-    save(&cx, source.destination, Buffer!::new().push_bytes(&cx, output))
+    save(&cx, source.destination, Buffer!::new().write(&cx, output))
 }
 
 forall 'k.
-fn valid_glob(&cx: Domain!['k], path: Span['k]) -> bool {
+fn valid_glob(&cx: Domain!['k], path: Str['k]) -> bool {
     var start = 0usize;
     var i = 0usize;
     while i <= path.len() {
@@ -1244,7 +1245,7 @@ fn valid_glob(&cx: Domain!['k], path: Span['k]) -> bool {
 }
 
 forall 'k.
-fn segment_glob(&cx: Domain!['k], pattern: Span['k], name: Span['k]) -> bool {
+fn segment_glob(&cx: Domain!['k], pattern: Str['k], name: Str['k]) -> bool {
     var p = 0usize;
     var n = 0usize;
     var star: Option[usize] = Option::None;
@@ -1268,7 +1269,7 @@ fn segment_glob(&cx: Domain!['k], pattern: Span['k], name: Span['k]) -> bool {
 }
 
 forall 'k.
-fn glob_parts(&cx: Domain!['k], value: Span['k]) -> ArenaVec[Span['k], 'k] {
+fn glob_parts(&cx: Domain!['k], value: Str['k]) -> ArenaVec[Str['k], 'k] {
     let parts = ArenaVec::new(&cx);
     var start = 0usize;
     var i = 0usize;
@@ -1283,7 +1284,7 @@ fn glob_parts(&cx: Domain!['k], value: Span['k]) -> ArenaVec[Span['k], 'k] {
 }
 
 forall 'k.
-fn path_glob(&cx: Domain!['k], pattern: Span['k], path: Span['k]) -> bool {
+fn path_glob(&cx: Domain!['k], pattern: Str['k], path: Str['k]) -> bool {
     let pattern_parts = glob_parts(&cx, pattern);
     let path_parts = glob_parts(&cx, path);
     var previous = ArenaVec::new(&cx);
@@ -1310,7 +1311,7 @@ fn path_glob(&cx: Domain!['k], pattern: Span['k], path: Span['k]) -> bool {
 }
 
 forall 'k.
-fn excluded(&cx: Domain!['k], rules: ArenaVec[Span['k], 'k], relative: Span['k], is_directory: bool) -> bool {
+fn excluded(&cx: Domain!['k], rules: ArenaVec[Str['k], 'k], relative: Str['k], is_directory: bool) -> bool {
     var i = 0usize;
     while i < rules.len(&cx) {
         let rule = rules.at(&cx, i);
@@ -1334,8 +1335,8 @@ fn excluded(&cx: Domain!['k], rules: ArenaVec[Span['k], 'k], relative: Span['k],
 }
 
 forall 'k.
-fn scan_pages(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usize,
-    inherited: ArenaMap[Span['k], TomlValue['k], 'k]) -> Result[(), Buffer!] {
+fn scan_pages(&cx: Domain!['k], build: Build['k], relative: Str['k], depth: usize,
+    inherited: ArenaMap[Str['k], TomlValue['k], 'k]) -> Result[(), Buffer!] {
     if depth >= 64usize { return Result::Err.(report(&cx, "source tree too deep", relative)); }
     let defaults = directory_defaults(&cx, build, relative, inherited)?;
     let directory = join(&cx, build.source, relative);
@@ -1379,7 +1380,7 @@ fn scan_pages(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usi
 }
 
 forall 'k.
-fn fingerprint_name_hash(&cx: Domain!['k], relative: Span['k], hash: Span['k]) -> Span['k] {
+fn fingerprint_name_hash(&cx: Domain!['k], relative: Str['k], hash: Str['k]) -> Str['k] {
     var dot = relative.len();
     var i = relative.len();
     var found = false;
@@ -1388,24 +1389,24 @@ fn fingerprint_name_hash(&cx: Domain!['k], relative: Span['k], hash: Span['k]) -
         if byte(&cx, relative, i) == b'/' { found = true; }
         if byte(&cx, relative, i) == b'.' { dot = i; found = true; }
     }
-    let name = Buffer!::new().push_bytes(&cx, relative.slice(0usize, dot)).push_byte(b'.')
-        .push_bytes(&cx, hash);
-    name.push_bytes(&cx, relative.slice(dot, relative.len())).save(&cx)
+    let name = Buffer!::new().write(&cx, relative.slice(0usize, dot)).write_byte(b'.')
+        .write(&cx, hash);
+    name.write(&cx, relative.slice(dot, relative.len())).save(&cx)
 }
 
 forall 'k.
-fn fingerprint_name(&cx: Domain!['k], relative: Span['k], contents: Span['k]) -> Span['k] {
+fn fingerprint_name(&cx: Domain!['k], relative: Str['k], contents: Str['k]) -> Str['k] {
     fingerprint_name_hash(&cx, relative, digest_hex(&cx, contents))
 }
 
 forall 'k.
-fn asset_url(&cx: Domain!['k], build: Build['k], relative: Span['k]) -> Span['k] {
-    Buffer!::new().push_static("/").push_bytes(&cx, build.assets)
-        .push_byte(b'/').push_bytes(&cx, relative).save(&cx)
+fn asset_url(&cx: Domain!['k], build: Build['k], relative: Str['k]) -> Str['k] {
+    Buffer!::new().write_static("/").write(&cx, build.assets)
+        .write_byte(b'/').write(&cx, relative).save(&cx)
 }
 
 forall 'k.
-fn scan_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usize) -> Result[(), Buffer!] {
+fn scan_assets(&cx: Domain!['k], build: Build['k], relative: Str['k], depth: usize) -> Result[(), Buffer!] {
     if depth >= 64usize { return Result::Err.(report(&cx, "asset tree too deep", relative)); }
     let path = join(&cx, join(&cx, build.source, build.assets), relative);
     let opened = match read_dir(&cx, path) {
@@ -1455,8 +1456,8 @@ fn scan_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: us
 }
 
 forall 'k.
-fn fingerprint_stylesheet(&cx: Domain!['k], build: Build['k], url: Span['k],
-    states: ArenaMap[Span['k], u8, 'k], depth: usize) -> Result[(), Buffer!] {
+fn fingerprint_stylesheet(&cx: Domain!['k], build: Build['k], url: Str['k],
+    states: ArenaMap[Str['k], u8, 'k], depth: usize) -> Result[(), Buffer!] {
     if depth >= 64usize { return Result::Err.(report(&cx, "CSS dependency tree too deep", url)); }
     match states.get(&cx, url) {
         Some(state) => {
@@ -1499,22 +1500,29 @@ fn fingerprint_stylesheets(&cx: Domain!['k], build: Build['k]) -> Result[(), Buf
     Result::Ok.(())
 }
 
+fn finish_input(input: Input!) -> Result[(), Error] {
+    match input.finish() {
+        Ok(rest) => { rest.destroy(); Result::Ok.(()) },
+        Err(e) => Result::Err.(e),
+    }
+}
+
 forall 'k.
-fn stream_copy(&cx: Domain!['k], source: Span['k], destination: Span['k]) -> Result[(), Buffer!] {
+fn stream_copy(&cx: Domain!['k], source: Str['k], destination: Str['k]) -> Result[(), Buffer!] {
     ensure_dir(&cx, parent(&cx, destination))?;
     let input = match File!::open_read(&cx, source) {
         Ok(file) => file,
         Err(e) => return Result::Err.(report(&cx, "cannot read", source)),
     };
-    var input = input;
+    var input = input.input();
     let output = match File!::create(&cx, destination) {
         Ok(file) => file,
         Err(e) => {
-            let closed = input.close();
+            let closed = finish_input(input);
             return Result::Err.(report(&cx, "cannot write", destination));
         },
     };
-    var output = output;
+    var output = output.output();
     var chunk = Buffer!::with_capacity(65536usize);
     var going = true;
     while going {
@@ -1522,31 +1530,22 @@ fn stream_copy(&cx: Domain!['k], source: Span['k], destination: Span['k]) -> Res
             Ok(n) => n,
             Err(e) => {
                 chunk.destroy();
-                let closed = input.close();
-                let closed = output.close();
+                let closed = finish_input(input);
+                let closed = output.finish();
                 return Result::Err.(report(&cx, "cannot read", source));
             },
         };
         if count == 0usize { going = false; }
         else {
             var exists 'b. (tag, bytes, restore) = chunk.open();
-            let written = &output.write_all(&tag, bytes);
+            output = output.write(&tag, bytes.as_str());
             chunk = restore.restore(tag).clear();
-            match written {
-                Ok(nothing) => (),
-                Err(e) => {
-                    chunk.destroy();
-                    let closed = input.close();
-                    let closed = output.close();
-                    return Result::Err.(report(&cx, "cannot write", destination));
-                },
-            }
             if count < 65536usize { going = false; }
         }
     }
     chunk.destroy();
-    let read_closed = input.close();
-    let write_closed = output.close();
+    let read_closed = finish_input(input);
+    let write_closed = output.finish();
     match read_closed {
         Err(e) => return Result::Err.(report(&cx, "cannot read", source)),
         Ok(nothing) => (),
@@ -1558,31 +1557,31 @@ fn stream_copy(&cx: Domain!['k], source: Span['k], destination: Span['k]) -> Res
 }
 
 forall 'k.
-fn stream_copy_hashed(&cx: Domain!['k], source: Span['k], destination: Span['k],
-    hashed_destination: Span['k]) -> Result[Span['k], Buffer!] {
+fn stream_copy_hashed(&cx: Domain!['k], source: Str['k], destination: Str['k],
+    hashed_destination: Str['k]) -> Result[Str['k], Buffer!] {
     ensure_dir(&cx, parent(&cx, destination))?;
     let input = match File!::open_read(&cx, source) {
         Ok(file) => file,
         Err(e) => return Result::Err.(report(&cx, "cannot read", source)),
     };
-    var input = input;
+    var input = input.input();
     let output = match File!::create(&cx, destination) {
         Ok(file) => file,
         Err(e) => {
-            let closed = input.close();
+            let closed = finish_input(input);
             return Result::Err.(report(&cx, "cannot write", destination));
         },
     };
-    var output = output;
+    var output = output.output();
     let hashed = match File!::create(&cx, hashed_destination) {
         Ok(file) => file,
         Err(e) => {
-            let closed = input.close();
-            let closed = output.close();
+            let closed = finish_input(input);
+            let closed = output.finish();
             return Result::Err.(report(&cx, "cannot write", hashed_destination));
         },
     };
-    var hashed = hashed;
+    var hashed = hashed.output();
     var chunk = Buffer!::with_capacity(65536usize);
     var hash = new_hash(&cx);
     var going = true;
@@ -1591,9 +1590,9 @@ fn stream_copy_hashed(&cx: Domain!['k], source: Span['k], destination: Span['k],
             Ok(n) => n,
             Err(e) => {
                 chunk.destroy();
-                let closed = input.close();
-                let closed = output.close();
-                let closed = hashed.close();
+                let closed = finish_input(input);
+                let closed = output.finish();
+                let closed = hashed.finish();
                 return Result::Err.(report(&cx, "cannot read", source));
             },
         };
@@ -1601,26 +1600,16 @@ fn stream_copy_hashed(&cx: Domain!['k], source: Span['k], destination: Span['k],
         else {
             var exists 'b. (tag, bytes, restore) = chunk.open();
             hash = hash_bytes(&cx, hash, &tag, bytes);
-            let original_written = &output.write_all(&tag, bytes);
-            let hashed_written = &hashed.write_all(&tag, bytes);
+            output = output.write(&tag, bytes.as_str());
+            hashed = hashed.write(&tag, bytes.as_str());
             chunk = restore.restore(tag).clear();
-            let original_ok = original_written.is_ok();
-            let hashed_ok = hashed_written.is_ok();
-            if !original_ok || !hashed_ok {
-                chunk.destroy();
-                let closed = input.close();
-                let closed = output.close();
-                let closed = hashed.close();
-                return Result::Err.(report(&cx, "cannot write",
-                    if original_ok { hashed_destination } else { destination }));
-            }
             if count < 65536usize { going = false; }
         }
     }
     chunk.destroy();
-    let read_closed = input.close();
-    let write_closed = output.close();
-    let hashed_closed = hashed.close();
+    let read_closed = finish_input(input);
+    let write_closed = output.finish();
+    let hashed_closed = hashed.finish();
     if !read_closed.is_ok() { return Result::Err.(report(&cx, "cannot read", source)); }
     if !write_closed.is_ok() { return Result::Err.(report(&cx, "cannot write", destination)); }
     if !hashed_closed.is_ok() { return Result::Err.(report(&cx, "cannot write", hashed_destination)); }
@@ -1628,7 +1617,7 @@ fn stream_copy_hashed(&cx: Domain!['k], source: Span['k], destination: Span['k],
 }
 
 forall 'k.
-fn copy_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: usize) -> Result[(), Buffer!] {
+fn copy_assets(&cx: Domain!['k], build: Build['k], relative: Str['k], depth: usize) -> Result[(), Buffer!] {
     if depth >= 64usize { return Result::Err.(report(&cx, "asset tree too deep", relative)); }
     let directory = join(&cx, join(&cx, build.source, build.assets), relative);
     let directory = match read_dir(&cx, directory) {
@@ -1689,7 +1678,7 @@ fn copy_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: us
                                 Ok(found) => found,
                                 Err(message) => { directory.close(); return Result::Err.(message); },
                             };
-                            match save(&cx, destination, Buffer!::new().push_bytes(&cx, contents)) {
+                            match save(&cx, destination, Buffer!::new().write(&cx, contents)) {
                                 Ok(nothing) => (),
                                 Err(message) => { directory.close(); return Result::Err.(message); },
                             }
@@ -1705,7 +1694,7 @@ fn copy_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: us
                                     Ok(nothing) => (),
                                     Err(message) => { directory.close(); return Result::Err.(message); },
                                 }
-                                match save(&cx, hashed_destination, Buffer!::new().push_bytes(&cx, rewritten)) {
+                                match save(&cx, hashed_destination, Buffer!::new().write(&cx, rewritten)) {
                                     Ok(nothing) => (),
                                     Err(message) => { directory.close(); return Result::Err.(message); },
                                 }
@@ -1724,7 +1713,7 @@ fn copy_assets(&cx: Domain!['k], build: Build['k], relative: Span['k], depth: us
 }
 
 forall 'k.
-fn real_path(&cx: Domain!['k], path: Span['k]) -> Result[Span['k], Buffer!] {
+fn real_path(&cx: Domain!['k], path: Str['k]) -> Result[Str['k], Buffer!] {
     match canonicalize(&cx, path) {
         Ok(found) => Result::Ok.(found.save(&cx)),
         Err(e) => Result::Err.(report(&cx, "cannot resolve", path)),
@@ -1735,7 +1724,7 @@ fn real_path(&cx: Domain!['k], path: Span['k]) -> Result[Span['k], Buffer!] {
 // different path, so it is unlinked without following its target. A stale
 // dangling symlink is also removed as a file.
 forall 'k.
-fn remove_tree_at(&cx: Domain!['k], root: Span['k], path: Span['k], relative: Span['k], depth: usize) -> Result[(), Buffer!] {
+fn remove_tree_at(&cx: Domain!['k], root: Str['k], path: Str['k], relative: Str['k], depth: usize) -> Result[(), Buffer!] {
     if depth >= 64usize { return Result::Err.(report(&cx, "output tree too deep", path)); }
     let opened = match read_dir(&cx, path) {
         Ok(directory) => directory,
@@ -1784,20 +1773,20 @@ fn remove_tree_at(&cx: Domain!['k], root: Span['k], path: Span['k], relative: Sp
 }
 
 forall 'k.
-fn remove_tree(&cx: Domain!['k], path: Span['k]) -> Result[(), Buffer!] {
+fn remove_tree(&cx: Domain!['k], path: Str['k]) -> Result[(), Buffer!] {
     let root = real_path(&cx, path)?;
     remove_tree_at(&cx, root, path, lit(&cx, ""), 0usize)
 }
 
 forall 'k.
-fn stage_paths(&cx: Domain!['k], output: Span['k]) -> Result[(Span['k], Span['k]), Buffer!] {
+fn stage_paths(&cx: Domain!['k], output: Str['k]) -> Result[(Str['k], Str['k]), Buffer!] {
     ensure_dir(&cx, parent(&cx, output))?;
     var attempt = 0usize;
     while attempt < 1000usize {
-        let base = Buffer!::new().push_bytes(&cx, output).push_static(".krayon-")
-            .push_i64(unsafe getpid() as i64).push_byte(b'-').push_usize(attempt).save(&cx);
-        let stage = Buffer!::new().push_bytes(&cx, base).push_static("-stage").save(&cx);
-        let backup = Buffer!::new().push_bytes(&cx, base).push_static("-previous").save(&cx);
+        let base = Buffer!::new().write(&cx, output).write_static(".krayon-")
+            .put(unsafe getpid() as i64).write_byte(b'-').put(attempt).save(&cx);
+        let stage = Buffer!::new().write(&cx, base).write_static("-stage").save(&cx);
+        let backup = Buffer!::new().write(&cx, base).write_static("-previous").save(&cx);
         if !exists_path(&cx, backup)? {
             match mkdir(&cx, stage) {
                 Ok(nothing) => return Result::Ok.((stage, backup)),
@@ -1812,8 +1801,8 @@ fn stage_paths(&cx: Domain!['k], output: Span['k]) -> Result[(Span['k], Span['k]
 // Copy regular source files into an isolated tree. The overlay pass may replace
 // a file at the same relative path, but files and directories cannot swap roles.
 forall 'k.
-fn copy_source_tree(&cx: Domain!['k], root: Span['k], source: Span['k], destination: Span['k],
-    relative: Span['k], depth: usize) -> Result[(), Buffer!] {
+fn copy_source_tree(&cx: Domain!['k], root: Str['k], source: Str['k], destination: Str['k],
+    relative: Str['k], depth: usize) -> Result[(), Buffer!] {
     if depth >= 64usize { return Result::Err.(report(&cx, "overlay tree too deep", source)); }
     let opened = match read_dir(&cx, source) {
         Ok(directory) => directory,
@@ -1872,11 +1861,11 @@ fn copy_source_tree(&cx: Domain!['k], root: Span['k], source: Span['k], destinat
 }
 
 forall 'k.
-fn stage_overlay(&cx: Domain!['k], root: Span['k], source: Span['k], overlay: Span['k]) -> Result[Span['k], Buffer!] {
+fn stage_overlay(&cx: Domain!['k], root: Str['k], source: Str['k], overlay: Str['k]) -> Result[Str['k], Buffer!] {
     let source_real = real_path(&cx, source)?;
     let overlay_real = real_path(&cx, overlay)?;
-    let source_prefix = Buffer!::new().push_bytes(&cx, source_real).push_byte(b'/').save(&cx);
-    let overlay_prefix = Buffer!::new().push_bytes(&cx, overlay_real).push_byte(b'/').save(&cx);
+    let source_prefix = Buffer!::new().write(&cx, source_real).write_byte(b'/').save(&cx);
+    let overlay_prefix = Buffer!::new().write(&cx, overlay_real).write_byte(b'/').save(&cx);
     if source_real.eq(&cx, overlay_real) || source_real.starts_with(&cx, overlay_prefix)
         || overlay_real.starts_with(&cx, source_prefix) {
         return Result::Err.(report(&cx, "overlay must be outside input", overlay));
@@ -1901,10 +1890,10 @@ fn stage_overlay(&cx: Domain!['k], root: Span['k], source: Span['k], overlay: Sp
 }
 
 forall 'k.
-fn check_output(&cx: Domain!['k], source: Span['k], output: Span['k]) -> Result[bool, Buffer!] {
+fn check_output(&cx: Domain!['k], source: Str['k], output: Str['k]) -> Result[bool, Buffer!] {
     let source_real = real_path(&cx, source)?;
     let parent_real = real_path(&cx, parent(&cx, output))?;
-    let prefix = Buffer!::new().push_bytes(&cx, source_real).push_static("/").save(&cx);
+    let prefix = Buffer!::new().write(&cx, source_real).write_static("/").save(&cx);
     if parent_real.eq(&cx, source_real) || parent_real.starts_with(&cx, prefix) {
         return Result::Err.(report(&cx, "output must be outside input", output));
     }
@@ -1995,7 +1984,7 @@ fn publish_pages(&cx: Domain!['k], build: Build['k]) -> () {
 }
 
 forall 'k.
-fn collection_name(&cx: Domain!['k], name: Span['k]) -> bool {
+fn collection_name(&cx: Domain!['k], name: Str['k]) -> bool {
     if name.is_empty() || name.is(&cx, "pages") { return false; }
     var i = 0usize;
     while i < name.len() {
@@ -2024,13 +2013,13 @@ fn publish_named_collections(&cx: Domain!['k], build: Build['k]) -> Result[(), B
             Some(name) => {
                 if !collection_name(&cx, name) {
                     return Result::Err.(report_detail(&cx, build.config_file,
-                        Buffer!::new().push_static("invalid collection name: ").push_bytes(&cx, name).save(&cx)));
+                        Buffer!::new().write_static("invalid collection name: ").write(&cx, name).save(&cx)));
                 }
                 let rules = match build.definitions.get(&cx, name) {
                     Some(value) => match value.as_table() {
                         Some(table) => table,
                         None => return Result::Err.(report_detail(&cx, build.config_file,
-                            Buffer!::new().push_static("collection must be a table: ").push_bytes(&cx, name).save(&cx))),
+                            Buffer!::new().write_static("collection must be a table: ").write(&cx, name).save(&cx))),
                     },
                     None => return Result::Err.(report(&cx, "collection definition is missing", build.config_file)),
                 };
@@ -2040,7 +2029,7 @@ fn publish_named_collections(&cx: Domain!['k], build: Build['k]) -> Result[(), B
                         Some(key) => if !key.is(&cx, "where") && !key.is(&cx, "sort_by")
                             && !key.is(&cx, "sort_order") {
                             return Result::Err.(report_detail(&cx, build.config_file,
-                                Buffer!::new().push_static("unknown collection rule: ").push_bytes(&cx, key).save(&cx)));
+                                Buffer!::new().write_static("unknown collection rule: ").write(&cx, key).save(&cx)));
                         },
                         None => (),
                     }
@@ -2198,25 +2187,25 @@ fn render_site(&cx: Domain!['k], build: Build['k]) -> Result[(), Buffer!] {
 }
 
 forall 'k.
-fn clean_after_error(&cx: Domain!['k], stage: Span['k], message: Buffer!) -> Buffer! {
+fn clean_after_error(&cx: Domain!['k], stage: Str['k], message: Buffer!) -> Buffer! {
     match remove_tree(&cx, stage) {
         Ok(nothing) => message,
-        Err(cleanup) => message.push_buffer(cleanup),
+        Err(cleanup) => message.put(cleanup),
     }
 }
 
 forall 'k.
 fn check_config_output(&cx: Domain!['k], config: Config['k]) -> Result[(), Buffer!] {
     if config.output.eq(&cx, config.input) || config.output.starts_with(&cx,
-        Buffer!::new().push_bytes(&cx, config.input).push_static("/").save(&cx)) {
+        Buffer!::new().write(&cx, config.input).write_static("/").save(&cx)) {
         return Result::Err.(report(&cx, "output must be outside input", config.output));
     }
     Result::Ok.(())
 }
 
 forall 'k.
-fn read_site_data(&cx: Domain!['k], source: Span['k], config: Config['k])
-    -> Result[ArenaMap[Span['k], TomlValue['k], 'k], Buffer!] {
+fn read_site_data(&cx: Domain!['k], source: Str['k], config: Config['k])
+    -> Result[ArenaMap[Str['k], TomlValue['k], 'k], Buffer!] {
     let site_file = join(&cx, source, config.data);
     let site_data = if exists_path(&cx, site_file)? {
         let text = load(&cx, site_file)?;
@@ -2240,8 +2229,8 @@ fn read_site_data(&cx: Domain!['k], source: Span['k], config: Config['k])
 }
 
 forall 'k.
-fn new_build(&cx: Domain!['k], root: Span['k], config: Config['k], source: Span['k],
-    output: Span['k], include_drafts: bool, site_data: ArenaMap[Span['k], TomlValue['k], 'k]) -> Build['k] {
+fn new_build(&cx: Domain!['k], root: Str['k], config: Config['k], source: Str['k],
+    output: Str['k], include_drafts: bool, site_data: ArenaMap[Str['k], TomlValue['k], 'k]) -> Build['k] {
     Build.{ source, output, layouts: join(&cx, source, config.layouts), layouts_rel: config.layouts,
         assets: config.assets, fingerprint_assets: config.fingerprint_assets, asset_urls: ArenaMap::new(&cx),
         data_dir: parent(&cx, config.data), base_path: config.base_path, origin: config.origin,
@@ -2254,32 +2243,32 @@ fn new_build(&cx: Domain!['k], root: Span['k], config: Config['k], source: Span[
 }
 
 forall 'k.
-fn routes_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> Result[Buffer!, Buffer!] {
+fn routes_with_drafts(&cx: Domain!['k], root: Str['k], include_drafts: bool) -> Result[Buffer!, Buffer!] {
     route_listing(&cx, root, Option::None, include_drafts, false)
 }
 
 forall 'k.
-fn routes_json_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> Result[Buffer!, Buffer!] {
+fn routes_json_with_drafts(&cx: Domain!['k], root: Str['k], include_drafts: bool) -> Result[Buffer!, Buffer!] {
     route_listing(&cx, root, Option::None, include_drafts, true)
 }
 
 forall 'k.
-fn routes_with_overlay(&cx: Domain!['k], root: Span['k], overlay: Span['k], include_drafts: bool) -> Result[Buffer!, Buffer!] {
+fn routes_with_overlay(&cx: Domain!['k], root: Str['k], overlay: Str['k], include_drafts: bool) -> Result[Buffer!, Buffer!] {
     route_listing(&cx, root, Option::Some.(overlay), include_drafts, false)
 }
 
 forall 'k.
-fn routes_json_with_overlay(&cx: Domain!['k], root: Span['k], overlay: Span['k], include_drafts: bool) -> Result[Buffer!, Buffer!] {
+fn routes_json_with_overlay(&cx: Domain!['k], root: Str['k], overlay: Str['k], include_drafts: bool) -> Result[Buffer!, Buffer!] {
     route_listing(&cx, root, Option::Some.(overlay), include_drafts, true)
 }
 
 forall 'k.
-fn json_string(&cx: Domain!['k], out: Buffer!, value: Span['k]) -> Buffer! {
-    escape_json(&cx, out.push_byte(b'"'), value).push_byte(b'"')
+fn json_string(&cx: Domain!['k], out: Buffer!, value: Str['k]) -> Buffer! {
+    escape_json(&cx, out.write_byte(b'"'), value).write_byte(b'"')
 }
 
 forall 'k.
-fn route_listing(&cx: Domain!['k], root: Span['k], overlay: Option[Span['k]], include_drafts: bool, json: bool) -> Result[Buffer!, Buffer!] {
+fn route_listing(&cx: Domain!['k], root: Str['k], overlay: Option[Str['k]], include_drafts: bool, json: bool) -> Result[Buffer!, Buffer!] {
     let config = read_config(&cx, root)?;
     check_config_output(&cx, config)?;
     let original = join(&cx, root, config.input);
@@ -2301,50 +2290,50 @@ fn route_listing(&cx: Domain!['k], root: Span['k], overlay: Option[Span['k]], in
 }
 
 forall 'k.
-fn route_listing_source(&cx: Domain!['k], root: Span['k], config: Config['k], source: Span['k],
+fn route_listing_source(&cx: Domain!['k], root: Str['k], config: Config['k], source: Str['k],
     include_drafts: bool, json: bool) -> Result[Buffer!, Buffer!] {
     let output = join(&cx, root, config.output);
     let site_data = read_site_data(&cx, source, config)?;
     let build = new_build(&cx, root, config, source, output, include_drafts, site_data);
     discover_site(&cx, build)?;
     build.redirects.sort_by(&cx, |&cx, a, b| a.url.cmp(&cx, b.url));
-    var listing = if json { Buffer!::new().push_static("{\"pages\":[") } else { Buffer!::new() };
+    var listing = if json { Buffer!::new().write_static("{\"pages\":[") } else { Buffer!::new() };
     var i = 0usize;
     while i < build.pages.len(&cx) {
         let entry = build.pages.at(&cx, i);
         let relative = entry.file.slice(build.source.len() + 1usize, entry.file.len());
         let url = prefix(&cx, build.base_path, entry.page.url);
         listing = if json {
-            let out = if i > 0usize { listing.push_byte(b',') } else { listing };
-            let out = json_string(&cx, json_string(&cx, out.push_static("{\"source\":"), relative)
-                .push_static(",\"url\":"), url).push_static(",\"output\":");
+            let out = if i > 0usize { listing.write_byte(b',') } else { listing };
+            let out = json_string(&cx, json_string(&cx, out.write_static("{\"source\":"), relative)
+                .write_static(",\"url\":"), url).write_static(",\"output\":");
             json_string(&cx, out, entry.destination.slice(build.output.len() + 1usize,
-                entry.destination.len())).push_byte(b'}')
+                entry.destination.len())).write_byte(b'}')
         } else {
-            listing.push_static("page\t").push_bytes(&cx, relative)
-                .push_byte(b'\t').push_bytes(&cx, url).push_byte(b'\n')
+            listing.write_static("page\t").write(&cx, relative)
+                .write_byte(b'\t').write(&cx, url).write_byte(b'\n')
         };
         i = i + 1usize;
     }
-    if json { listing = listing.push_static("],\"aliases\":["); }
+    if json { listing = listing.write_static("],\"aliases\":["); }
     i = 0usize;
     while i < build.redirects.len(&cx) {
         let redirect = build.redirects.at(&cx, i);
         let url = prefix(&cx, build.base_path, redirect.url);
         let target = prefix(&cx, build.base_path, redirect.target);
         listing = if json {
-            let out = if i > 0usize { listing.push_byte(b',') } else { listing };
-            let out = json_string(&cx, json_string(&cx, out.push_static("{\"url\":"), url)
-                .push_static(",\"target\":"), target).push_static(",\"output\":");
+            let out = if i > 0usize { listing.write_byte(b',') } else { listing };
+            let out = json_string(&cx, json_string(&cx, out.write_static("{\"url\":"), url)
+                .write_static(",\"target\":"), target).write_static(",\"output\":");
             json_string(&cx, out, redirect.destination.slice(build.output.len() + 1usize,
-                redirect.destination.len())).push_byte(b'}')
+                redirect.destination.len())).write_byte(b'}')
         } else {
-            listing.push_static("alias\t").push_bytes(&cx, url)
-                .push_byte(b'\t').push_bytes(&cx, target).push_byte(b'\n')
+            listing.write_static("alias\t").write(&cx, url)
+                .write_byte(b'\t').write(&cx, target).write_byte(b'\n')
         };
         i = i + 1usize;
     }
-    if json { listing = listing.push_static("],\"assets\":["); }
+    if json { listing = listing.write_static("],\"assets\":["); }
     let assets = ArenaVec::new(&cx);
     i = 0usize;
     while i < build.asset_urls.positions(&cx) {
@@ -2364,16 +2353,16 @@ fn route_listing_source(&cx: Domain!['k], root: Span['k], config: Config['k], so
                 let source = original.slice(1usize, original.len());
                 let url = prefix(&cx, build.base_path, preferred);
                 listing = if json {
-                    let out = if asset_count > 0usize { listing.push_byte(b',') } else { listing };
-                    let out = json_string(&cx, json_string(&cx, out.push_static("{\"source\":"), source)
-                        .push_static(",\"url\":"), url).push_static(",\"outputs\":[");
+                    let out = if asset_count > 0usize { listing.write_byte(b',') } else { listing };
+                    let out = json_string(&cx, json_string(&cx, out.write_static("{\"source\":"), source)
+                        .write_static(",\"url\":"), url).write_static(",\"outputs\":[");
                     let out = json_string(&cx, out, source);
                     let out = if preferred.eq(&cx, original) { out }
-                        else { json_string(&cx, out.push_byte(b','), preferred.slice(1usize, preferred.len())) };
-                    out.push_static("]}")
+                        else { json_string(&cx, out.write_byte(b','), preferred.slice(1usize, preferred.len())) };
+                    out.write_static("]}")
                 } else {
-                    listing.push_static("asset\t").push_bytes(&cx, source)
-                        .push_byte(b'\t').push_bytes(&cx, url).push_byte(b'\n')
+                    listing.write_static("asset\t").write(&cx, source)
+                        .write_byte(b'\t').write(&cx, url).write_byte(b'\n')
                 };
                 asset_count = asset_count + 1usize;
             },
@@ -2381,22 +2370,22 @@ fn route_listing_source(&cx: Domain!['k], root: Span['k], config: Config['k], so
         }
         i = i + 1usize;
     }
-    if json { listing = listing.push_static("]}\n"); }
+    if json { listing = listing.write_static("]}\n"); }
     Result::Ok.(listing)
 }
 
 forall 'k.
-fn check_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> Result[(), Buffer!] {
+fn check_with_drafts(&cx: Domain!['k], root: Str['k], include_drafts: bool) -> Result[(), Buffer!] {
     check_with_optional_overlay(&cx, root, Option::None, include_drafts)
 }
 
 forall 'k.
-fn check_with_overlay(&cx: Domain!['k], root: Span['k], overlay: Span['k], include_drafts: bool) -> Result[(), Buffer!] {
+fn check_with_overlay(&cx: Domain!['k], root: Str['k], overlay: Str['k], include_drafts: bool) -> Result[(), Buffer!] {
     check_with_optional_overlay(&cx, root, Option::Some.(overlay), include_drafts)
 }
 
 forall 'k.
-fn check_with_optional_overlay(&cx: Domain!['k], root: Span['k], overlay: Option[Span['k]],
+fn check_with_optional_overlay(&cx: Domain!['k], root: Str['k], overlay: Option[Str['k]],
     include_drafts: bool) -> Result[(), Buffer!] {
     let config = read_config(&cx, root)?;
     check_config_output(&cx, config)?;
@@ -2416,7 +2405,7 @@ fn check_with_optional_overlay(&cx: Domain!['k], root: Span['k], overlay: Option
 }
 
 forall 'k.
-fn check_source(&cx: Domain!['k], root: Span['k], config: Config['k], source: Span['k],
+fn check_source(&cx: Domain!['k], root: Str['k], config: Config['k], source: Str['k],
     include_drafts: bool) -> Result[(), Buffer!] {
     let output = join(&cx, root, config.output);
     let site_data = read_site_data(&cx, source, config)?;
@@ -2433,8 +2422,8 @@ fn check_source(&cx: Domain!['k], root: Span['k], config: Config['k], source: Sp
 /// Renders a preview in a caller-owned workspace and returns its URL prefix.
 /// Pass a fresh workspace outside the input. The caller removes it after use or failure.
 forall 'k.
-fn build_preview(&cx: Domain!['k], root: Span['k], workspace: Span['k],
-    overlay: Option[Span['k]], include_drafts: bool) -> Result[Span['k], Buffer!] {
+fn build_preview(&cx: Domain!['k], root: Str['k], workspace: Str['k],
+    overlay: Option[Str['k]], include_drafts: bool) -> Result[Str['k], Buffer!] {
     let config = read_config(&cx, root)?;
     check_config_output(&cx, config)?;
     let original = join(&cx, root, config.input);
@@ -2455,17 +2444,17 @@ fn build_preview(&cx: Domain!['k], root: Span['k], workspace: Span['k],
 }
 
 forall 'k.
-fn build_with_drafts(&cx: Domain!['k], root: Span['k], include_drafts: bool) -> Result[(), Buffer!] {
+fn build_with_drafts(&cx: Domain!['k], root: Str['k], include_drafts: bool) -> Result[(), Buffer!] {
     build_with_optional_overlay(&cx, root, Option::None, include_drafts)
 }
 
 forall 'k.
-fn build_with_overlay(&cx: Domain!['k], root: Span['k], overlay: Span['k], include_drafts: bool) -> Result[(), Buffer!] {
+fn build_with_overlay(&cx: Domain!['k], root: Str['k], overlay: Str['k], include_drafts: bool) -> Result[(), Buffer!] {
     build_with_optional_overlay(&cx, root, Option::Some.(overlay), include_drafts)
 }
 
 forall 'k.
-fn build_with_optional_overlay(&cx: Domain!['k], root: Span['k], overlay: Option[Span['k]],
+fn build_with_optional_overlay(&cx: Domain!['k], root: Str['k], overlay: Option[Str['k]],
     include_drafts: bool) -> Result[(), Buffer!] {
     let config = read_config(&cx, root)?;
     check_config_output(&cx, config)?;
@@ -2485,7 +2474,7 @@ fn build_with_optional_overlay(&cx: Domain!['k], root: Span['k], overlay: Option
 }
 
 forall 'k.
-fn build_source(&cx: Domain!['k], root: Span['k], config: Config['k], source: Span['k],
+fn build_source(&cx: Domain!['k], root: Str['k], config: Config['k], source: Str['k],
     include_drafts: bool) -> Result[(), Buffer!] {
     let output = join(&cx, root, config.output);
     let site_data = read_site_data(&cx, source, config)?;
@@ -2510,7 +2499,7 @@ fn build_source(&cx: Domain!['k], root: Span['k], config: Config['k], source: Sp
             if previous {
                 match rename(&cx, backup, output) {
                     Ok(nothing) => (),
-                    Err(e) => { message = message.push_buffer(report(&cx, "cannot restore previous output", backup)); },
+                    Err(e) => { message = message.put(report(&cx, "cannot restore previous output", backup)); },
                 }
             }
             return Result::Err.(clean_after_error(&cx, stage, message));
@@ -2521,6 +2510,6 @@ fn build_source(&cx: Domain!['k], root: Span['k], config: Config['k], source: Sp
 }
 
 forall 'k.
-fn build(&cx: Domain!['k], root: Span['k]) -> Result[(), Buffer!] {
+fn build(&cx: Domain!['k], root: Str['k]) -> Result[(), Buffer!] {
     build_with_drafts(&cx, root, false)
 }

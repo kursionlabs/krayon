@@ -1,9 +1,10 @@
+use std::fmt::Writer;
 use std::arena::Domain!;
 use std::buffer::Buffer!;
 use std::cmp::Order;
 use std::collections::arena_vec::ArenaVec;
 use std::option::{Option, Result};
-use std::raw::Span;
+use std::str::Str;
 use std::slice::Slice;
 use toml::value::TomlValue;
 
@@ -15,7 +16,7 @@ struct Entry {
 }
 
 forall 'k.
-fn field(&cx: Domain!['k], record: TomlValue['k], path: Span['k]) -> Option[TomlValue['k]] {
+fn field(&cx: Domain!['k], record: TomlValue['k], path: Str['k]) -> Option[TomlValue['k]] {
     var value = record;
     var remaining = path;
     while true {
@@ -39,19 +40,19 @@ fn field(&cx: Domain!['k], record: TomlValue['k], path: Span['k]) -> Option[Toml
 }
 
 forall 'k.
-fn scalar(&cx: Domain!['k], value: TomlValue['k]) -> Option[Span['k]] {
+fn scalar(&cx: Domain!['k], value: TomlValue['k]) -> Option[Str['k]] {
     match value {
         TomlValue::String(text) => Option::Some.(text),
-        TomlValue::Integer(number) => Option::Some.(Buffer!::new().push_i64(number).save(&cx)),
-        TomlValue::Boolean(flag) => Option::Some.(Span::from_static(&cx, if flag { "true" } else { "false" })),
+        TomlValue::Integer(number) => Option::Some.(Buffer!::new().put(number).save(&cx)),
+        TomlValue::Boolean(flag) => Option::Some.(Str::from_static(&cx, if flag { "true" } else { "false" })),
         TomlValue::Datetime(date) => Option::Some.(date.text),
         _ => Option::None,
     }
 }
 
 forall 'k.
-fn filter_records(&cx: Domain!['k], values: ArenaVec[TomlValue['k], 'k], key: Span['k], target: Span['k])
-    -> Result[ArenaVec[TomlValue['k], 'k], Slice[u8, 'static]] {
+fn filter_records(&cx: Domain!['k], values: ArenaVec[TomlValue['k], 'k], key: Str['k], target: Str['k])
+    -> Result[ArenaVec[TomlValue['k], 'k], Str['static]] {
     if key.is_empty() { return Result::Err.("filter field must not be empty"); }
     let selected = ArenaVec::new(&cx);
     var i = 0usize;
@@ -74,8 +75,8 @@ fn filter_records(&cx: Domain!['k], values: ArenaVec[TomlValue['k], 'k], key: Sp
 }
 
 forall 'k.
-fn filter_contains(&cx: Domain!['k], values: ArenaVec[TomlValue['k], 'k], key: Span['k], target: Span['k])
-    -> Result[ArenaVec[TomlValue['k], 'k], Slice[u8, 'static]] {
+fn filter_contains(&cx: Domain!['k], values: ArenaVec[TomlValue['k], 'k], key: Str['k], target: Str['k])
+    -> Result[ArenaVec[TomlValue['k], 'k], Str['static]] {
     if key.is_empty() { return Result::Err.("filter field must not be empty"); }
     let selected = ArenaVec::new(&cx);
     var i = 0usize;
@@ -152,8 +153,8 @@ fn compare(&cx: Domain!['k], a: TomlValue['k], b: TomlValue['k]) -> Order {
 }
 
 forall 'k.
-fn sort_records(&cx: Domain!['k], values: ArenaVec[TomlValue['k], 'k], key: Span['k], descending: bool)
-    -> Result[ArenaVec[TomlValue['k], 'k], Slice[u8, 'static]] {
+fn sort_records(&cx: Domain!['k], values: ArenaVec[TomlValue['k], 'k], key: Str['k], descending: bool)
+    -> Result[ArenaVec[TomlValue['k], 'k], Str['static]] {
     if key.is_empty() { return Result::Err.("sort field must not be empty"); }
     let entries = ArenaVec::new(&cx);
     var expected = 0usize;

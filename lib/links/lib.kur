@@ -1,76 +1,77 @@
+use std::fmt::Writer;
 use std::arena::Domain!;
 use std::buffer::Buffer!;
 use std::collections::arena_map::ArenaMap;
 use std::collections::arena_vec::ArenaVec;
 use std::option::{Option, Result};
-use std::raw::Span;
+use std::str::Str;
 use std::slice::Slice;
 use url::prefix;
 
 forall 'k.
 exposed struct Document {
-    source: Span['k],
-    output: Span['k],
-    url: Span['k],
-    html: Span['k],
-    markdown_body: Option[Span['k]],
+    source: Str['k],
+    output: Str['k],
+    url: Str['k],
+    html: Str['k],
+    markdown_body: Option[Str['k]],
     body_line: usize,
     source_tags: ArenaMap[usize, usize, 'k],
 }
 
 forall 'k.
 exposed struct XmlDocument {
-    source: Span['k],
-    output: Span['k],
-    url: Span['k],
-    xml: Span['k],
+    source: Str['k],
+    output: Str['k],
+    url: Str['k],
+    xml: Str['k],
     targets: ArenaVec[LinkTarget['k], 'k],
 }
 
 forall 'k.
 exposed struct Stylesheet {
-    source: Span['k],
-    output: Span['k],
-    url: Span['k],
-    css: Span['k],
+    source: Str['k],
+    output: Str['k],
+    url: Str['k],
+    css: Str['k],
 }
 
 forall 'k.
 struct Parsed {
-    source: Span['k],
-    output: Span['k],
-    url: Span['k],
-    text: Span['k],
+    source: Str['k],
+    output: Str['k],
+    url: Str['k],
+    text: Str['k],
     generated: bool,
     xml: bool,
-    ids: ArenaMap[Span['k], usize, 'k],
+    ids: ArenaMap[Str['k], usize, 'k],
     duplicate_ids: ArenaVec[DuplicateId['k], 'k],
     targets: ArenaVec[LinkTarget['k], 'k],
-    markdown_body: Option[Span['k]],
+    markdown_body: Option[Str['k]],
     body_line: usize,
     source_offsets: ArenaMap[usize, usize, 'k],
 }
 
 forall 'k.
 struct DuplicateId {
-    value: Span['k],
+    value: Str['k],
     offset: usize,
     first_offset: usize,
 }
 
 forall 'k.
 exposed struct LinkTarget {
-    value: Span['k],
+    value: Str['k],
     offset: usize,
     raw_len: usize,
-    bases: Option[ArenaVec[Span['k], 'k]],
+    bases: Option[ArenaVec[Str['k], 'k]],
 }
 
 forall 'k.
-fn lit(&cx: Domain!['k], text: Slice[u8, 'static]) -> Span['k] { Span::from_static(&cx, text) }
+fn lit(&cx: Domain!['k], text: Str['static]) -> Str['k] { Str::from_static(&cx, text) }
 
 forall 'k.
-fn at(&cx: Domain!['k], text: Span['k], i: usize) -> u8 { text.byte_or_zero(&cx, i) }
+fn at(&cx: Domain!['k], text: Str['k], i: usize) -> u8 { text.byte_or_zero(&cx, i) }
 
 fn lower(c: u8) -> u8 { if c >= b'A' && c <= b'Z' { c + 32u8 } else { c } }
 fn space(c: u8) -> bool { c == b' ' || c == b'\n' || c == b'\r' || c == b'\t' }
@@ -80,7 +81,7 @@ fn name_byte(c: u8) -> bool {
 }
 
 forall 'k.
-fn equal_ci(&cx: Domain!['k], text: Span['k], expected: Slice[u8, 'static]) -> bool {
+fn equal_ci(&cx: Domain!['k], text: Str['k], expected: Str['static]) -> bool {
     let expected = lit(&cx, expected);
     if text.len() != expected.len() { return false; }
     var i = 0usize;
@@ -92,7 +93,7 @@ fn equal_ci(&cx: Domain!['k], text: Span['k], expected: Slice[u8, 'static]) -> b
 }
 
 forall 'k.
-fn starts_ci(&cx: Domain!['k], text: Span['k], at_pos: usize, expected: Slice[u8, 'static]) -> bool {
+fn starts_ci(&cx: Domain!['k], text: Str['k], at_pos: usize, expected: Str['static]) -> bool {
     let expected = lit(&cx, expected);
     if at_pos + expected.len() > text.len() { return false; }
     var i = 0usize;
@@ -104,7 +105,7 @@ fn starts_ci(&cx: Domain!['k], text: Span['k], at_pos: usize, expected: Slice[u8
 }
 
 forall 'k.
-fn scan_srcset(&cx: Domain!['k], value: Span['k], base: usize,
+fn scan_srcset(&cx: Domain!['k], value: Str['k], base: usize,
     targets: ArenaVec[LinkTarget['k], 'k]) -> () {
     var pos = 0usize;
     while pos < value.len() {
@@ -125,7 +126,7 @@ fn scan_srcset(&cx: Domain!['k], value: Span['k], base: usize,
 }
 
 forall 'k.
-fn css_value(&cx: Domain!['k], source: Span['k]) -> Span['k] {
+fn css_value(&cx: Domain!['k], source: Str['k]) -> Str['k] {
     var out = Buffer!::new();
     var pos = 0usize;
     while pos < source.len() {
@@ -147,14 +148,14 @@ fn css_value(&cx: Domain!['k], source: Span['k]) -> Span['k] {
                 }
                 out = utf8(out, code);
             } else if at(&cx, source, pos) == b'\n' { pos = pos + 1usize; }
-            else { out = out.push_byte(at(&cx, source, pos)); pos = pos + 1usize; }
-        } else { out = out.push_byte(c); pos = pos + 1usize; }
+            else { out = out.write_byte(at(&cx, source, pos)); pos = pos + 1usize; }
+        } else { out = out.write_byte(c); pos = pos + 1usize; }
     }
     out.save(&cx)
 }
 
 forall 'k.
-fn push_css_target(&cx: Domain!['k], raw: Span['k], offset: usize, entities: bool,
+fn push_css_target(&cx: Domain!['k], raw: Str['k], offset: usize, entities: bool,
     targets: ArenaVec[LinkTarget['k], 'k]) -> () {
     let decoded = if entities { html_value(&cx, raw) } else { raw };
     let decoded = css_value(&cx, decoded);
@@ -167,7 +168,7 @@ fn push_css_target(&cx: Domain!['k], raw: Span['k], offset: usize, entities: boo
 }
 
 forall 'k.
-fn skip_css_space_comments(&cx: Domain!['k], css: Span['k], start: usize) -> usize {
+fn skip_css_space_comments(&cx: Domain!['k], css: Str['k], start: usize) -> usize {
     var pos = start;
     var more = true;
     while more {
@@ -184,7 +185,7 @@ fn skip_css_space_comments(&cx: Domain!['k], css: Span['k], start: usize) -> usi
 }
 
 forall 'k.
-fn scan_css(&cx: Domain!['k], css: Span['k], base: usize, entities: bool,
+fn scan_css(&cx: Domain!['k], css: Str['k], base: usize, entities: bool,
     targets: ArenaVec[LinkTarget['k], 'k]) -> () {
     var pos = 0usize;
     var depth = 0usize;
@@ -418,24 +419,24 @@ fn hex(c: u8) -> u8 {
 }
 
 fn utf8(out: Buffer!, code: usize) -> Buffer! {
-    if code < 128usize { out.push_byte(code as u8) }
+    if code < 128usize { out.write_byte(code as u8) }
     else if code < 2048usize {
-        out.push_byte((192usize + code / 64usize) as u8)
-            .push_byte((128usize + code % 64usize) as u8)
+        out.write_byte((192usize + code / 64usize) as u8)
+            .write_byte((128usize + code % 64usize) as u8)
     } else if code < 65536usize {
-        out.push_byte((224usize + code / 4096usize) as u8)
-            .push_byte((128usize + (code / 64usize) % 64usize) as u8)
-            .push_byte((128usize + code % 64usize) as u8)
+        out.write_byte((224usize + code / 4096usize) as u8)
+            .write_byte((128usize + (code / 64usize) % 64usize) as u8)
+            .write_byte((128usize + code % 64usize) as u8)
     } else {
-        out.push_byte((240usize + code / 262144usize) as u8)
-            .push_byte((128usize + (code / 4096usize) % 64usize) as u8)
-            .push_byte((128usize + (code / 64usize) % 64usize) as u8)
-            .push_byte((128usize + code % 64usize) as u8)
+        out.write_byte((240usize + code / 262144usize) as u8)
+            .write_byte((128usize + (code / 4096usize) % 64usize) as u8)
+            .write_byte((128usize + (code / 64usize) % 64usize) as u8)
+            .write_byte((128usize + code % 64usize) as u8)
     }
 }
 
 forall 'k.
-fn html_value(&cx: Domain!['k], source: Span['k]) -> Span['k] {
+fn html_value(&cx: Domain!['k], source: Str['k]) -> Str['k] {
     var out = Buffer!::new();
     var i = 0usize;
     while i < source.len() {
@@ -472,32 +473,32 @@ fn html_value(&cx: Domain!['k], source: Span['k]) -> Span['k] {
                         if valid && code != 0usize && !(code >= 55296usize && code <= 57343usize) {
                             out = utf8(out, code);
                             i = end + 1usize;
-                        } else { out = out.push_byte(b'&'); i = i + 1usize; }
-                    } else { out = out.push_byte(b'&'); i = i + 1usize; }
+                        } else { out = out.write_byte(b'&'); i = i + 1usize; }
+                    } else { out = out.write_byte(b'&'); i = i + 1usize; }
                 },
-                None => { out = out.push_byte(b'&'); i = i + 1usize; },
+                None => { out = out.write_byte(b'&'); i = i + 1usize; },
             }
-        } else { out = out.push_byte(at(&cx, source, i)); i = i + 1usize; }
+        } else { out = out.write_byte(at(&cx, source, i)); i = i + 1usize; }
     }
     out.save(&cx)
 }
 
 forall 'k.
-fn decoded(&cx: Domain!['k], source: Span['k]) -> Span['k] {
+fn decoded(&cx: Domain!['k], source: Str['k]) -> Str['k] {
     var out = Buffer!::new();
     var i = 0usize;
     while i < source.len() {
         if at(&cx, source, i) == b'%' && i + 2usize < source.len() &&
             hex(at(&cx, source, i + 1usize)) != 255u8 && hex(at(&cx, source, i + 2usize)) != 255u8 {
-            out = out.push_byte(hex(at(&cx, source, i + 1usize)) * 16u8 + hex(at(&cx, source, i + 2usize)));
+            out = out.write_byte(hex(at(&cx, source, i + 1usize)) * 16u8 + hex(at(&cx, source, i + 2usize)));
             i = i + 3usize;
-        } else { out = out.push_byte(at(&cx, source, i)); i = i + 1usize; }
+        } else { out = out.write_byte(at(&cx, source, i)); i = i + 1usize; }
     }
     out.save(&cx)
 }
 
 forall 'k.
-fn external(&cx: Domain!['k], target: Span['k]) -> bool {
+fn external(&cx: Domain!['k], target: Str['k]) -> bool {
     if target.is_empty() { return false; }
     if at(&cx, target, 0usize) == b'/' && at(&cx, target, 1usize) == b'/' { return true; }
     var i = 0usize;
@@ -511,7 +512,7 @@ fn external(&cx: Domain!['k], target: Span['k]) -> bool {
 }
 
 forall 'k.
-fn site_target(&cx: Domain!['k], target: Span['k], origin: Span['k]) -> Span['k] {
+fn site_target(&cx: Domain!['k], target: Str['k], origin: Str['k]) -> Str['k] {
     if origin.is_empty() || target.len() < origin.len() { return target; }
     var i = 0usize;
     while i < origin.len() {
@@ -521,11 +522,11 @@ fn site_target(&cx: Domain!['k], target: Span['k], origin: Span['k]) -> Span['k]
     let next = at(&cx, target, i);
     if i < target.len() && next != b'/' && next != b'?' && next != b'#' { return target; }
     if next == b'/' { return target.slice(i, target.len()); }
-    Buffer!::new().push_static("/").push_bytes(&cx, target.slice(i, target.len())).save(&cx)
+    Buffer!::new().write_static("/").write(&cx, target.slice(i, target.len())).save(&cx)
 }
 
 forall 'k.
-fn uri_path(&cx: Domain!['k], path: Span['k]) -> Span['k] {
+fn uri_path(&cx: Domain!['k], path: Str['k]) -> Str['k] {
     let parts = ArenaVec::new(&cx);
     var start = 0usize;
     var i = 0usize;
@@ -538,22 +539,22 @@ fn uri_path(&cx: Domain!['k], path: Span['k]) -> Span['k] {
         }
         i = i + 1usize;
     }
-    var out = Buffer!::new().push_static("/");
+    var out = Buffer!::new().write_static("/");
     i = 0usize;
     while i < parts.len(&cx) {
-        if i > 0usize { out = out.push_byte(b'/'); }
-        out = out.push_bytes(&cx, parts.at(&cx, i));
+        if i > 0usize { out = out.write_byte(b'/'); }
+        out = out.write(&cx, parts.at(&cx, i));
         i = i + 1usize;
     }
     if i > 0usize && (path.ends_with(&cx, lit(&cx, "/"))
         || path.ends_with(&cx, lit(&cx, "/.")) || path.ends_with(&cx, lit(&cx, "/.."))) {
-        out = out.push_byte(b'/');
+        out = out.write_byte(b'/');
     }
     out.save(&cx)
 }
 
 forall 'k.
-fn normalized_uri(&cx: Domain!['k], uri: Span['k]) -> Span['k] {
+fn normalized_uri(&cx: Domain!['k], uri: Str['k]) -> Str['k] {
     var authority_end = 0usize;
     if starts_ci(&cx, uri, 0usize, "https://") { authority_end = 8usize; }
     else if starts_ci(&cx, uri, 0usize, "http://") { authority_end = 7usize; }
@@ -573,19 +574,19 @@ fn normalized_uri(&cx: Domain!['k], uri: Span['k]) -> Span['k] {
         None => hash,
     };
     let path = uri_path(&cx, uri.slice(authority_end, query));
-    Buffer!::new().push_bytes(&cx, uri.slice(0usize, authority_end)).push_bytes(&cx, path)
-        .push_bytes(&cx, uri.slice(query, uri.len())).save(&cx)
+    Buffer!::new().write(&cx, uri.slice(0usize, authority_end)).write(&cx, path)
+        .write(&cx, uri.slice(query, uri.len())).save(&cx)
 }
 
 forall 'k.
-fn resolve_reference(&cx: Domain!['k], base: Span['k], reference: Span['k]) -> Span['k] {
+fn resolve_reference(&cx: Domain!['k], base: Str['k], reference: Str['k]) -> Str['k] {
     if external(&cx, reference) {
         if at(&cx, reference, 0usize) == b'/' && at(&cx, reference, 1usize) == b'/' {
             let scheme = if starts_ci(&cx, base, 0usize, "https://") { base.slice(0usize, 6usize) }
                 else if starts_ci(&cx, base, 0usize, "http://") { base.slice(0usize, 5usize) }
                 else { return reference; };
-            return normalized_uri(&cx, Buffer!::new().push_bytes(&cx, scheme)
-                .push_bytes(&cx, reference).save(&cx));
+            return normalized_uri(&cx, Buffer!::new().write(&cx, scheme)
+                .write(&cx, reference).save(&cx));
         }
         return normalized_uri(&cx, reference);
     }
@@ -611,30 +612,30 @@ fn resolve_reference(&cx: Domain!['k], base: Span['k], reference: Span['k]) -> S
     let path = if end == authority_end { lit(&cx, "/") } else { base.slice(authority_end, end) };
     let authority = base.slice(0usize, authority_end);
     if reference.is_empty() {
-        return normalized_uri(&cx, Buffer!::new().push_bytes(&cx, authority).push_bytes(&cx, path).save(&cx));
+        return normalized_uri(&cx, Buffer!::new().write(&cx, authority).write(&cx, path).save(&cx));
     }
     if at(&cx, reference, 0usize) == b'/' {
-        return normalized_uri(&cx, Buffer!::new().push_bytes(&cx, authority).push_bytes(&cx, reference).save(&cx));
+        return normalized_uri(&cx, Buffer!::new().write(&cx, authority).write(&cx, reference).save(&cx));
     }
     if at(&cx, reference, 0usize) == b'?' {
-        return normalized_uri(&cx, Buffer!::new().push_bytes(&cx, authority).push_bytes(&cx, path)
-            .push_bytes(&cx, reference).save(&cx));
+        return normalized_uri(&cx, Buffer!::new().write(&cx, authority).write(&cx, path)
+            .write(&cx, reference).save(&cx));
     }
     if at(&cx, reference, 0usize) == b'#' {
         let without_fragment = base.slice(0usize, hash);
-        return normalized_uri(&cx, Buffer!::new().push_bytes(&cx, without_fragment)
-            .push_bytes(&cx, reference).save(&cx));
+        return normalized_uri(&cx, Buffer!::new().write(&cx, without_fragment)
+            .write(&cx, reference).save(&cx));
     }
-    normalized_uri(&cx, Buffer!::new().push_bytes(&cx, authority).push_bytes(&cx, parent(&cx, path))
-        .push_bytes(&cx, reference).save(&cx))
+    normalized_uri(&cx, Buffer!::new().write(&cx, authority).write(&cx, parent(&cx, path))
+        .write(&cx, reference).save(&cx))
 }
 
 forall 'k.
-fn scoped_target(&cx: Domain!['k], page_url: Span['k], base_path: Span['k], origin: Span['k],
-    bases: ArenaVec[Span['k], 'k], target: Span['k]) -> Span['k] {
+fn scoped_target(&cx: Domain!['k], page_url: Str['k], base_path: Str['k], origin: Str['k],
+    bases: ArenaVec[Str['k], 'k], target: Str['k]) -> Str['k] {
     let public_url = prefix(&cx, base_path, page_url);
     var base = if origin.is_empty() { public_url }
-        else { Buffer!::new().push_bytes(&cx, origin).push_bytes(&cx, public_url).save(&cx) };
+        else { Buffer!::new().write(&cx, origin).write(&cx, public_url).save(&cx) };
     var i = 0usize;
     while i < bases.len(&cx) {
         base = resolve_reference(&cx, base, bases.at(&cx, i));
@@ -644,7 +645,7 @@ fn scoped_target(&cx: Domain!['k], page_url: Span['k], base_path: Span['k], orig
 }
 
 forall 'k.
-fn parent(&cx: Domain!['k], path: Span['k]) -> Span['k] {
+fn parent(&cx: Domain!['k], path: Str['k]) -> Str['k] {
     var i = path.len();
     while i > 0usize {
         i = i - 1usize;
@@ -654,8 +655,8 @@ fn parent(&cx: Domain!['k], path: Span['k]) -> Span['k] {
 }
 
 forall 'k.
-fn normalized(&cx: Domain!['k], path: Span['k]) -> Option[Span['k]] {
-    let parts: ArenaVec[Span['k], 'k] = ArenaVec::new(&cx);
+fn normalized(&cx: Domain!['k], path: Str['k]) -> Option[Str['k]] {
+    let parts: ArenaVec[Str['k], 'k] = ArenaVec::new(&cx);
     var start = 0usize;
     var i = 0usize;
     while i <= path.len() {
@@ -671,21 +672,21 @@ fn normalized(&cx: Domain!['k], path: Span['k]) -> Option[Span['k]] {
         }
         i = i + 1usize;
     }
-    var out = Buffer!::new().push_static("/");
+    var out = Buffer!::new().write_static("/");
     var j = 0usize;
     while j < parts.len(&cx) {
-        if j > 0usize { out = out.push_static("/"); }
-        out = out.push_bytes(&cx, parts.at(&cx, j));
+        if j > 0usize { out = out.write_static("/"); }
+        out = out.write(&cx, parts.at(&cx, j));
         j = j + 1usize;
     }
-    if j > 0usize && path.ends_with(&cx, lit(&cx, "/")) { out = out.push_static("/"); }
+    if j > 0usize && path.ends_with(&cx, lit(&cx, "/")) { out = out.write_static("/"); }
     Option::Some.(out.save(&cx))
 }
 
 fn hex_digit(value: u8) -> u8 { if value < 10u8 { b'0' + value } else { b'A' + value - 10u8 } }
 
 forall 'k.
-fn css_asset_path(&cx: Domain!['k], path: Span['k]) -> Buffer! {
+fn css_asset_path(&cx: Domain!['k], path: Str['k]) -> Buffer! {
     var out = Buffer!::new();
     var i = 0usize;
     while i < path.len() {
@@ -693,16 +694,16 @@ fn css_asset_path(&cx: Domain!['k], path: Span['k]) -> Buffer! {
         let plain = (c >= b'a' && c <= b'z') || (c >= b'A' && c <= b'Z')
             || (c >= b'0' && c <= b'9') || c == b'/' || c == b'-'
             || c == b'_' || c == b'.' || c == b'~';
-        out = if plain { out.push_byte(c) }
-            else { out.push_byte(b'%').push_byte(hex_digit(c >> 4u8)).push_byte(hex_digit(c & 15u8)) };
+        out = if plain { out.write_byte(c) }
+            else { out.write_byte(b'%').write_byte(hex_digit(c >> 4u8)).write_byte(hex_digit(c & 15u8)) };
         i = i + 1usize;
     }
     out
 }
 
 forall 'k.
-fn css_key(&cx: Domain!['k], value: Span['k], sheet_url: Span['k], base_path: Span['k])
-    -> Option[Span['k]] {
+fn css_key(&cx: Domain!['k], value: Str['k], sheet_url: Str['k], base_path: Str['k])
+    -> Option[Str['k]] {
     if external(&cx, value) { return Option::None; }
     var end = value.len();
     match value.find_byte(&cx, b'?', 0usize) { Option::Some(at_pos) => if at_pos < end { end = at_pos; }, Option::None => (), }
@@ -714,13 +715,13 @@ fn css_key(&cx: Domain!['k], value: Span['k], sheet_url: Span['k], base_path: Sp
             && at(&cx, path, base_path.len()) == b'/' {
             path = path.slice(base_path.len(), path.len());
         }
-    } else { path = Buffer!::new().push_bytes(&cx, parent(&cx, sheet_url)).push_bytes(&cx, path).save(&cx); }
+    } else { path = Buffer!::new().write(&cx, parent(&cx, sheet_url)).write(&cx, path).save(&cx); }
     normalized(&cx, decoded(&cx, path))
 }
 
 forall 'k.
-fn css_replacement(&cx: Domain!['k], value: Span['k], sheet_url: Span['k], base_path: Span['k],
-    asset_urls: ArenaMap[Span['k], Span['k], 'k]) -> Option[Span['k]] {
+fn css_replacement(&cx: Domain!['k], value: Str['k], sheet_url: Str['k], base_path: Str['k],
+    asset_urls: ArenaMap[Str['k], Str['k], 'k]) -> Option[Str['k]] {
     let key = match css_key(&cx, value, sheet_url, base_path) {
         Some(found) => found,
         None => return Option::None,
@@ -733,12 +734,12 @@ fn css_replacement(&cx: Domain!['k], value: Span['k], sheet_url: Span['k], base_
     match value.find_byte(&cx, b'?', 0usize) { Option::Some(at_pos) => if at_pos < end { end = at_pos; }, Option::None => (), }
     match value.find_byte(&cx, b'#', 0usize) { Option::Some(at_pos) => if at_pos < end { end = at_pos; }, Option::None => (), }
     Option::Some.(css_asset_path(&cx, prefix(&cx, base_path, hashed))
-        .push_bytes(&cx, value.slice(end, value.len())).save(&cx))
+        .write(&cx, value.slice(end, value.len())).save(&cx))
 }
 
 forall 'k.
-fn css_dependencies(&cx: Domain!['k], css: Span['k], sheet_url: Span['k], base_path: Span['k],
-    asset_urls: ArenaMap[Span['k], Span['k], 'k]) -> ArenaVec[Span['k], 'k] {
+fn css_dependencies(&cx: Domain!['k], css: Str['k], sheet_url: Str['k], base_path: Str['k],
+    asset_urls: ArenaMap[Str['k], Str['k], 'k]) -> ArenaVec[Str['k], 'k] {
     let targets = ArenaVec::new(&cx);
     scan_css(&cx, css, 0usize, false, targets);
     let dependencies = ArenaVec::new(&cx);
@@ -756,8 +757,8 @@ fn css_dependencies(&cx: Domain!['k], css: Span['k], sheet_url: Span['k], base_p
 }
 
 forall 'k.
-fn rewrite_css(&cx: Domain!['k], css: Span['k], sheet_url: Span['k], base_path: Span['k],
-    asset_urls: ArenaMap[Span['k], Span['k], 'k]) -> Span['k] {
+fn rewrite_css(&cx: Domain!['k], css: Str['k], sheet_url: Str['k], base_path: Str['k],
+    asset_urls: ArenaMap[Str['k], Str['k], 'k]) -> Str['k] {
     let targets = ArenaVec::new(&cx);
     scan_css(&cx, css, 0usize, false, targets);
     var out = Buffer!::new();
@@ -770,25 +771,25 @@ fn rewrite_css(&cx: Domain!['k], css: Span['k], sheet_url: Span['k], base_path: 
             match css_replacement(&cx, target.value, sheet_url, base_path, asset_urls) {
                 None => (),
                 Some(replacement) => {
-                    out = out.push_bytes(&cx, css.slice(cursor, target.offset)).push_bytes(&cx, replacement);
+                    out = out.write(&cx, css.slice(cursor, target.offset)).write(&cx, replacement);
                     cursor = target.offset + target.raw_len;
                 },
             }
         }
     }
-    out.push_bytes(&cx, css.slice(cursor, css.len())).save(&cx)
+    out.write(&cx, css.slice(cursor, css.len())).save(&cx)
 }
 
 forall 'k.
-fn output_path(&cx: Domain!['k], root: Span['k], path: Span['k]) -> Span['k] {
-    var out = Buffer!::new().push_bytes(&cx, root).push_static("/");
-    if path.len() > 1usize { out = out.push_bytes(&cx, path.slice(1usize, path.len())); }
-    if path.ends_with(&cx, lit(&cx, "/")) { out = out.push_static("index.html"); }
+fn output_path(&cx: Domain!['k], root: Str['k], path: Str['k]) -> Str['k] {
+    var out = Buffer!::new().write(&cx, root).write_static("/");
+    if path.len() > 1usize { out = out.write(&cx, path.slice(1usize, path.len())); }
+    if path.ends_with(&cx, lit(&cx, "/")) { out = out.write_static("index.html"); }
     out.save(&cx)
 }
 
 forall 'k.
-fn location(&cx: Domain!['k], source: Span['k], offset: usize) -> (usize, usize) {
+fn location(&cx: Domain!['k], source: Str['k], offset: usize) -> (usize, usize) {
     var line = 1usize;
     var column = 1usize;
     var i = 0usize;
@@ -820,59 +821,59 @@ fn broken(&cx: Domain!['k], page: Parsed['k], target: LinkTarget['k]) -> Buffer!
     match markdown_location(&cx, page, target.offset) {
         Some(position) => {
             let (line, column) = position;
-            return Buffer!::new().push_static("krayon: ").push_bytes(&cx, page.source)
-                    .push_static(": broken local link: ").push_bytes(&cx, target.value)
-                    .push_static(" (line ").push_usize(line)
-                    .push_static(", column ").push_usize(column).push_static(")\n");
+            return Buffer!::new().write_static("krayon: ").write(&cx, page.source)
+                    .write_static(": broken local link: ").write(&cx, target.value)
+                    .write_static(" (line ").put(line)
+                    .write_static(", column ").put(column).write_static(")\n");
         },
         None => (),
     }
     let (line, column) = location(&cx, page.text, target.offset);
-    Buffer!::new().push_static("krayon: ").push_bytes(&cx, page.source)
-        .push_static(": broken local link: ").push_bytes(&cx, target.value)
-        .push_static(if page.xml { " (generated XML line " }
+    Buffer!::new().write_static("krayon: ").write(&cx, page.source)
+        .write_static(": broken local link: ").write(&cx, target.value)
+        .write_static(if page.xml { " (generated XML line " }
             else if page.generated { " (generated HTML line " } else { " (line " })
-        .push_usize(line).push_static(", column ").push_usize(column).push_static(")\n")
+        .put(line).write_static(", column ").put(column).write_static(")\n")
 }
 
 forall 'k.
 fn duplicate_id(&cx: Domain!['k], page: Parsed['k], duplicate: DuplicateId['k]) -> Buffer! {
-    var out = Buffer!::new().push_static("krayon: ").push_bytes(&cx, page.source)
-        .push_static(": duplicate HTML ID: ").push_bytes(&cx, duplicate.value);
+    var out = Buffer!::new().write_static("krayon: ").write(&cx, page.source)
+        .write_static(": duplicate HTML ID: ").write(&cx, duplicate.value);
     let current_source = markdown_location(&cx, page, duplicate.offset);
     match current_source {
         Some(position) => {
             let (line, column) = position;
-            out = out.push_static(" (source line ").push_usize(line)
-                .push_static(", column ").push_usize(column);
+            out = out.write_static(" (source line ").put(line)
+                .write_static(", column ").put(column);
         },
         None => {
             let (line, column) = location(&cx, page.text, duplicate.offset);
-            out = out.push_static(" (generated HTML ").push_bytes(&cx, page.url)
-                .push_static(" line ").push_usize(line).push_static(", column ").push_usize(column);
+            out = out.write_static(" (generated HTML ").write(&cx, page.url)
+                .write_static(" line ").put(line).write_static(", column ").put(column);
         },
     }
     match markdown_location(&cx, page, duplicate.first_offset) {
         Some(position) => {
             let (line, column) = position;
-            out.push_static("; first at source line ").push_usize(line)
-                .push_static(", column ").push_usize(column).push_static(")\n")
+            out.write_static("; first at source line ").put(line)
+                .write_static(", column ").put(column).write_static(")\n")
         },
         None => {
             let (line, column) = location(&cx, page.text, duplicate.first_offset);
             let out = if current_source.is_some() {
-                out.push_static("; first at generated HTML ").push_bytes(&cx, page.url).push_static(" line ")
-            } else { out.push_static("; first at line ") };
-            out.push_usize(line)
-                .push_static(", column ").push_usize(column).push_static(")\n")
+                out.write_static("; first at generated HTML ").write(&cx, page.url).write_static(" line ")
+            } else { out.write_static("; first at line ") };
+            out.put(line)
+                .write_static(", column ").put(column).write_static(")\n")
         },
     }
 }
 
 forall 'k.
 fn invalid_link(&cx: Domain!['k], page: Parsed['k], link: LinkTarget['k],
-    pages: ArenaVec[Parsed['k], 'k], outputs: ArenaMap[Span['k], Span['k], 'k],
-    root: Span['k], base_path: Span['k], origin: Span['k]) -> bool {
+    pages: ArenaVec[Parsed['k], 'k], outputs: ArenaMap[Str['k], Str['k], 'k],
+    root: Str['k], base_path: Str['k], origin: Str['k]) -> bool {
     let target = match link.bases {
         Some(bases) => scoped_target(&cx, page.url, base_path, origin, bases, link.value),
         None => link.value,
@@ -900,7 +901,7 @@ fn invalid_link(&cx: Domain!['k], page: Parsed['k], link: LinkTarget['k],
             } else { return true; }
         }
     } else {
-        path = Buffer!::new().push_bytes(&cx, parent(&cx, page.url)).push_bytes(&cx, path).save(&cx);
+        path = Buffer!::new().write(&cx, parent(&cx, page.url)).write(&cx, path).save(&cx);
     }
     let path = match normalized(&cx, decoded(&cx, path)) {
         Some(found) => found,
@@ -922,7 +923,7 @@ fn invalid_link(&cx: Domain!['k], page: Parsed['k], link: LinkTarget['k],
 forall 'k.
 fn validate(&cx: Domain!['k], documents: ArenaVec[Document['k], 'k], stylesheets: ArenaVec[Stylesheet['k], 'k],
     xml_documents: ArenaVec[XmlDocument['k], 'k],
-    outputs: ArenaMap[Span['k], Span['k], 'k], root: Span['k], base_path: Span['k], origin: Span['k]) -> Result[(), Buffer!] {
+    outputs: ArenaMap[Str['k], Str['k], 'k], root: Str['k], base_path: Str['k], origin: Str['k]) -> Result[(), Buffer!] {
     let pages: ArenaVec[Parsed['k], 'k] = ArenaVec::new(&cx);
     var i = 0usize;
     while i < documents.len(&cx) {
@@ -946,7 +947,7 @@ fn validate(&cx: Domain!['k], documents: ArenaVec[Document['k], 'k], stylesheets
         let page = pages.at(&cx, i);
         var j = 0usize;
         while j < page.duplicate_ids.len(&cx) {
-            errors = errors.push_buffer(duplicate_id(&cx, page, page.duplicate_ids.at(&cx, j)));
+            errors = errors.put(duplicate_id(&cx, page, page.duplicate_ids.at(&cx, j)));
             count = count + 1usize;
             j = j + 1usize;
         }
@@ -954,7 +955,7 @@ fn validate(&cx: Domain!['k], documents: ArenaVec[Document['k], 'k], stylesheets
         while j < page.targets.len(&cx) {
             let link = page.targets.at(&cx, j);
             if invalid_link(&cx, page, link, pages, outputs, root, base_path, origin) {
-                errors = errors.push_buffer(broken(&cx, page, link));
+                errors = errors.put(broken(&cx, page, link));
                 count = count + 1usize;
             }
             j = j + 1usize;
