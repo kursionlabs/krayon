@@ -76,3 +76,16 @@ Run `python3 tests/integration.py` for the end-to-end checks. They build
 Krayon with the adjacent Kursal compiler and use temporary site copies. The
 [development guide](docs/src/development.md) describes the repository layout,
 public API, and focused shim checks.
+
+## License
+
+Krayon is licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <https://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in Krayon by
+you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or
+conditions.
