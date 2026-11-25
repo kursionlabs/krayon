@@ -23,7 +23,7 @@ fn workspace(&cx: Domain!['k]) -> Result[Span['k], Buffer!] {
         None => fallback,
     };
     let parent = real_path(&cx, directory)?;
-    let template = Buffer!::new().push_bytes(&cx, parent).push_static("/krayon-preview-XXXXXX").push_byte(0);
+    var template = Buffer!::new().push_bytes(&cx, parent).push_static("/krayon-preview-XXXXXX").push_byte(0);
     let len = &template.len() - 1;
     let path = unsafe mkdtemp(unsafe &template.as_ptr());
     if is_null(path) {
@@ -36,7 +36,8 @@ fn workspace(&cx: Domain!['k]) -> Result[Span['k], Buffer!] {
 forall 'k.
 fn run_server(&cx: Domain!['k], server: Server!, temporary: Span['k],
     base: Span['k]) -> Result[(), Buffer!] {
-    let directory = Buffer!::new().push_bytes(&cx, temporary).push_static("/site").push_byte(0);
+    var server = server;
+    var directory = Buffer!::new().push_bytes(&cx, temporary).push_static("/site").push_byte(0);
     let status = unsafe uv_chdir(unsafe &directory.as_ptr());
     directory.destroy();
     if status < 0 {

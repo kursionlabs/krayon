@@ -1515,7 +1515,7 @@ fn stream_copy(&cx: Domain!['k], source: Span['k], destination: Span['k]) -> Res
         },
     };
     var output = output;
-    var chunk = Buffer!::new_with_cap(65536usize);
+    var chunk = Buffer!::with_capacity(65536usize);
     var going = true;
     while going {
         let count = match &input.read_exact(&chunk, 65536usize) {
@@ -1529,8 +1529,8 @@ fn stream_copy(&cx: Domain!['k], source: Span['k], destination: Span['k]) -> Res
         };
         if count == 0usize { going = false; }
         else {
-            let exists 'b. (tag, bytes, restore) = chunk.open();
-            let (tag, written) = &output.write_all(tag, bytes);
+            var exists 'b. (tag, bytes, restore) = chunk.open();
+            let written = &output.write_all(&tag, bytes);
             chunk = restore.restore(tag).clear();
             match written {
                 Ok(nothing) => (),
@@ -1583,7 +1583,7 @@ fn stream_copy_hashed(&cx: Domain!['k], source: Span['k], destination: Span['k],
         },
     };
     var hashed = hashed;
-    var chunk = Buffer!::new_with_cap(65536usize);
+    var chunk = Buffer!::with_capacity(65536usize);
     var hash = new_hash(&cx);
     var going = true;
     while going {
@@ -1599,10 +1599,10 @@ fn stream_copy_hashed(&cx: Domain!['k], source: Span['k], destination: Span['k],
         };
         if count == 0usize { going = false; }
         else {
-            let exists 'b. (tag, bytes, restore) = chunk.open();
+            var exists 'b. (tag, bytes, restore) = chunk.open();
             hash = hash_bytes(&cx, hash, &tag, bytes);
-            let (tag, original_written) = &output.write_all(tag, bytes);
-            let (tag, hashed_written) = &hashed.write_all(tag, bytes);
+            let original_written = &output.write_all(&tag, bytes);
+            let hashed_written = &hashed.write_all(&tag, bytes);
             chunk = restore.restore(tag).clear();
             let original_ok = original_written.is_ok();
             let hashed_ok = hashed_written.is_ok();

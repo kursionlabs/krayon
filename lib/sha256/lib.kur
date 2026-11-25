@@ -221,7 +221,7 @@ forall 'k.
 fn digest_file(&cx: Domain!['k], path: Span['k]) -> Result[Span['k], Error] {
     let opened = File!::open_read(&cx, path)?;
     var opened = opened;
-    var chunk = Buffer!::new_with_cap(65536usize);
+    var chunk = Buffer!::with_capacity(65536usize);
     var hash = new_hash(&cx);
     var going = true;
     while going {
@@ -235,7 +235,7 @@ fn digest_file(&cx: Domain!['k], path: Span['k]) -> Result[Span['k], Error] {
         };
         if count == 0usize { going = false; }
         else {
-            let exists 'b. (tag, bytes, restore) = chunk.open();
+            var exists 'b. (tag, bytes, restore) = chunk.open();
             hash = hash_bytes(&cx, hash, &tag, bytes);
             chunk = restore.restore(tag).clear();
             if count < 65536usize { going = false; }

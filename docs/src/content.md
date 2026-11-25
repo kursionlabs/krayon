@@ -156,9 +156,10 @@ text after the markers remain code. Fences may have up to three leading spaces,
 which are removed from their content lines when present. Trailing spaces in
 code lines are preserved.
 
-Fenced `kursal` code receives token classes for keywords, types,
-strings, numbers, and comments. Other fence languages remain escaped plain
-text.
+Fenced `kursal` code receives token classes for current source keywords,
+primitive types, strings and format strings, byte and numeric literals, brands,
+and line and block comments. Block comments keep their color across lines.
+Other fence languages remain escaped plain text.
 
 ATX headings may end with explicit attributes, such as
 `### Function {#api-function .item-heading .kind-fn}`. IDs must be unique

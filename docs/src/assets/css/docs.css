@@ -81,6 +81,10 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-
 .docs-content pre { margin: 1.2rem 0; padding: 1rem 1.2rem; overflow-x: auto; background: var(--code); border: 1px solid var(--border); border-radius: 0.5rem; line-height: 1.5; }
 .docs-content code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.9em; }
 .docs-content :not(pre) > code { padding: 0.12rem 0.3rem; background: var(--code); border-radius: 0.25rem; overflow-wrap: anywhere; }
+.tok-keyword { color: var(--tok-keyword); font-weight: 700; }
+.tok-type, .tok-label { color: var(--tok-type); }
+.tok-string, .tok-number, .tok-literal { color: var(--tok-literal); }
+.tok-comment { color: var(--tok-comment); font-style: italic; }
 .docs-content table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
 .docs-content th, .docs-content td { padding: 0.5rem 0.7rem; border: 1px solid var(--border); text-align: left; }
 .docs-content th { background: var(--code); }

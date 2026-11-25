@@ -1,0 +1,54 @@
+use std::arena::Domain!;
+use std::collections::arena_map::ArenaMap;
+use std::option::Result;
+use std::process::hash_seed;
+use std::raw::Span;
+use highlight::render_line_state;
+use markdown::markdown;
+
+forall 'k.
+fn same(&cx: Domain!['k], source: Span['k], expected: Span['k], comment: bool)
+    -> (bool, bool) {
+    let (rendered, next_comment) = render_line_state(&cx,
+        Span::from_static(&cx, "kursal"), source, comment);
+    (rendered.save(&cx).eq(&cx, expected), next_comment)
+}
+
+fn main() -> i32 {
+    let exists 'k. cx = Domain!::new(hash_seed());
+    var cx = cx;
+    let (words, no_comment) = same(&cx,
+        Span::from_static(&cx, "export module tuple instance closure exists foreach of pack for unit Never mut str char"),
+        Span::from_static(&cx, "<span class=\"tok-keyword\">export</span> <span class=\"tok-keyword\">module</span> <span class=\"tok-keyword\">tuple</span> <span class=\"tok-keyword\">instance</span> <span class=\"tok-keyword\">closure</span> <span class=\"tok-keyword\">exists</span> <span class=\"tok-keyword\">foreach</span> <span class=\"tok-keyword\">of</span> <span class=\"tok-keyword\">pack</span> <span class=\"tok-keyword\">for</span> <span class=\"tok-type\">unit</span> <span class=\"tok-type\">Never</span> mut str char"),
+        false);
+    let (literal, no_comment2) = same(&cx,
+        Span::from_static(&cx, "let x = 0xffu8 + 0b1010 + 1.5e-2f32; let c = b'\\n'; let s = f\"x {x} {{ok}}\"; 'k"),
+        Span::from_static(&cx, "<span class=\"tok-keyword\">let</span> x = <span class=\"tok-number\">0xffu8</span> + <span class=\"tok-number\">0b1010</span> + <span class=\"tok-number\">1.5e-2f32</span>; <span class=\"tok-keyword\">let</span> c = <span class=\"tok-literal\">b'\\n'</span>; <span class=\"tok-keyword\">let</span> s = <span class=\"tok-string\">f&quot;x {x} {{ok}}&quot;</span>; <span class=\"tok-label\">'k</span>"),
+        false);
+    let (start_comment, in_comment) = same(&cx,
+        Span::from_static(&cx, "/* a comment"),
+        Span::from_static(&cx, "<span class=\"tok-comment\">/* a comment</span>"), false);
+    let (end_comment, ended) = same(&cx,
+        Span::from_static(&cx, "still a comment */ fn main() {}"),
+        Span::from_static(&cx, "<span class=\"tok-comment\">still a comment */</span> <span class=\"tok-keyword\">fn</span> main() {}"), in_comment);
+    let (quoted, quoted_comment) = same(&cx,
+        Span::from_static(&cx, "\"/* not a comment */\" // real comment"),
+        Span::from_static(&cx, "<span class=\"tok-string\">&quot;/* not a comment */&quot;</span> <span class=\"tok-comment\">// real comment</span>"), false);
+    let fenced = match markdown(&cx,
+        Span::from_static(&cx, "```kursal\n/* open\nclose */ fn main() {}\n```\n"),
+        Span::from_static(&cx, ""), ArenaMap::new(&cx), ArenaMap::new(&cx),
+        false, Span::from_static(&cx, "test.md"), false) {
+        Ok(parts) => {
+            let (html, headings) = parts;
+            html.save(&cx).is(&cx,
+                "<pre><code class=\"language-kursal\"><span class=\"tok-comment\">/* open</span>\n<span class=\"tok-comment\">close */</span> <span class=\"tok-keyword\">fn</span> main() {}\n</code></pre>\n")
+        },
+        Err(message) => false,
+    };
+    let result = if words && !no_comment && literal && !no_comment2 &&
+        start_comment && in_comment && end_comment && !ended && quoted && !quoted_comment && fenced {
+        0i32
+    } else { 1i32 };
+    cx.destroy();
+    result
+}

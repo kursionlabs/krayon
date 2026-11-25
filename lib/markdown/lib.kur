@@ -6,7 +6,7 @@ use std::option::{Option, Result};
 use std::raw::Span;
 use std::slice::Slice;
 use url::prefix;
-use highlight::render_line;
+use highlight::render_line_state;
 
 forall 'k.
 exposed struct Heading {
@@ -1059,6 +1059,7 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
     var code_marker = 0u8;
     var code_width = 0usize;
     var code_indent = 0usize;
+    var code_comment = false;
     var table = false;
     var table_aligns: ArenaVec[u8, 'k] = ArenaVec::new(&cx);
     while pos < source.len() {
@@ -1094,9 +1095,12 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
                 out = out.push_static("</code></pre>\n");
                 code = false;
                 code_lang = empty(&cx);
+                code_comment = false;
             } else {
-                out = out.push_buffer(render_line(&cx, code_lang, fence_content(&cx, raw, code_indent)))
-                    .push_byte(b'\n');
+                let (rendered, next_comment) = render_line_state(&cx, code_lang,
+                    fence_content(&cx, raw, code_indent), code_comment);
+                code_comment = next_comment;
+                out = out.push_buffer(rendered).push_byte(b'\n');
             }
         } else if opening.is_some() {
             if paragraph {
@@ -1117,6 +1121,7 @@ fn render_blocks(&cx: Domain!['k], source: Span['k], links: LinkContext['k],
             out = out.push_static("<pre><code");
             if !code_lang.is_empty() { out = html_escape(&cx, out.push_static(" class=\"language-"), code_lang).push_static("\""); }
             out = out.push_static(">"); code = true;
+            code_comment = false;
         } else if !paragraph && !table && indented_code(&cx, raw) {
             compact_allowed = false;
             out = html_escape(&cx, out.push_static("<pre><code>"),

@@ -34,12 +34,16 @@ forall 'k.
 fn keyword(&cx: Domain!['k], word: Span['k]) -> bool {
     word.is(&cx, "fn") || word.is(&cx, "struct") || word.is(&cx, "enum")
         || word.is(&cx, "trait") || word.is(&cx, "impl") || word.is(&cx, "const")
-        || word.is(&cx, "extern") || word.is(&cx, "use") || word.is(&cx, "exposed")
-        || word.is(&cx, "forall") || word.is(&cx, "where") || word.is(&cx, "unsafe")
+        || word.is(&cx, "extern") || word.is(&cx, "use") || word.is(&cx, "export")
+        || word.is(&cx, "module") || word.is(&cx, "exposed") || word.is(&cx, "tuple")
+        || word.is(&cx, "instance") || word.is(&cx, "closure")
+        || word.is(&cx, "forall") || word.is(&cx, "where") || word.is(&cx, "exists")
+        || word.is(&cx, "unsafe") || word.is(&cx, "foreach") || word.is(&cx, "of")
+        || word.is(&cx, "pack") || word.is(&cx, "for")
         || word.is(&cx, "return") || word.is(&cx, "if") || word.is(&cx, "else")
         || word.is(&cx, "match") || word.is(&cx, "while") || word.is(&cx, "let")
         || word.is(&cx, "var") || word.is(&cx, "true") || word.is(&cx, "false")
-        || word.is(&cx, "mut") || word.is(&cx, "as") || word.is(&cx, "in")
+        || word.is(&cx, "as") || word.is(&cx, "in")
 }
 
 forall 'k.
@@ -48,26 +52,127 @@ fn type_word(&cx: Domain!['k], word: Span['k]) -> bool {
         || word.is(&cx, "u8") || word.is(&cx, "u16") || word.is(&cx, "u32")
         || word.is(&cx, "u64") || word.is(&cx, "i8") || word.is(&cx, "i16")
         || word.is(&cx, "i32") || word.is(&cx, "i64") || word.is(&cx, "f32")
-        || word.is(&cx, "f64") || word.is(&cx, "char") || word.is(&cx, "str")
+        || word.is(&cx, "f64") || word.is(&cx, "unit") || word.is(&cx, "Never")
+}
+
+fn base_digit(c: u8, base: u8) -> bool {
+    digit(c) && c - b'0' < base ||
+        base == 16u8 && ((c >= b'a' && c <= b'f') || (c >= b'A' && c <= b'F'))
 }
 
 forall 'k.
-fn kursal_line(&cx: Domain!['k], line: Span['k]) -> Buffer! {
+fn number_end(&cx: Domain!['k], line: Span['k], start: usize) -> usize {
+    var pos = start;
+    var base = 10u8;
+    if at(&cx, line, pos) == b'0' {
+        let marker = at(&cx, line, pos + 1usize);
+        if marker == b'x' { base = 16u8; pos = pos + 2usize; }
+        else if marker == b'o' { base = 8u8; pos = pos + 2usize; }
+        else if marker == b'b' { base = 2u8; pos = pos + 2usize; }
+    }
+    while base_digit(at(&cx, line, pos), base) || at(&cx, line, pos) == b'_' {
+        pos = pos + 1usize;
+    }
+    var floating = false;
+    if base == 10u8 {
+        if at(&cx, line, pos) == b'.' && digit(at(&cx, line, pos + 1usize)) {
+            floating = true;
+            pos = pos + 1usize;
+            while digit(at(&cx, line, pos)) || at(&cx, line, pos) == b'_' { pos = pos + 1usize; }
+        }
+        if at(&cx, line, pos) == b'e' || at(&cx, line, pos) == b'E' {
+            var exponent = pos + 1usize;
+            if at(&cx, line, exponent) == b'+' || at(&cx, line, exponent) == b'-' {
+                exponent = exponent + 1usize;
+            }
+            if digit(at(&cx, line, exponent)) {
+                floating = true;
+                pos = exponent + 1usize;
+                while digit(at(&cx, line, pos)) || at(&cx, line, pos) == b'_' { pos = pos + 1usize; }
+            }
+        }
+    }
+    var suffix_end = pos;
+    while letter(at(&cx, line, suffix_end)) || digit(at(&cx, line, suffix_end)) {
+        suffix_end = suffix_end + 1usize;
+    }
+    let suffix = line.slice(pos, suffix_end);
+    if suffix.is(&cx, "f32") || suffix.is(&cx, "f64") {
+        if base == 10u8 { pos = suffix_end; }
+    } else if !floating && (suffix.is(&cx, "u8") || suffix.is(&cx, "u16") ||
+        suffix.is(&cx, "u32") || suffix.is(&cx, "u64") || suffix.is(&cx, "usize") ||
+        suffix.is(&cx, "i8") || suffix.is(&cx, "i16") || suffix.is(&cx, "i32") ||
+        suffix.is(&cx, "i64") || suffix.is(&cx, "isize")) { pos = suffix_end; }
+    pos
+}
+
+forall 'k.
+fn quoted_end(&cx: Domain!['k], line: Span['k], start: usize, formatted: bool) -> usize {
+    var pos = start + (if formatted { 2usize } else { 1usize });
+    var braces = 0usize;
+    while pos < line.len() {
+        let c = at(&cx, line, pos);
+        if c == b'\\' && pos + 1usize < line.len() { pos = pos + 2usize; }
+        else if formatted && braces == 0usize &&
+            ((c == b'{' && at(&cx, line, pos + 1usize) == b'{') ||
+             (c == b'}' && at(&cx, line, pos + 1usize) == b'}')) { pos = pos + 2usize; }
+        else if formatted && c == b'{' { braces = braces + 1usize; pos = pos + 1usize; }
+        else if formatted && c == b'}' && braces > 0usize { braces = braces - 1usize; pos = pos + 1usize; }
+        else if c == b'"' && braces == 0usize { return pos + 1usize; }
+        else if c == b'"' && braces > 0usize { pos = quoted_end(&cx, line, pos, false); }
+        else { pos = pos + 1usize; }
+    }
+    pos
+}
+
+forall 'k.
+fn byte_end(&cx: Domain!['k], line: Span['k], start: usize) -> usize {
+    var pos = start + 2usize;
+    while pos < line.len() {
+        if at(&cx, line, pos) == b'\\' && pos + 1usize < line.len() { pos = pos + 2usize; }
+        else if at(&cx, line, pos) == b'\'' { return pos + 1usize; }
+        else { pos = pos + 1usize; }
+    }
+    pos
+}
+
+forall 'k.
+fn kursal_line_state(&cx: Domain!['k], line: Span['k], in_comment: bool) -> (Buffer!, bool) {
     var out = Buffer!::new();
     var i = 0usize;
+    var in_comment = in_comment;
     while i < line.len() {
         let c = at(&cx, line, i);
-        if c == b'/' && at(&cx, line, i + 1usize) == b'/' {
-            return marked(&cx, out, "comment", line.slice(i, line.len()));
-        } else if c == b'"' {
-            var end = i + 1usize;
+        if in_comment || c == b'/' && at(&cx, line, i + 1usize) == b'*' {
+            var end = if in_comment { i } else { i + 2usize };
             var closed = false;
             while end < line.len() && !closed {
-                if at(&cx, line, end) == b'\\' && end + 1usize < line.len() { end = end + 2usize; }
-                else if at(&cx, line, end) == b'"' { end = end + 1usize; closed = true; }
-                else { end = end + 1usize; }
+                if at(&cx, line, end) == b'*' && at(&cx, line, end + 1usize) == b'/' {
+                    end = end + 2usize;
+                    closed = true;
+                } else { end = end + 1usize; }
             }
+            out = marked(&cx, out, "comment", line.slice(i, end));
+            in_comment = !closed;
+            i = end;
+        } else if c == b'/' && at(&cx, line, i + 1usize) == b'/' {
+            return (marked(&cx, out, "comment", line.slice(i, line.len())), false);
+        } else if c == b'f' && at(&cx, line, i + 1usize) == b'"' {
+            let end = quoted_end(&cx, line, i, true);
             out = marked(&cx, out, "string", line.slice(i, end));
+            i = end;
+        } else if c == b'"' {
+            let end = quoted_end(&cx, line, i, false);
+            out = marked(&cx, out, "string", line.slice(i, end));
+            i = end;
+        } else if c == b'b' && at(&cx, line, i + 1usize) == b'\'' {
+            let end = byte_end(&cx, line, i);
+            out = marked(&cx, out, "literal", line.slice(i, end));
+            i = end;
+        } else if c == b'\'' && (letter(at(&cx, line, i + 1usize)) || digit(at(&cx, line, i + 1usize))) {
+            var end = i + 2usize;
+            while letter(at(&cx, line, end)) || digit(at(&cx, line, end)) { end = end + 1usize; }
+            out = marked(&cx, out, "label", line.slice(i, end));
             i = end;
         } else if letter(c) {
             var end = i + 1usize;
@@ -78,8 +183,7 @@ fn kursal_line(&cx: Domain!['k], line: Span['k]) -> Buffer! {
                 else { escaped(&cx, out, word) };
             i = end;
         } else if digit(c) {
-            var end = i + 1usize;
-            while digit(at(&cx, line, end)) || at(&cx, line, end) == b'_' { end = end + 1usize; }
+            let end = number_end(&cx, line, i);
             out = marked(&cx, out, "number", line.slice(i, end));
             i = end;
         } else {
@@ -87,11 +191,18 @@ fn kursal_line(&cx: Domain!['k], line: Span['k]) -> Buffer! {
             i = i + 1usize;
         }
     }
-    out
+    (out, in_comment)
+}
+
+forall 'k.
+fn render_line_state(&cx: Domain!['k], language: Span['k], line: Span['k], in_comment: bool)
+    -> (Buffer!, bool) {
+    if language.is(&cx, "kursal") { kursal_line_state(&cx, line, in_comment) }
+    else { (escaped(&cx, Buffer!::new(), line), false) }
 }
 
 forall 'k.
 fn render_line(&cx: Domain!['k], language: Span['k], line: Span['k]) -> Buffer! {
-    if language.is(&cx, "kursal") { kursal_line(&cx, line) }
-    else { escaped(&cx, Buffer!::new(), line) }
+    let (out, in_comment) = render_line_state(&cx, language, line, false);
+    out
 }

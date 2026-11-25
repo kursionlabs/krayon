@@ -41,6 +41,10 @@ Krayon library packages and place it under `docs/dist/api` beside the guides.
 
 The focused shim checks build with `../kursal/bin/kursal build tests/shim -o bin/shim-test`
 and run with a temporary directory containing a file and a directory symlink.
+The highlighter checks build with
+`../kursal/bin/kursal build tests/highlight -o bin/highlight-test` and run as
+`bin/highlight-test`; they cover current Kursal tokens and multiline fenced
+comments without a site build.
 
 CI checks out Kursal and Kable alongside Krayon, installs libuv and llhttp,
 and bootstraps Kursal before building Krayon. For private dependencies, use
